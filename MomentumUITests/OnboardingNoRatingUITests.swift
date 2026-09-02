@@ -49,8 +49,9 @@ final class OnboardingNoRatingUITests: XCTestCase {
 
     func testNoRatingAskAnywhereAfterTheReveal() {
         let app = XCUIApplication()
-        // Land on the notifications step — the first beat after the plan reveal, so everything from
-        // here to the paywall is the stretch a rating beat would ever have lived in.
+        // Land on the notifications step. Since 2026-09-01 the two permission beats sit BEFORE
+        // plan generation (notifications → location → building → reveal → account), so from here
+        // to the app is every beat a rating ask could ever have lived on.
         app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-notifications"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
@@ -69,27 +70,27 @@ final class OnboardingNoRatingUITests: XCTestCase {
         maybeLater.tap()
 
         // Location step: still no rating ask. Its CTA is "Continue" — it must NOT promise an ending,
-        // since the paywall and the account beat both still follow it.
+        // since the reveal, the paywall and the account beat all still follow it.
         let locationContinue = app.buttons["Continue"]
         XCTAssertTrue(locationContinue.waitForExistence(timeout: 10), "Expected the location step.")
         assertNoRatingSurface(app, on: "the location step")
         XCTAssertFalse(app.buttons["Start training"].exists,
-                       "The location step must not claim to end onboarding — two beats follow it.")
+                       "The location step must not claim to end onboarding — beats follow it.")
         locationContinue.tap()
 
-        // Continue now hands STRAIGHT to the paywall gate. No screen in between, and in particular
-        // no "Your plan is ready" rating page — that copy was the removed beat's headline, so its
-        // absence is the specific regression guard.
-        XCTAssertFalse(app.staticTexts["Your plan is ready"].waitForExistence(timeout: 4),
-                       "The rating beat must not come back between the primers and the paywall.")
-        assertNoRatingSurface(app, on: "the hand-off to the paywall")
+        // Continue hands to the build and then the plan reveal. The reveal carries the ONE opt-in
+        // line (pinned above); the rating CARD — the removed beat — must not stand anywhere here.
+        let revealCTA = app.buttons["This looks great"]
+        XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Expected the plan reveal after the build.")
+        assertNoRatingSurface(app, on: "the plan reveal")
+        revealCTA.tap()
 
         // This athlete is seeded Pro, so the wall stands down and the flow completes into the app.
+        assertNoRatingSurface(app, on: "the hand-off after the reveal")
         XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20),
                       "Onboarding must complete into the app.")
     }
 
-    /// No bespoke rating control, and none of the removed beat's furniture, on the screen in view.
     private func assertNoRatingSurface(_ app: XCUIApplication, on screen: String) {
         XCTAssertFalse(app.buttons["Rate momentum"].exists, "No rating ask on \(screen).")
         XCTAssertFalse(app.staticTexts["A quick rating helps the next runner find theirs."].exists,

@@ -1,38 +1,74 @@
 import SwiftUI
 
-/// The unified plan reveal (PRD §4.1 step 4, §7.1) — the moment the user is sold. Glass pass
-/// 2026-08-27 (owner: "Bevel-level, get creative"): the block is shown as a self-drawing volume
-/// CURVE (the plan's real build → peak → taper, never a made-up line), the plan's shape as raised
-/// stat tiles with count-ups, the first week as a seven-day strip and browsable session rows,
-/// and every later week as a quiet ladder. Built from `OnboardingKit`'s raised surfaces so it
-/// reads as the same object as the questions before it. Restrained, premium, honest.
+/// The unified plan reveal (PRD §4.1 step 4, §7.1) — the moment the athlete is sold.
+///
+/// Rebuilt 2026-09-02 as one choreographed arrival in three acts, every beat a transform
+/// (opacity / scale / offset / rotation / trim), never a layout change:
+///
+///  1. **The overture.** A full-screen title card: the athlete's own name lands one letter at a
+///     time out of blur in the display face, a start line draws beneath it, one specular pass
+///     runs through the letters, and the whole card lifts away as the page rises under it.
+///  2. **The ascent.** The seal draws its check, the headline arrives, and the path card lands
+///     with one spent aurora pulse. The block's weekly volume is drawn as terrain that a runner
+///     glyph runs along — a comet tail behind it, each week's gridline lighting as it passes,
+///     the peak flaring once, the runner arriving at the goal beacon as the confetti falls.
+///     The stat tiles stand up off the page one after another and tally in the order the light
+///     crosses them; the CTA rises and catches that light once.
+///  3. **With the reader.** Everything below the fold arrives when it is scrolled to: the chips
+///     one at a time, the first week's strip filling, the session rows dealt.
+///
+/// Every light on this page travels ONCE and ends off its own view, so the settled page is
+/// perfectly still and readable. Reduce Motion: no overture, no motion — the finished page.
+/// Built from `OnboardingKit`'s raised surfaces so it reads as the same object as the questions.
 struct PlanRevealView: View {
     let vm: OnboardingViewModel
     let profile: UserProfile?
     var onContinue: () -> Void
 
+    // MARK: Act I — the overture
+    @State private var overtureMounted = true
+    @State private var titleLetters = 0.0   // one clock; each letter reads its own eased slice
+    @State private var titleLine = 0.0      // the start line drawing outward from the centre
+    @State private var titleSheen = 0.0     // one specular pass through the letters
+    @State private var overtureExit = 0.0   // the card lifting away, 0…1
+    @State private var pageIn = 0.0         // the page rising under it, 0…1
+
+    // MARK: Act II — the ascent
+    @State private var heroIn = 0.0
+    @State private var checkDraw = 0.0      // the PLAN READY tick drawing itself
+    @State private var arrivalHalo = 0.0
+    @State private var nameSheen = 0.0      // specular pass across the athlete's name
+    @State private var artifactIn = 0.0
+    @State private var artifactGlow = 0.0   // one aurora pulse as the card lands, then spent
+    @State private var curveIn = 0.0        // the runner's progress along the terrain, 0…1
+    @State private var calloutIn = false    // peak callout pops once the runner has passed it
+    @State private var pathArrival = 0.0    // goal beacon lands once, then is perfectly still
+    @State private var curveGleam = 0.0     // a highlight running the finished line, after the runner
+    @State private var statsIn = 0.0        // the tiles standing up, one after another
+    /// The tiles stand up when the athlete REACHES them: on a tall phone that is during the
+    /// arrival, on a smaller one it is the first scroll. `revealClock` is when the arrival began
+    /// and `statsBeat` where the tiles sit in it, so an early reach still waits its turn.
+    @State private var statsStarted = false
+    @State private var statsReached = false
+    @State private var revealClock: Date?
+    @State private var statsBeat = 0.0
     @State private var shownWeeks = 0.0
     @State private var shownDays = 0.0
     @State private var shownSessions = 0.0
-    @State private var curveIn = 0.0        // the volume curve draws itself 0…1
-    @State private var calloutIn = false    // peak callout pops once the pen reaches it
-    // Three one-shot lights, each travelling 0…1 exactly once. The paywall's rule holds here:
-    // a lit object that moves ONCE reads as expensive, one that keeps moving reads as a spinner.
-    // At rest every band has travelled off its own view, so "finished" is also "invisible".
-    @State private var nameSheen = 0.0      // specular pass across the athlete's own name
-    @State private var curveGleam = 0.0     // a highlight running the drawn curve, after the pen
     @State private var tileSheen = 0.0      // light crossing the stat tiles, left to right
+    @State private var ctaIn = 0.0
+    @State private var ctaSheen = 0.0       // the ink capsule catching the light once
+
+    // MARK: Act III — with the reader
     @State private var stripFill = 0.0      // the first week's day dots lighting in order
-    @State private var checkDraw = 0.0      // the PLAN READY tick drawing itself
     @State private var chipsIn = 0.0        // "built around you" arriving one chip at a time
-    /// The celebration haptic, held so it can be cancelled if the page goes away mid-sequence.
-    @State private var celebrate: Task<Void, Never>?
-    /// Whether the stat tiles are on screen. Their loops are the only continuous clocks on this
+
+    /// The choreography's clocks, held so they can be cancelled if the page goes away mid-sequence.
+    @State private var sequence: Task<Void, Never>?
+    /// Whether the stat tiles are on screen. Their ghosts are the only continuous clocks on this
     /// page, and a `TimelineView` running behind six weeks of plan the athlete has scrolled to is
     /// pure heat — the paywall gates its own tile arts the same way.
     @State private var tilesOnScreen = true
-    /// Same rule for the curve card, which carries the peak beacon — the page's other clock.
-    @State private var curveOnScreen = true
     /// When the plan-landed confetti started falling. Nil = not falling. A DATE rather than an
     /// animated 0…1: `withAnimation` interpolates modifier values, it does not re-run a body every
     /// frame, so a fall computed inside the body from an animated Double renders exactly once, at
@@ -41,8 +77,8 @@ struct PlanRevealView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.requestReview) private var requestReview
-    /// The review line is spent once — tapping it hands the athlete to the App Store, and the row
-    /// settles into a thank-you rather than sitting there asking twice.
+    /// The review line is spent once — tapping it hands the athlete to the rating sheet, and the
+    /// row settles into a thank-you rather than sitting there asking twice.
     @State private var reviewTapped = false
 
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
@@ -103,26 +139,6 @@ struct PlanRevealView: View {
     /// workout or a meal. iOS still owns whether the sheet actually appears (three per 365 days),
     /// so the line settles into its thank-you either way — there is no way to know, and a tap that
     /// visibly did nothing would read as broken.
-    /// A narrow specular band travelling left to right, for masking onto whatever should catch the
-    /// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of
-    /// the animation are a clean no-op — nothing to fade in or out.
-    ///
-    /// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across
-    /// a surface, and on the name it brightens the gradient instead of painting over it.
-    private func sheenBand(_ progress: Double) -> some View {
-        GeometryReader { geo in
-            let w = max(geo.size.width, 1)
-            let band = max(56, w * 0.32)
-            LinearGradient(colors: [.white.opacity(0), .white.opacity(0.9), .white.opacity(0)],
-                           startPoint: .leading, endPoint: .trailing)
-                .frame(width: band)
-                .offset(x: -band + (w + band * 2) * progress)
-                .blendMode(.plusLighter)
-        }
-        .allowsHitTesting(false)
-    }
-
-    /// The line's whole behaviour, in one place so the DEBUG hook exercises the real thing.
     private func tapReview() {
         guard !reviewTapped else { return }
         Haptics.light()
@@ -156,6 +172,16 @@ struct PlanRevealView: View {
         }
     }
 
+    /// A narrow specular band travelling left to right, for masking onto whatever should catch the
+    /// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of
+    /// the animation are a clean no-op — nothing to fade in or out.
+    ///
+    /// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across
+    /// a surface, and on the name it brightens the gradient instead of painting over it.
+    private func sheenBand(_ clock: Double, index: Int? = nil, strength: Double = 0.9) -> some View {
+        SheenBand(clock: clock, index: index, strength: strength)
+    }
+
     var body: some View {
         // The outer reader respects the safe area, so it can tell the full-bleed scroll below how
         // deep the status bar is; the scroll itself runs under it.
@@ -165,8 +191,36 @@ struct PlanRevealView: View {
         ScrollView {
             VStack(spacing: Theme.Space.lg) {
                 hero
-                blockCurveCard.reveal(0.18)
-                statTiles.reveal(0.24)
+                blockCurveCard
+                    .opacity(reduceMotion ? 1 : artifactIn)
+                    .scaleEffect(reduceMotion ? 1 : 0.955 + artifactIn * 0.045, anchor: .top)
+                    .offset(y: reduceMotion ? 0 : 26 * (1 - artifactIn))
+                    // A single aurora pulse makes the generated plan feel like the thing that just
+                    // arrived, then spends itself completely so the chart is quiet and readable.
+                    // One bell-shaped flash: invisible at 0, brightest halfway, invisible at rest.
+                    // Derived per FRAME (`Clocked`) — computed in the body it would read sin(π) = 0
+                    // on the very first frame and the pulse would never exist.
+                    .background {
+                        Clocked(t: artifactGlow) { g in
+                            RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+                                .fill(LinearGradient(colors: Theme.iridescentDeep,
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .blur(radius: 26)
+                                .scaleEffect(0.94 + g * 0.10)
+                                .opacity(max(0, sin(g * .pi)) * 0.36)
+                        }
+                    }
+                    .overlay {
+                        Clocked(t: artifactGlow) { g in
+                            RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+                                .strokeBorder(LinearGradient(colors: Theme.iridescentDeep,
+                                                             startPoint: .leading, endPoint: .trailing),
+                                              lineWidth: 1.5)
+                                .scaleEffect(0.99 + g * 0.025)
+                                .opacity(max(0, sin(g * .pi)) * 0.85)
+                        }
+                    }
+                statTiles
                 // Below the fold, everything arrives WHEN THE ATHLETE DOES. `.reveal()` runs off
                 // `onAppear`, and in a non-lazy stack inside a ScrollView that fires for every
                 // child at mount — so the chips, the first week and the whole ladder used to play
@@ -185,12 +239,9 @@ struct PlanRevealView: View {
             .padding(.bottom, Theme.Space.lg)
             // The crown: the PAYWALL'S OWN FIELD, falling from the very top of the screen and
             // part of the CONTENT, so it still scrolls away with the hero (owner call 2026-08-27:
-            // not sticky, subtle). It was a three-stop lavender ramp until 2026-08-28; the owner
-            // asked for the paywall's premium feel here, and `AiryField` IS that feel — separated
-            // hues reading as air rather than as one purple wash. Same component, so the two pages
-            // cannot drift apart again, and `paintsBackground: false` keeps onboarding's lighter
-            // canvas underneath. The mask dissolves it into that canvas exactly where the old ramp
-            // ended.
+            // not sticky, subtle). `AiryField` is the paywall's premium feel — separated hues
+            // reading as air rather than as one purple wash — and `paintsBackground: false` keeps
+            // onboarding's lighter canvas underneath. The mask dissolves it into that canvas.
             .background(alignment: .top) {
                 AiryField(intensity: colorScheme == .dark ? 0.55 : 0.85, paintsBackground: false)
                     .frame(height: 440 + topInset)
@@ -224,7 +275,7 @@ struct PlanRevealView: View {
         #if DEBUG
         .onAppear {
             if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-plan") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
                     withAnimation { proxy.scrollTo("plan", anchor: .top) }
                 }
             }
@@ -232,10 +283,10 @@ struct PlanRevealView: View {
             // the sheet it raises is a system surface, so this is the only way to see the beat in
             // the sim: `--seed-demo --onboarding --onboarding-reveal --reveal-review`.
             if ProcessInfo.processInfo.arguments.contains("--reveal-review") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { tapReview() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { tapReview() }
             }
             if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-podium") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
                     withAnimation { proxy.scrollTo("podium", anchor: .center) }
                 }
             }
@@ -245,31 +296,54 @@ struct PlanRevealView: View {
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Theme.Space.sm) {
                 reviewLine
+                    .opacity(reduceMotion ? 1 : ctaIn)
                 OnboardingCTA(title: "This looks great") { onContinue() }
+                    // The ink capsule catches the light once as it settles — the same band that
+                    // crossed the tiles, so the page's one light source is consistent.
+                    .overlay { sheenBand(ctaSheen, strength: 0.28).clipShape(Capsule()) }
             }
-                .reveal(0.4)
-                .padding(.horizontal, Theme.Space.lg)
-                .padding(.top, Theme.Space.md)
-                .padding(.bottom, Theme.Space.sm)
-                // ONE fade, owned by the inset: clear → canvas rising above it, bled past the
-                // column and under the home indicator. (A separate scroll-edge overlay plus an
-                // opaque button background left a hairline seam between the two while scrolling —
-                // owner report 2026-08-27.) The stop is pulled all the way up to 0.24 — roughly
-                // where the inset's own content starts, given the `-xl` bleed above it — so the
-                // fade is SPENT before the review line rather than around it. At 0.55 the plan's
-                // mileage scrolled straight through the words; at 0.35 a section header and a card
-                // edge still ghosted behind them. The line needs a clean bed, not a lighter one.
-                .background {
-                    LinearGradient(stops: [.init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 0),
-                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 0.24),
-                                           .init(color: OnboardingStyle.canvas(colorScheme), location: 1)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .padding(.top, -Theme.Space.xl)
-                        .padding(.horizontal, -Theme.Space.xxl)
-                        .ignoresSafeArea(edges: .bottom)
-                }
+            .opacity(reduceMotion ? 1 : ctaIn)
+            .scaleEffect(reduceMotion ? 1 : 0.97 + ctaIn * 0.03)
+            .offset(y: reduceMotion ? 0 : 14 * (1 - ctaIn))
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.md)
+            .padding(.bottom, Theme.Space.sm)
+            // ONE fade, owned by the inset: clear → canvas rising above it, bled past the
+            // column and under the home indicator. (A separate scroll-edge overlay plus an
+            // opaque button background left a hairline seam between the two while scrolling —
+            // owner report 2026-08-27.) The stop is pulled all the way up to 0.24 — roughly
+            // where the inset's own content starts, given the `-xl` bleed above it, so the CTA
+            // always lands on a clean bed instead of plan content ghosting underneath it.
+            .background {
+                LinearGradient(stops: [.init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 0),
+                                       .init(color: OnboardingStyle.canvas(colorScheme), location: 0.24),
+                                       .init(color: OnboardingStyle.canvas(colorScheme), location: 1)],
+                               startPoint: .top, endPoint: .bottom)
+                    .padding(.top, -Theme.Space.xl)
+                    .padding(.horizontal, -Theme.Space.xxl)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        // The page rises under the overture: a transform on the whole page, so the first frame
+        // the athlete sees of it is already in motion toward its rest.
+        .opacity(reduceMotion ? 1 : pageIn)
+        .scaleEffect(reduceMotion ? 1 : 0.94 + pageIn * 0.06)
+        .offset(y: reduceMotion ? 0 : 28 * (1 - pageIn))
+        // Act I, over everything. Taps pass straight through: nothing on this page ever waits
+        // on a flourish, and the walkers tap the CTA the moment it exists.
+        .overlay {
+            if overtureMounted, !reduceMotion {
+                RevealOverture(name: overtureName, letters: titleLetters, line: titleLine,
+                               sheen: titleSheen, exit: overtureExit)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
         }
         .onAppear(perform: animateIn)
+        .onDisappear {
+            sequence?.cancel()
+            confettiStart = nil
+        }
         }
     }
 
@@ -283,15 +357,15 @@ struct PlanRevealView: View {
     // MARK: Hero — the sold moment
 
     /// No wordmark (owner call 2026-08-27): the page opens on the athlete, not the brand. A quiet
-    /// "plan ready" eyebrow with a lit dot, then the headline in the display face — "Your plan,"
+    /// "plan ready" seal with a drawn check, then the headline in the display face — "Your plan,"
     /// and the athlete's name on its own line in the brand gradient, the one place color enters
     /// the type. Below it, the outcome sentence.
     private var hero: some View {
+        Clocked(t: heroIn) { h in
         VStack(spacing: Theme.Space.md) {
             HStack(spacing: 7) {
                 // Drawn, not stamped. This badge is the first thing on the page and its whole job
-                // is to say "done" — so it does the gesture rather than asserting it. An SF Symbol
-                // that fades in says the same words with none of the meaning.
+                // is to say "done" — so it does the gesture rather than asserting it.
                 DrawnCheck(progress: checkDraw).frame(width: 14, height: 14)
                 Text("PLAN READY")
                     .font(.rounded(11, weight: .bold)).tracking(1.6)
@@ -299,10 +373,26 @@ struct PlanRevealView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
             .raised(Capsule())
-            .reveal(0.04)
+            .overlay {
+                Capsule().strokeBorder(
+                    LinearGradient(colors: [Theme.iridescent[1], Theme.purple.opacity(0.72),
+                                            Theme.iridescent[2]],
+                                   startPoint: .leading, endPoint: .trailing),
+                    lineWidth: 1
+                )
+                .opacity(0.72)
+            }
+            // The halo is ceremonial motion, not layout. Keeping it in the background lets its
+            // rings breathe outside the seal without leaving a 92-point hole in the settled page.
+            .background {
+                PlanArrivalHalo(progress: arrivalHalo)
+                    .frame(width: 180, height: 72)
+            }
+            .opacity(revealStage(h, 0.00, 0.32))
+            .scaleEffect(0.82 + revealStage(h, 0.00, 0.32) * 0.18)
             VStack(spacing: 0) {
                 Text("Your plan,")
-                    .font(.display(40, weight: .semibold))
+                    .font(.display(42, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 // The one moment on this page that is purely about THEM, so it is the one thing
                 // given a specular pass. The band is masked to the letterforms, so the light moves
@@ -318,7 +408,9 @@ struct PlanRevealView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(planReadyTitle)
             .accessibilityAddTraits(.isHeader)
-            .reveal(0.08)
+            .opacity(revealStage(h, 0.16, 0.42))
+            .scaleEffect(0.965 + revealStage(h, 0.16, 0.42) * 0.035)
+            .offset(y: 12 * (1 - revealStage(h, 0.16, 0.42)))
             Text(vm.projectedOutcome())
                 .font(.rounded(18, weight: .regular))
                 .foregroundStyle(Theme.inkSecondary)
@@ -326,30 +418,44 @@ struct PlanRevealView: View {
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, Theme.Space.sm)
-                .reveal(0.12)
+                .opacity(revealStage(h, 0.42, 0.42))
+                .offset(y: 10 * (1 - revealStage(h, 0.42, 0.42)))
         }
         .frame(maxWidth: .infinity)
         .padding(.top, Theme.Space.md)
+        }
+    }
+
+    /// Stagger one coordinated 0…1 hero animation without starting independent animations that
+    /// can drift apart under load. The values stay clamped, including during spring overshoot.
+    /// `clock` is the INTERPOLATED hero value (from `Clocked`), never the state itself.
+    private func revealStage(_ clock: Double, _ start: Double, _ span: Double) -> Double {
+        if reduceMotion { return 1 }
+        return min(1, max(0, (clock - start) / max(0.001, span)))
     }
 
     /// "Maya." when we have a first name, "ready." otherwise.
     /// One definition, drawn twice: once as the name, once as the mask its light travels through.
     private var heroNameText: some View {
-        Text(heroName).font(.display(40, weight: .semibold))
+        Text(heroName).font(.display(42, weight: .semibold))
     }
 
-    private var heroName: String {
-        let first = vm.name.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
-        return (first.map { "\($0)." } ?? "ready.")
+    private var firstName: String? {
+        vm.name.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
     }
+
+    private var heroName: String { firstName.map { "\($0)." } ?? "ready." }
+
+    /// The overture writes the name alone, large. Without one it writes the word the page is
+    /// about instead — "Ready" — rather than a placeholder that admits the field was empty.
+    private var overtureName: String { firstName ?? "Ready" }
 
     /// Kept for the walkers, which look for this text on the page.
     private var planReadyTitle: String {
-        let first = vm.name.trimmingCharacters(in: .whitespaces).split(separator: " ").first.map(String.init)
-        return first.map { "Your plan is ready, \($0)" } ?? "Your plan is ready"
+        firstName.map { "Your plan is ready, \($0)" } ?? "Your plan is ready"
     }
 
-    // MARK: The block, as a curve
+    // MARK: The block, as terrain
 
     /// Per-week planned volume across the block: run distance for runners, else session count.
     /// The plan's actual periodization — never a decorative line.
@@ -387,25 +493,36 @@ struct PlanRevealView: View {
         if data.values.count > 1, (data.values.max() ?? 0) > 0 {
             let maxV = data.values.max() ?? 1
             let peakIdx = data.values.firstIndex(of: maxV) ?? 0
-            VStack(alignment: .leading, spacing: Theme.Space.md) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        sectionLabel("YOUR TRAINING BLOCK")
-                        Text(vm.running ? "Weekly distance" : "Sessions per week")
-                            .font(.rounded(17, weight: .semibold)).foregroundStyle(Theme.ink)
+            VStack(alignment: .leading, spacing: Theme.Space.md + 2) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        sectionLabel("YOUR PATH")
+                        Spacer()
+                        Text("\(data.values.count) weeks")
+                            .font(.rounded(13, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(Theme.inkSecondary)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Capsule().fill(Theme.tintedField))
                     }
-                    Spacer()
-                    Text("\(data.values.count) weeks")
-                        .font(.rounded(13, weight: .semibold)).monospacedDigit()
+                    Text(pathGoalTitle)
+                        .font(.display(24, weight: .bold))
+                        .foregroundStyle(Theme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(vm.goal.planSubtitle)
+                        .font(.rounded(14, weight: .medium))
                         .foregroundStyle(Theme.inkSecondary)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Capsule().fill(Theme.tintedField))
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                VolumeCurve(values: data.values, peakIndex: peakIdx, raceWeek: data.raceWeek,
-                            peakLabel: peakLabel(maxV), progress: curveIn, calloutIn: calloutIn,
-                            gleam: curveGleam, alive: curveOnScreen)
-                    .frame(height: 170)
-                    .onScrollVisibilityChange(threshold: 0.2) { curveOnScreen = $0 }
+                AscentCurve(values: data.values, peakIndex: peakIdx, raceWeek: data.raceWeek,
+                            peakLabel: vm.running ? planDistance(maxV) : "\(Int(maxV)) sessions",
+                            destinationLabel: pathGoalLabel,
+                            destinationSystemImage: vm.goal.planSystemImage,
+                            progress: reduceMotion ? 1 : curveIn,
+                            calloutIn: reduceMotion || calloutIn,
+                            arrival: reduceMotion ? 1 : pathArrival,
+                            gleam: reduceMotion ? 1 : curveGleam)
+                    .frame(height: 192)
                 if !data.caption.isEmpty {
                     // "Peaks at 13.5 mi in week 6" is the pill's own sentence, so it arrives WITH
                     // the pill. Reading the caption before the chart has said anything is reading
@@ -414,7 +531,7 @@ struct PlanRevealView: View {
                         .font(.rounded(Theme.FontSize.caption, weight: .medium))
                         .foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                        .opacity(calloutIn ? 1 : 0)
+                        .opacity(calloutIn || reduceMotion ? 1 : 0)
                 }
             }
             .padding(Theme.Space.md + 4)
@@ -423,18 +540,36 @@ struct PlanRevealView: View {
         }
     }
 
-    private func peakLabel(_ v: Double) -> String {
-        vm.running ? planDistance(v) : "\(Int(v.rounded())) sessions"
+    /// Short enough to sit at the end of the curve. The longer coaching rationale lives above it.
+    private var pathGoalLabel: String {
+        if vm.goal == .raceDistance, let race = vm.raceDistance {
+            return vm.goalTimeLabel.map { "\($0) \(race.label)" } ?? race.label
+        }
+        return switch vm.goal {
+        case .endurance: "MORE ENDURANCE"
+        case .stayConsistent: "CONSISTENCY"
+        case .generalFitness: "RUNNING FITNESS"
+        case .loseFat: "FITTER + LEANER"
+        case .buildMuscle: "MORE MUSCLE"
+        case .getStronger: "STRONGER RUNNER"
+        case .raceDistance: "RACE READY"
+        }
+    }
+
+    private var pathGoalTitle: String {
+        if vm.goal == .raceDistance, let race = vm.raceDistance {
+            return "Road to your \(race.label)"
+        }
+        return vm.goal.planLabel
     }
 
     /// A planned weekly volume, written the way a coach writes one.
     ///
     /// `Formatters.distance` carries significant precision because it is built for LOGGED runs,
     /// where 5.03 mi is a fact. A week's planned volume is a target, so two decimals on it claim
-    /// an accuracy the plan does not have and never intended: the page was printing "Peaks at
-    /// 20.32 mi in week 6" above a ladder reading "15 mi · 16.5 mi", which is one quantity in two
-    /// precisions on one screen. Half-unit steps below ten, whole units above — the same grammar
-    /// `RunRounding` already uses for the sessions these totals are made of.
+    /// an accuracy the plan does not have and never intended. Half-unit steps below ten, whole
+    /// units above — the same grammar `RunRounding` already uses for the sessions these totals
+    /// are made of.
     private func planDistance(_ meters: Double) -> String {
         let imperial = distanceUnit.resolved() == .imperial
         let value = imperial ? meters / Formatters.metersPerMile : meters / 1_000
@@ -464,14 +599,34 @@ struct PlanRevealView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
-        .onScrollVisibilityChange(threshold: 0.2) { tilesOnScreen = $0 }
+        .onScrollVisibilityChange(threshold: 0.2) { visible in
+            tilesOnScreen = visible
+            guard visible, !statsReached else { return }
+            statsReached = true
+            startStats()
+        }
     }
 
-    /// The light's arrival for tile `index` — one wave crossing the row, each tile a beat behind
-    /// the last, so the group reads as one surface catching it rather than five separate flashes.
-    private func tileLight(_ index: Int) -> Double {
-        min(1, max(0, (tileSheen - Double(index) * 0.11) / 0.62))
+    /// Deal the tiles, then tally them in the order the light crosses them. Runs once, at the
+    /// later of "the athlete can see them" and "their beat in the arrival" — so a tall phone gets
+    /// them in sequence and a small one gets them the moment they scroll up, never a page that
+    /// has already finished counting behind the fold.
+    private func startStats() {
+        guard !statsStarted, !reduceMotion, statsReached, let began = revealClock else { return }
+        statsStarted = true
+        let d = max(0, statsBeat - Date().timeIntervalSince(began))
+        withAnimation(.easeOut(duration: 1.05).delay(d)) { statsIn = 1 }
+        withAnimation(.easeOut(duration: 0.92).delay(d + 0.24)) { shownWeeks = Double(planWeekCount) }
+        withAnimation(.easeOut(duration: 0.92).delay(d + 0.37)) { shownDays = Double(vm.daysPerWeek) }
+        withAnimation(.easeOut(duration: 0.92).delay(d + 0.50)) { shownSessions = Double(totalSessions) }
+        withAnimation(.easeInOut(duration: 1.15).delay(d + 0.54)) { tileSheen = 1 }
     }
+
+    /// The tiles' light and their deal are both derived from ONE clock each, inside animatable
+    /// views (`SheenBand`, `TileDeal`, `RevealTileGhost`), so every tile reads its own slice per
+    /// frame: one wave crossing the row, each tile a beat behind the last.
+    private var tileSheenClock: Double { reduceMotion ? 10 : tileSheen }
+    private var tileDealClock: Double { reduceMotion ? 10 : statsIn }
 
     /// The band is clipped to the tile's OWN shape rather than the tile being clipped to the band:
     /// clipping the tile would take its contact shadow with it, and the raised material is the
@@ -510,7 +665,7 @@ struct PlanRevealView: View {
             Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
                 .lineLimit(1).minimumScaleFactor(0.8)
             if let kind = ghost(for: label) {
-                RevealTileGhost(kind: kind, draw: tileLight(index), alive: tilesOnScreen)
+                RevealTileGhost(kind: kind, clock: tileSheenClock, index: index, alive: tilesOnScreen)
                     .frame(height: 15)
                     .padding(.horizontal, 12)
                     .padding(.top, 3)
@@ -519,7 +674,8 @@ struct PlanRevealView: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity).frame(height: 104)
         .raised(tileShape())
-        .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
+        .overlay { sheenBand(tileSheenClock, index: index).clipShape(tileShape()) }
+        .modifier(TileDeal(clock: tileDealClock, index: index))
     }
 
     private func textTile(_ value: String, _ label: String, _ index: Int) -> some View {
@@ -530,7 +686,8 @@ struct PlanRevealView: View {
         }
         .frame(maxWidth: .infinity).frame(height: 84)
         .raised(tileShape())
-        .overlay { sheenBand(tileLight(index)).clipShape(tileShape()) }
+        .overlay { sheenBand(tileSheenClock, index: index).clipShape(tileShape()) }
+        .modifier(TileDeal(clock: tileDealClock, index: index))
     }
 
     // MARK: Reflections
@@ -541,9 +698,10 @@ struct PlanRevealView: View {
             // One at a time, in order. These are the athlete's own answers handed back to them,
             // and a block of them appearing at once reads as a list that was already written.
             // Arriving one after another reads as the plan being assembled out of what they said.
+            Clocked(t: chipsIn) { c in
             FlowLayout(spacing: 10) {
                 ForEach(Array(vm.reflections().enumerated()), id: \.element) { i, chip in
-                    let lit = min(1, max(0, (chipsIn - Double(i) * 0.09) / 0.34))
+                    let lit = reduceMotion ? 1 : min(1, max(0, (c - Double(i) * 0.09) / 0.34))
                     Text(chip)
                         .font(.rounded(14, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(Theme.ink)
@@ -552,6 +710,7 @@ struct PlanRevealView: View {
                         .scaleEffect(0.88 + 0.12 * lit)
                         .opacity(lit)
                 }
+            }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -680,7 +839,7 @@ struct PlanRevealView: View {
         if let first = weeksGrouped.first {
             VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
                 sectionLabel("YOUR FIRST WEEK")
-                WeekStrip(sessions: first.sessions, fill: stripFill)
+                WeekStrip(sessions: first.sessions, fill: reduceMotion ? 1 : stripFill)
                     .onScrollVisibilityChange(threshold: 0.5) { visible in
                         guard visible, stripFill == 0, !reduceMotion else { return }
                         withAnimation(.easeOut(duration: 0.75)) { stripFill = 1 }
@@ -731,12 +890,9 @@ struct PlanRevealView: View {
                         .padding(.horizontal, 18).padding(.vertical, 12)
                         .background {
                             // Bottom-anchored and 2pt tall: a baseline the row sits on, not a fill
-                            // behind the type. A bar tall enough to read as a background would put
-                            // tinted ground under half the rows and none under the others.
-                            //
-                            // Measured off the ROW, not `containerRelativeFrame` — that reports the
-                            // scroll container's width, so the peak week's bar ran the full page
-                            // and out through the side of the card it lives in.
+                            // behind the type. Measured off the ROW, not `containerRelativeFrame`
+                            // — that reports the scroll container's width, so the peak week's bar
+                            // ran the full page and out through the side of the card.
                             GeometryReader { geo in
                                 let full = max(0, geo.size.width - 36)
                                 Capsule()
@@ -777,81 +933,359 @@ struct PlanRevealView: View {
 
     // MARK: Reveal orchestration
 
-    /// The arrival, as one sequence rather than a pile of independent fades.
-    ///
-    /// Order is the point: the numbers settle, the block draws itself, the name catches the light,
-    /// the peak is called out, the line is polished, the tiles catch the same light in turn, and
-    /// the week assembles last. Each beat lands in a quiet moment left by the one before it —
-    /// two lights running at once is where this stops reading as craft.
+    /// The whole arrival as one timed sequence, in seconds from appear. Every beat is placed
+    /// relative to `T`, the moment the overture lifts — which depends on how long the name is,
+    /// since each letter takes its own beat to land.
     private func animateIn() {
-        // The celebration mounts in BOTH modes: Reduce Motion gets the still scatter, not an empty
-        // page. It is torn down after its own duration — the fall runs long enough that its tail is
-        // still in the air when the peak is called out and the haptic lands, so the page has ONE
-        // celebration beat rather than a flourish at the top and a buzz forty frames later, while
-        // the still treatment is deliberately shorter. Nothing is left drawing, or ticking, at rest.
-        confettiStart = .now
-        let celebration = RevealConfettiScatter.duration(reduceMotion: reduceMotion)
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(celebration + 0.3))
-            confettiStart = nil
-        }
         guard !reduceMotion else {
+            // Every band ends off its own view and every stage reads 1, so the finished frame is
+            // simply the still page. The celebration is still marked, once, the house way.
+            overtureMounted = false
             shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
             shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
-            // Every band ends off its own view, so the finished frame is simply the still page.
-            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1
-            checkDraw = 1; chipsIn = 1
+            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1; ctaSheen = 1
+            checkDraw = 1; chipsIn = 1; heroIn = 1; artifactIn = 1; statsIn = 1; ctaIn = 1
+            arrivalHalo = 1; artifactGlow = 1; pathArrival = 1; pageIn = 1
+            statsStarted = true
+            confettiStart = .now
             Haptics.celebration()
+            sequence?.cancel()
+            sequence = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(RevealConfettiScatter.restTotal + 0.2))
+                guard !Task.isCancelled else { return }
+                confettiStart = nil
+            }
             return
         }
-        // The three counters land in the SAME ORDER the light crosses them. They used to share one
-        // animation and finish together while the sheen was still travelling, so the row's two
-        // motions disagreed with each other — the kind of half-beat that reads as cheap without
-        // anyone being able to say why.
-        withAnimation(.easeOut(duration: 1.1).delay(0.30)) { shownWeeks = Double(planWeekCount) }
-        withAnimation(.easeOut(duration: 1.1).delay(0.41)) { shownDays = Double(vm.daysPerWeek) }
-        withAnimation(.easeOut(duration: 1.1).delay(0.52)) { shownSessions = Double(totalSessions) }
-        withAnimation(Motion.pen(1.4).delay(0.35)) { curveIn = 1 }
-        withAnimation(.easeOut(duration: 0.55).delay(0.20)) { checkDraw = 1 }
-        withAnimation(.easeInOut(duration: 0.95).delay(0.55)) { nameSheen = 1 }
-        withAnimation(.easeInOut(duration: 1.25).delay(1.05)) { tileSheen = 1 }
-        withAnimation(.spring(response: 0.5, dampingFraction: 0.7).delay(1.5)) { calloutIn = true }
-        withAnimation(.easeInOut(duration: 0.9).delay(1.8)) { curveGleam = 1 }
-        // The celebration belongs to the MOMENT, not to the function call. It used to fire here,
-        // synchronously — at t=0, against a blank page with every counter still reading zero, a
-        // full second and a half before the plan's peak was called out. A success haptic with
-        // nothing on screen to succeed at is just a buzz.
-        celebrate?.cancel()
-        celebrate = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.55))
-            guard !Task.isCancelled else { return }
+        Haptics.warm()
+
+        // ACT I — the overture. One linear clock for the letters; each reads its own eased slice.
+        let letterCount = max(1, overtureName.count)
+        let lettersEnd = RevealOverture.lettersStart + RevealOverture.stagger * Double(letterCount - 1)
+            + RevealOverture.letterDuration
+        withAnimation(.linear(duration: lettersEnd).delay(0)) { titleLetters = lettersEnd }
+        withAnimation(Motion.pen(0.55).delay(lettersEnd - 0.30)) { titleLine = 1 }
+        withAnimation(.easeInOut(duration: 0.80).delay(lettersEnd - 0.18)) { titleSheen = 1 }
+        // The card lifts away; the page rises under it. They overlap so there is never a frame
+        // with nothing on it.
+        let T = lettersEnd + 0.34
+        withAnimation(.timingCurve(0.55, 0.0, 0.25, 1.0, duration: 0.66).delay(T)) { overtureExit = 1 }
+        withAnimation(.spring(response: 0.92, dampingFraction: 0.86).delay(T - 0.06)) { pageIn = 1 }
+
+        // ACT II — the ascent. Acknowledgement, identity, the artifact, then its proof. The card
+        // lands before its terrain is run; counters settle in the same direction as their sheen.
+        withAnimation(Motion.pen(0.96).delay(T + 0.16)) { heroIn = 1 }
+        withAnimation(.easeOut(duration: 0.52).delay(T + 0.26)) { checkDraw = 1 }
+        withAnimation(.easeOut(duration: 1.15).delay(T + 0.22)) { arrivalHalo = 1 }
+        withAnimation(.easeInOut(duration: 0.92).delay(T + 0.58)) { nameSheen = 1 }
+        withAnimation(.spring(response: 0.74, dampingFraction: 0.80).delay(T + 0.46)) { artifactIn = 1 }
+        withAnimation(.easeInOut(duration: 1.34).delay(T + 0.54)) { artifactGlow = 1 }
+        withAnimation(Motion.pen(1.42).delay(T + 0.74)) { curveIn = 1 }
+        // The tiles: see `startStats` — their beat is here, but they wait to be seen.
+        revealClock = Date()
+        statsBeat = T + 0.98
+        startStats()
+        withAnimation(.spring(response: 0.56, dampingFraction: 0.78).delay(T + 1.42)) { ctaIn = 1 }
+        withAnimation(.easeInOut(duration: 0.9).delay(T + 1.9)) { ctaSheen = 1 }
+        withAnimation(.spring(response: 0.50, dampingFraction: 0.80).delay(T + 1.88)) { calloutIn = true }
+        withAnimation(.easeOut(duration: 0.72).delay(T + 2.02)) { pathArrival = 1 }
+        withAnimation(.easeInOut(duration: 0.86).delay(T + 2.40)) { curveGleam = 1 }
+
+        // The haptics belong to the MOMENTS, not to the function call: a tick as each letter lands,
+        // a press as the card lands, and the success beat as the runner reaches the goal — never a
+        // buzz against a blank page.
+        sequence?.cancel()
+        sequence = Task { @MainActor in
+            let clock = ContinuousClock()
+            let start = clock.now
+            func at(_ s: Double) async -> Bool {
+                let target = start + .seconds(s)
+                if target > clock.now { try? await Task.sleep(until: target, clock: clock) }
+                return !Task.isCancelled
+            }
+            for i in 0..<letterCount {
+                guard await at(RevealOverture.lettersStart + RevealOverture.stagger * Double(i) + 0.12) else { return }
+                Haptics.selection()
+            }
+            guard await at(T + 0.46) else { return }
+            Haptics.light()
+            guard await at(T + 1.92) else { return }
+            confettiStart = .now
+            guard await at(T + 2.26) else { return }
             Haptics.celebration()
+            guard await at(T + 1.92 + RevealConfettiScatter.total + 0.25) else { return }
+            confettiStart = nil
+        }
+        // The overture leaves the tree once it is gone — a full-screen layer with nothing on it is
+        // still a layer the compositor has to consider.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(T + 0.8))
+            overtureMounted = false
         }
     }
 }
 
-// MARK: - The volume curve
+// MARK: - Act I: the overture
 
-/// The block's weekly volume as a smooth curve with a soft lavender fill under it, faint week
-/// gridlines, the peak called out, race week flagged. Draws itself with `trim` (a path
-/// transform, never a layout change). Reduce Motion: fully drawn on arrival.
-private struct VolumeCurve: View {
+/// The title card: the athlete's own name, alone, in the display face — each letter rising out
+/// of blur into place, a start line drawing outward beneath it, one specular pass through the
+/// letterforms. Then the whole card lifts, shrinks and dissolves toward the headline that carries
+/// the same name on the page beneath, so the two read as one object changing scale.
+///
+/// Everything here is a transform on an already-laid-out glyph: blur, opacity, offset and scale.
+/// Nothing is typed in, nothing reflows.
+private struct RevealOverture: View, Animatable {
+    let name: String
+    /// The letter clock, in seconds — each letter reads its own eased slice of it.
+    var letters: Double
+    var line: Double
+    var sheen: Double
+    var exit: Double
+
+    /// All four clocks interpolate, so every glyph, the line and the exit derive per frame.
+    var animatableData: AnimatablePair<AnimatablePair<Double, Double>, AnimatablePair<Double, Double>> {
+        get { AnimatablePair(AnimatablePair(letters, line), AnimatablePair(sheen, exit)) }
+        set { letters = newValue.first.first; line = newValue.first.second
+              sheen = newValue.second.first; exit = newValue.second.second }
+    }
+
+    static let lettersStart = 0.14
+    static let stagger = 0.06
+    static let letterDuration = 0.58
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var glyphs: [Character] { Array(name) }
+
+    /// A long name gets a smaller face rather than a wrapped or clipped one.
+    private var pointSize: CGFloat {
+        let n = CGFloat(max(glyphs.count, 1))
+        return max(34, min(68, 68 * 6.5 / n))
+    }
+
+    /// Eased arrival for glyph `i`: 0 before its beat, 1 once landed.
+    private func landed(_ i: Int) -> Double {
+        let start = Self.lettersStart + Self.stagger * Double(i)
+        let p = min(1, max(0, (letters - start) / Self.letterDuration))
+        return 1 - pow(1 - p, 3)
+    }
+
+    /// The eyebrow and the line share the letter clock rather than owning animations of their own.
+    private var eyebrowIn: Double { min(1, max(0, letters / 0.42)) }
+
+    private var exitEase: Double { exit * exit * (3 - 2 * exit) }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                OnboardingStyle.canvas(colorScheme)
+                // The paywall's field, faint — the same air the page under this one breathes.
+                AiryField(intensity: colorScheme == .dark ? 0.4 : 0.6, paintsBackground: false)
+                    .mask(LinearGradient(colors: [.black, .black.opacity(0.4), .clear],
+                                         startPoint: .top, endPoint: .bottom))
+                VStack(spacing: 22) {
+                    Text("YOUR PLAN")
+                        .font(.rounded(12, weight: .bold)).tracking(3.2)
+                        .foregroundStyle(Theme.inkTertiary)
+                        .opacity(eyebrowIn)
+                        .offset(y: 8 * (1 - eyebrowIn))
+                    nameLine
+                        .overlay { SheenBand(clock: sheen, strength: 0.95).mask(nameLine) }
+                    Capsule()
+                        .fill(LinearGradient(colors: [Theme.purple, Theme.iridescent[1]],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: 120, height: 2)
+                        .scaleEffect(x: max(0.001, line), y: 1, anchor: .center)
+                        .opacity(min(1, line * 3))
+                }
+                .padding(.horizontal, Theme.Space.lg)
+                // The exit: up toward where the headline will be, smaller, softer, gone.
+                .scaleEffect(1 - 0.34 * exitEase)
+                .offset(y: -geo.size.height * 0.26 * exitEase)
+                .blur(radius: 10 * exitEase)
+                .opacity(1 - min(1, exitEase * 1.35))
+            }
+            .opacity(1 - exitEase)
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// One definition, drawn twice: once as the name, once as the mask its light travels through.
+    private var nameLine: some View {
+        HStack(spacing: -1) {
+            ForEach(Array(glyphs.enumerated()), id: \.offset) { i, ch in
+                let p = landed(i)
+                Text(String(ch))
+                    .font(.display(pointSize, weight: .semibold))
+                    .tracking(-1.5)
+                    .foregroundStyle(Theme.ink)
+                    .opacity(p)
+                    .blur(radius: 14 * (1 - p))
+                    .scaleEffect(1.10 - 0.10 * p, anchor: .bottom)
+                    .offset(y: 26 * (1 - p))
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+    }
+
+}
+
+// MARK: - Per-frame derivation
+
+/// SwiftUI interpolates only `Animatable` data: a value derived in a view's body from an animated
+/// state reads its END value on the first frame of the animation, and every stage computed from it
+/// collapses into a single fade. Wrapping the subtree in this view — animatable over one clock —
+/// makes the closure run per frame with the interpolated value, so staggers, bells and staged
+/// entrances actually happen. (`AnimatedCounter` is the same idea, for one number.)
+private struct Clocked<Content: View>: View, Animatable {
+    var t: Double
+    @ViewBuilder let content: (Double) -> Content
+
+    var animatableData: Double {
+        get { t }
+        set { t = newValue }
+    }
+
+    var body: some View { content(t) }
+}
+
+/// A narrow specular band travelling left to right, for masking onto whatever should catch the
+/// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of the
+/// animation are a clean no-op — nothing to fade in or out. With an `index`, the band reads its
+/// own slice of a shared clock: one light crossing a row of tiles, each a beat behind the last.
+///
+/// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across a
+/// surface, and on the name it brightens the gradient instead of painting over it.
+private struct SheenBand: View, Animatable {
+    var clock: Double
+    var index: Int? = nil
+    var strength = 0.9
+
+    var animatableData: Double {
+        get { clock }
+        set { clock = newValue }
+    }
+
+    private var progress: Double {
+        guard let index else { return clock }
+        return min(1, max(0, (clock - Double(index) * 0.11) / 0.62))
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = max(geo.size.width, 1)
+            let band = max(56, w * 0.32)
+            LinearGradient(colors: [.white.opacity(0), .white.opacity(strength), .white.opacity(0)],
+                           startPoint: .leading, endPoint: .trailing)
+                .frame(width: band)
+                .offset(x: -band + (w + band * 2) * progress)
+                .blendMode(.plusLighter)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - The tiles standing up
+
+/// A stat tile is dealt onto the page: it stands up from lying almost flat (a perspective tilt
+/// about its top edge), rising and brightening as it does. A card that only fades in is a layer;
+/// one that stands up is an object being placed.
+private struct TileDeal: ViewModifier, Animatable {
+    var clock: Double
+    let index: Int
+    var animatableData: Double {
+        get { clock }
+        set { clock = newValue }
+    }
+
+    /// The tiles are dealt one after another off one clock; each eases into its rest on its own
+    /// slice of it.
+    private var progress: Double {
+        let p = min(1, max(0, (clock - Double(index) * 0.13) / 0.58))
+        return 1 - pow(1 - p, 3)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .rotation3DEffect(.degrees(-28 * (1 - progress)), axis: (x: 1, y: 0, z: 0),
+                              anchor: .top, perspective: 0.7)
+            .offset(y: 18 * (1 - progress))
+            .opacity(progress)
+    }
+}
+
+// MARK: - Arrival halo
+
+/// Three quiet rings spend themselves behind the ready seal. This is the reveal's opening breath:
+/// a one-shot expansion, never a loop, and fully gone at rest so the final page stays precise.
+private struct PlanArrivalHalo: View, Animatable {
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    var body: some View {
+        ZStack {
+            ring(start: 0.00, span: 0.62, lineWidth: 1.2)
+            ring(start: 0.16, span: 0.68, lineWidth: 0.9)
+            ring(start: 0.34, span: 0.66, lineWidth: 0.7)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func ring(start: Double, span: Double, lineWidth: CGFloat) -> some View {
+        let p = min(1, max(0, (progress - start) / max(span, 0.001)))
+        let alpha = sin(p * .pi)
+        return Capsule()
+            .strokeBorder(
+                AngularGradient(colors: [Theme.iridescentDeep[1], Theme.purple,
+                                         Theme.iridescentDeep[2], Theme.iridescentDeep[0],
+                                         Theme.iridescentDeep[1]], center: .center),
+                lineWidth: lineWidth
+            )
+            .scaleEffect(0.48 + p * 0.76)
+            .opacity(alpha * 0.46)
+    }
+}
+
+
+// MARK: - The ascent curve
+
+/// The block's weekly volume as terrain. A smooth line over an aurora fill, with a runner glyph
+/// that RUNS it as it draws — leaning into the climbs, a comet tail behind it, each week's
+/// gridline lighting as it is passed and settling faint again, the peak flaring once, the race
+/// week flagged, the goal beacon landing as the runner arrives. Every moving part is a path
+/// transform (`trim`) or a transform on a placed view; the geometry is computed once per layout.
+///
+/// Reduce Motion, and the settled page: the finished terrain, the beacon, the pill — no runner,
+/// no tail, no light. The final frame has to be a chart you can read.
+private struct AscentCurve: View, Animatable {
     let values: [Double]
     let peakIndex: Int
     let raceWeek: Int?
+    /// What the peak IS, for its callout: "13.5 mi" or "5 sessions".
     let peakLabel: String
-    let progress: Double
+    let destinationLabel: String
+    let destinationSystemImage: String
+    var progress: Double
     let calloutIn: Bool
-    /// A highlight travelling the finished stroke, 0…1 once. Runs AFTER the pen: a line that is
-    /// still being drawn is already the interesting thing on screen, and two lights on one path
+    var arrival: Double
+    /// A highlight travelling the finished stroke, 0…1 once. Runs AFTER the runner: a line that
+    /// is still being run is already the interesting thing on screen, and two lights on one path
     /// read as a glitch rather than as craft.
     var gleam: Double = 1
-    /// Run the peak beacon's loop. False once the card has scrolled away — a breathing halo six
-    /// weeks of plan above the athlete's eyeline is heat with nobody to see it.
-    var alive: Bool = true
 
+    /// The run, the arrival and the gleam all interpolate, so the runner's position, the wake and
+    /// the flare are read off the line per frame rather than jumping to their end state.
+    var animatableData: AnimatablePair<Double, AnimatablePair<Double, Double>> {
+        get { AnimatablePair(progress, AnimatablePair(arrival, gleam)) }
+        set { progress = newValue.first; arrival = newValue.second.first; gleam = newValue.second.second }
+    }
     private let inset: CGFloat = 8
-    private let top: CGFloat = 30      // room for the callout pill
+    private let top: CGFloat = 40      // room for the destination pill and the peak callout
     private let axis: CGFloat = 22     // room for week labels
 
     var body: some View {
@@ -860,31 +1294,59 @@ private struct VolumeCurve: View {
             let pts = points(in: CGSize(width: w, height: h))
             let curve = smoothPath(pts)
             let n = values.count
+            let destinationIndex = min(max((raceWeek ?? n) - 1, 0), n - 1)
             let stroke = LinearGradient(colors: [Theme.iridescent[1], Theme.purple, Theme.iridescent[0]],
                                         startPoint: .leading, endPoint: .trailing)
             ZStack(alignment: .topLeading) {
-                // Week gridlines.
+                // Week gridlines. Each one lights as the runner passes and settles back to a
+                // whisper — the wake of the run, rather than a grid that was always there.
                 ForEach(0..<n, id: \.self) { i in
-                    Rectangle().fill(Theme.ink.opacity(0.05)).frame(width: 1)
+                    let wake = wakeAt(index: i, count: n)
+                    Rectangle()
+                        .fill(Theme.purple.opacity(0.05 + 0.34 * wake))
+                        .frame(width: 1)
                         .frame(height: h - axis - top, alignment: .top)
                         .offset(x: pts[i].x, y: top)
                 }
-                // Fill under the curve, revealed with the pen. The mask is a TRANSFORM, not a
+                // Fill under the curve, revealed with the runner. The mask is a TRANSFORM, not a
                 // width: `Rectangle().frame(width: w * progress)` inside a mask is a layout change,
                 // and it was not clipping at all — the whole fill stood there complete while the
-                // line was still being drawn, which is the one thing a self-drawing chart must not
-                // do (caught on video, 2026-08-28). Scaling from the leading edge is also the rule
-                // this project already holds itself to: animate transforms, never layout.
+                // line was still being drawn (caught on video, 2026-08-28). Scaling from the
+                // leading edge is also the rule this project holds itself to.
                 fillPath(curve, base: h - axis, last: pts.last!, first: pts.first!)
-                    .fill(LinearGradient(colors: [Theme.purple.opacity(0.22), Theme.purple.opacity(0.0)],
-                                         startPoint: .top, endPoint: .bottom))
+                    .fill(LinearGradient(stops: [
+                        .init(color: Theme.purple.opacity(0.30), location: 0),
+                        .init(color: Theme.iridescent[1].opacity(0.16), location: 0.55),
+                        .init(color: Theme.iridescent[1].opacity(0.0), location: 1),
+                    ], startPoint: .top, endPoint: .bottom))
                     .mask(alignment: .leading) {
                         Rectangle().scaleEffect(x: max(0.0001, progress), y: 1, anchor: .leading)
                     }
-                // The curve itself.
+                // The peak flares once, as the runner crests it: a soft pool of light that blooms
+                // and is spent, so the highest week is felt as a moment and not marked as a spot.
+                let flare = max(0, sin(min(1, max(0, (progress - peakThreshold + 0.02) / 0.22)) * .pi))
+                Circle()
+                    .fill(RadialGradient(colors: [Theme.purple.opacity(0.42), Theme.iridescent[1].opacity(0.16), .clear],
+                                         center: .center, startRadius: 0, endRadius: 40))
+                    .frame(width: 80, height: 80)
+                    .scaleEffect(0.6 + 0.6 * flare)
+                    .opacity(flare)
+                    .position(pts[peakIndex])
+                    .blendMode(.plusLighter)
+                // The line itself.
                 curve.trim(from: 0, to: progress)
                     .stroke(stroke, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .shadow(color: Theme.purple.opacity(0.35), radius: 6, y: 3)
+                // The comet tail: the last stretch of the line the runner has just covered, lit
+                // and softened, so the run has a wake. Gone the moment the runner arrives.
+                if progress > 0.01, progress < 1 {
+                    curve.trim(from: max(0, progress - 0.11), to: progress)
+                        .stroke(LinearGradient(colors: [.white.opacity(0), .white.opacity(0.95)],
+                                               startPoint: .leading, endPoint: .trailing),
+                                style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                        .blur(radius: 2.2)
+                        .blendMode(.plusLighter)
+                }
                 // The gleam: a short segment of the SAME path, lit. Travels past 1 so it leaves
                 // the line cleanly at the end instead of pooling at the last point.
                 if progress >= 1, gleam > 0, gleam < 1 {
@@ -894,45 +1356,39 @@ private struct VolumeCurve: View {
                         .blendMode(.plusLighter)
                         .allowsHitTesting(false)
                 }
-                // Pen head.
-                if progress < 1 {
-                    Circle().fill(.white).frame(width: 10, height: 10)
-                        .overlay(Circle().stroke(Theme.purple, lineWidth: 2.5))
-                        .position(pointAlong(curve, progress))
+                // The runner. Leans into the slope it is on, and hands over to the beacon on
+                // arrival rather than standing on top of it.
+                if progress > 0.005, arrival < 1 {
+                    let track = CurveTrack(controlPoints: pts)
+                    let here = track.point(at: progress)
+                    let lean = leanAngle(tangent: track.tangent(at: progress))
+                    AscentRunner(lean: lean)
+                        .position(here)
+                        .opacity(1 - min(1, arrival * 1.6))
+                        .scaleEffect(1 - 0.3 * min(1, arrival * 1.6))
                 }
-                // Peak: dot + pill. The dot is the ONE thing on this page that keeps moving —
-                // a slow beacon on the block's summit, which is exactly what motion is reserved
-                // for here (the peak is the achievement the whole plan is shaped around). Every
-                // other light on the reveal travels once and stops; a second looping thing would
-                // turn considered into busy.
-                let p = pts[peakIndex]
-                PeakBeacon(active: calloutIn && alive)
-                    .position(p)
-                    .opacity(calloutIn ? 1 : 0)   // the DOT follows the callout; only the halo follows `alive`
-                Text(peakLabel)
-                    .font(.rounded(12, weight: .bold)).monospacedDigit()
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(Capsule().fill(Color(hex: "1C1C1E")))
-                    .fixedSize()
-                    .position(x: min(max(p.x, 44), w - 44), y: max(12, p.y - 24))
-                    .scaleEffect(calloutIn ? 1 : 0.7, anchor: .bottom)
-                    .opacity(calloutIn ? 1 : 0)
-                // Race day flag.
-                if let rw = raceWeek, rw - 1 < n {
-                    let rx = pts[rw - 1].x
-                    Image(systemName: "flag.checkered.circle.fill")
-                        .font(.system(size: 16)).foregroundStyle(Theme.ink)
-                        .position(x: rx, y: h - axis - 10)
-                        .opacity(calloutIn ? 1 : 0)
+                // Three quiet beats make the data read as a journey instead of a chart. They are
+                // pinned to the real path and appear only when the run reaches them.
+                pathBeat("START", point: pts[0], visible: pathVisibility(at: 0, count: n),
+                         width: w, chartHeight: h)
+                if peakIndex > 0, peakIndex < destinationIndex {
+                    peakCallout(point: pts[peakIndex], width: w)
                 }
-                // Week labels: first, peak, last, plus sparse ticks.
+                let destination = pts[destinationIndex]
+                PlanGoalBeacon(progress: arrival, systemImage: destinationSystemImage)
+                    .position(destination)
+                goalPill(width: w, point: destination)
+                // Week labels: first, peak, last, plus sparse ticks — each rising in as the runner
+                // passes its week.
                 ForEach(0..<n, id: \.self) { i in
                     let tickEvery = n <= 8 ? 1 : (n <= 12 ? 2 : 4)
                     if i == 0 || i == n - 1 || i == peakIndex || i.isMultiple(of: tickEvery) {
+                        let vis = pathVisibility(at: i, count: n)
                         Text(i == 0 ? "Wk 1" : "\(i + 1)")
                             .font(.rounded(11, weight: .semibold)).monospacedDigit()
                             .foregroundStyle(i == peakIndex ? Theme.ink : Theme.inkTertiary)
+                            .opacity(vis)
+                            .offset(y: 5 * (1 - vis))
                             .position(x: pts[i].x, y: h - 8)
                     }
                 }
@@ -950,6 +1406,95 @@ private struct VolumeCurve: View {
             CGPoint(x: inset + usableW * CGFloat(i) / CGFloat(n - 1),
                     y: top + usableH * (1 - CGFloat(v / maxV)))
         }
+    }
+
+    /// Where along the run (0…1) the peak week sits.
+    private var peakThreshold: Double {
+        Double(peakIndex) / Double(max(values.count - 1, 1))
+    }
+
+    /// How lit week `index`'s gridline is right now: a bell around the moment the runner passes
+    /// it, so the light arrives with the runner and fades behind. At rest every line is faint.
+    private func wakeAt(index: Int, count: Int) -> Double {
+        guard progress < 1 else { return 0 }
+        let threshold = Double(index) / Double(max(count - 1, 1))
+        let d = (progress - threshold) / 0.09
+        guard d > -1, d < 1.6 else { return 0 }
+        return max(0, d < 0 ? 1 + d : 1 - d / 1.6)
+    }
+
+    /// The runner's lean, from the local slope: uphill leans forward, downhill eases back. Screen
+    /// y grows downward, so a climb is a negative dy. Clamped so a steep first week never tips the
+    /// glyph over.
+    private func leanAngle(tangent: CGVector) -> Double {
+        guard tangent.dx > 0.001 else { return 0 }
+        let slope = atan2(Double(tangent.dy), Double(tangent.dx)) * 180 / .pi     // negative = climbing
+        return max(-18, min(12, slope * 0.55))
+    }
+
+    /// A path beat comes alive as the run reaches its week. Its final frame is only a dot and a
+    /// whisper of type; no animated clock survives the entrance.
+    private func pathBeat(_ title: String, point: CGPoint, visible: Double,
+                          width: CGFloat, chartHeight: CGFloat) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(Theme.purple).frame(width: 4, height: 4)
+            Text(title)
+                .font(.rounded(9, weight: .bold))
+                .tracking(0.9)
+                .foregroundStyle(Theme.inkTertiary)
+        }
+        .fixedSize()
+        .position(x: min(max(point.x, 26), width - 26),
+                  y: min(chartHeight - axis - 11, point.y + 20))
+        .opacity(visible)
+        .scaleEffect(0.86 + 0.14 * visible)
+    }
+
+    /// The peak's callout: a small raised pill above the highest week, popping in once the
+    /// runner has crested it. It says what the peak IS, not just that it is one.
+    private func peakCallout(point: CGPoint, width: CGFloat) -> some View {
+        let show = calloutIn ? 1.0 : 0.0
+        let halfWidth = min(70.0, max(38.0, Double(peakLabel.count) * 3.6 + 22))
+        return HStack(spacing: 4) {
+            Text("PEAK")
+                .font(.rounded(8, weight: .black)).tracking(0.8)
+                .foregroundStyle(Theme.purpleDeep)
+            Text(peakLabel)
+                .font(.rounded(10, weight: .bold)).monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .raised(Capsule())
+        .fixedSize()
+        .position(x: min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth)),
+                  y: max(14, point.y - 24))
+        .opacity(show)
+        .scaleEffect(0.78 + 0.22 * show, anchor: .bottom)
+        .animation(.spring(response: 0.5, dampingFraction: 0.72), value: calloutIn)
+    }
+
+    private func pathVisibility(at index: Int, count: Int) -> Double {
+        let threshold = Double(index) / Double(max(count - 1, 1))
+        return min(1, max(0, (progress - threshold + 0.035) / 0.14))
+    }
+
+    private func goalPill(width: CGFloat, point: CGPoint) -> some View {
+        let reveal = calloutIn ? min(1, max(0, arrival * 1.7)) : 0
+        let halfWidth = min(92.0, max(49.0, Double(destinationLabel.count) * 3.7 + 22))
+        return HStack(spacing: 5) {
+            Text(destinationLabel.uppercased())
+                .font(.rounded(10, weight: .bold))
+                .tracking(0.65)
+                .lineLimit(1)
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Capsule().fill(Color(hex: "1C1C1E")))
+        .fixedSize()
+        .position(x: min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth)),
+                  y: max(14, point.y - 27))
+        .opacity(reveal)
+        .scaleEffect(0.80 + 0.20 * reveal, anchor: .bottom)
     }
 
     /// Catmull-Rom through the points, so the build reads as one continuous line.
@@ -974,9 +1519,95 @@ private struct VolumeCurve: View {
         return p
     }
 
-    private func pointAlong(_ path: Path, _ t: Double) -> CGPoint {
-        let trimmed = path.trimmedPath(from: 0, to: max(0.001, t))
-        return trimmed.currentPoint ?? .zero
+}
+
+/// The curve as a run: the same Catmull-Rom segments the stroke draws, flattened once into an
+/// arc-length table so a position can be read at any FRACTION OF THE LINE'S LENGTH — the same
+/// quantity `trim` uses — and the runner sits exactly on the pen's tip. (`Path.trimmedPath`'s
+/// `currentPoint` reports the path's END, not the trim point, which left the runner parked at the
+/// destination for the whole draw.)
+private struct CurveTrack {
+    private var samples: [CGPoint] = []
+    private var cumulative: [CGFloat] = []
+
+    init(controlPoints pts: [CGPoint], stepsPerSegment: Int = 24) {
+        guard pts.count > 1 else { return }
+        samples.reserveCapacity((pts.count - 1) * stepsPerSegment + 1)
+        samples.append(pts[0])
+        for i in 0..<(pts.count - 1) {
+            let p0 = pts[max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[min(i + 2, pts.count - 1)]
+            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            for s in 1...stepsPerSegment {
+                let t = CGFloat(s) / CGFloat(stepsPerSegment), u = 1 - t
+                let x = u*u*u*p1.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*p2.x
+                let y = u*u*u*p1.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*p2.y
+                samples.append(CGPoint(x: x, y: y))
+            }
+        }
+        cumulative.reserveCapacity(samples.count)
+        var total: CGFloat = 0
+        cumulative.append(0)
+        for i in 1..<samples.count {
+            total += hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y)
+            cumulative.append(total)
+        }
+    }
+
+    /// The index of the last sample at or before `fraction` of the total length, and how far
+    /// into the following span that fraction falls.
+    private func locate(_ fraction: Double) -> (Int, CGFloat) {
+        guard samples.count > 1, let total = cumulative.last, total > 0 else { return (0, 0) }
+        let target = total * CGFloat(min(1, max(0, fraction)))
+        var lo = 0, hi = cumulative.count - 1
+        while lo < hi - 1 {
+            let mid = (lo + hi) / 2
+            if cumulative[mid] <= target { lo = mid } else { hi = mid }
+        }
+        let span = cumulative[hi] - cumulative[lo]
+        return (lo, span > 0 ? (target - cumulative[lo]) / span : 0)
+    }
+
+    func point(at fraction: Double) -> CGPoint {
+        guard samples.count > 1 else { return samples.first ?? .zero }
+        let (i, f) = locate(fraction)
+        let a = samples[i], b = samples[min(i + 1, samples.count - 1)]
+        return CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
+    }
+
+    func tangent(at fraction: Double) -> CGVector {
+        guard samples.count > 1 else { return CGVector(dx: 1, dy: 0) }
+        let (i, _) = locate(fraction)
+        let a = samples[max(0, i - 1)], b = samples[min(i + 2, samples.count - 1)]
+        return CGVector(dx: b.x - a.x, dy: b.y - a.y)
+    }
+}
+
+/// The runner on the terrain: a small white disc with a lavender rim and a soft pool of light
+/// beneath it, the running figure inside, leaning with the slope. It is the pen of this chart —
+/// so it is drawn as the thing the plan is for, not as a dot.
+private struct AscentRunner: View {
+    let lean: Double
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(RadialGradient(colors: [Theme.purple.opacity(0.55), .clear],
+                                     center: .center, startRadius: 0, endRadius: 22))
+                .frame(width: 44, height: 44)
+                .blendMode(.plusLighter)
+            Circle()
+                .fill(.white)
+                .frame(width: 24, height: 24)
+                .overlay(Circle().strokeBorder(Theme.purple, lineWidth: 2.2))
+                .shadow(color: Theme.purple.opacity(0.35), radius: 5, y: 2)
+            Image(systemName: "figure.run")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.purpleDeep)
+                .rotationEffect(.degrees(lean))
+        }
+        .frame(width: 44, height: 44)
+        .accessibilityHidden(true)
     }
 }
 
@@ -984,9 +1615,13 @@ private struct VolumeCurve: View {
 
 /// Mon…Sun as dots — lavender for a run, ink for a lift, sky for anything else, hollow for rest —
 /// so a week's shape reads at a glance without a single word.
-private struct WeekStrip: View {
+private struct WeekStrip: View, Animatable {
     let sessions: [PlannedSession]
     var compact = false
+    var animatableData: Double {
+        get { fill }
+        set { fill = newValue }
+    }
     /// 0…1 across the seven days — the first week's strip fills in order, so the athlete watches
     /// their week assemble instead of finding it already there. The compact ladder strips below
     /// pass nothing and render finished; seven rows of dots all counting themselves in would be
@@ -1211,7 +1846,7 @@ private struct SessionDisclosureRow: View {
 /// idea kept honest: a number with a picture of itself underneath reads as considered, a number
 /// with decoration underneath reads as filler. Held at a whisper (ink at 0.06–0.13) so it is
 /// texture the eye finds on the second look, never a second chart competing with the first.
-private struct RevealTileGhost: View {
+private struct RevealTileGhost: View, Animatable {
     enum Kind {
         case weeks([Double])        // the block's real weekly volumes
         case days(Set<Int>)         // 0 = Monday
@@ -1219,10 +1854,19 @@ private struct RevealTileGhost: View {
     }
 
     let kind: Kind
-    /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
-    let draw: Double
+    /// The row's shared light clock; the tile's slice of it is derived below, per frame.
+    var clock: Double
+    let index: Int
     /// Run the loop. False = hold the still frame: off screen, or Reduce Motion.
     var alive: Bool = true
+
+    var animatableData: Double {
+        get { clock }
+        set { clock = newValue }
+    }
+
+    /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
+    private var draw: Double { min(1, max(0, (clock - Double(index) * 0.11) / 0.62)) }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -1343,43 +1987,55 @@ private struct RevealTileGhost: View {
     }
 }
 
-/// The peak week's marker: the same white dot with a purple rim the chart always had, plus a halo
-/// that breathes out and fades, once every few seconds.
-///
-/// Slow on purpose. A fast pulse on a data point reads as "loading"; one that takes three and a
-/// half seconds to open and dissolve reads as a light left on at the summit. Reduce Motion holds
-/// the dot with no halo at all — the halo carries no information, so there is nothing to preserve.
-private struct PeakBeacon: View {
-    let active: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// The destination lands once and then becomes a perfectly still map pin. Its halo is bell-shaped:
+/// invisible before the arrival, brightest during it, and fully spent at rest. That gives the
+/// reveal one earned focal moment without leaving a pulsing ornament running over the final page.
+private struct PlanGoalBeacon: View, Animatable {
+    var progress: Double
+    let systemImage: String
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
 
-    private let period: Double = 3.5
+    private var p: Double { min(1, max(0, progress)) }
+    private var pulse: Double { max(0, sin(p * .pi)) }
 
     var body: some View {
         ZStack {
-            if active, !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { ctx in
-                    let t = ctx.date.timeIntervalSinceReferenceDate
-                    let u = (t.truncatingRemainder(dividingBy: period)) / period
-                    // Ease out, so it opens quickly and spends most of the loop dissolving.
-                    let e = 1 - pow(1 - u, 2)
-                    Circle()
-                        .stroke(Theme.purple.opacity(0.34 * (1 - e)), lineWidth: 2)
-                        .frame(width: 12 + 22 * e, height: 12 + 22 * e)
-                }
-            }
-            Circle().fill(.white).frame(width: 12, height: 12)
-                .overlay(Circle().stroke(Theme.purple, lineWidth: 3))
+            Circle()
+                .strokeBorder(
+                    AngularGradient(colors: [Theme.iridescentDeep[1], Theme.purple,
+                                             Theme.iridescentDeep[2], Theme.iridescentDeep[0],
+                                             Theme.iridescentDeep[1]], center: .center),
+                    lineWidth: 1.6
+                )
+                .frame(width: 18 + 28 * p, height: 18 + 28 * p)
+                .opacity(pulse * 0.78)
+            Circle()
+                .fill(Theme.surface)
+                .frame(width: 27, height: 27)
+                .overlay(Circle().strokeBorder(Theme.purple, lineWidth: 2.5))
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.purpleDeep)
         }
-        .frame(width: 34, height: 34)
+        .frame(width: 48, height: 48)
+        .scaleEffect(0.72 + 0.28 * p)
+        .opacity(p)
         .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
 /// The PLAN READY tick, drawn rather than stamped: the disc scales in, then the stroke runs
 /// through it. Two beats inside one 0…1 so the mark is never ahead of the surface it is written on.
-private struct DrawnCheck: View {
-    let progress: Double
+private struct DrawnCheck: View, Animatable {
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
 
     /// The disc takes the first third, the stroke the rest — a tick that draws onto nothing looks
     /// like a rendering error for the first few frames.
@@ -1445,11 +2101,11 @@ private extension View {
 /// A single fall of confetti as the plan arrives — the one unearned flourish on this page, and it
 /// is earned: the athlete answered twenty questions and this is the moment the answer exists.
 ///
-/// Restraint is the whole design. Twenty-six pieces, not two hundred. The page's own aurora hues,
-/// so it reads as this product celebrating rather than as a party graphic dropped on top. Thin
-/// rounded slivers that turn as they fall, at varied speeds, with a little lateral drift, because
-/// paper does that and identical pieces falling in parallel look like a progress bar. It fades out
-/// in its last third and then the view is unmounted, so nothing lingers behind the plan.
+/// Seventy-two pieces rendered in one Canvas—not seventy-two SwiftUI views. Saturated paper,
+/// circles, diamond glints and curled streamers fire from two side cannons plus a smaller crown
+/// burst. The palette is the brand aurora at full depth: violet, blue, rose, lavender and orchid,
+/// so it reads as real colourful confetti without importing a random party-store rainbow. Depth,
+/// flutter, spin and gravity make it burst, turn and fall before the layer unmounts completely.
 ///
 /// Deterministic: the pieces are generated once from a fixed seed, never in `body`. Random numbers
 /// in a view body re-roll on every frame, and the confetti would seethe rather than fall.
@@ -1468,15 +2124,10 @@ private struct RevealConfetti: View {
     /// The still treatment's only animated value, and it is an opacity — a transform, not a layout.
     @State private var restFade = 0.0
 
-    /// The page's aurora, not a party palette — the same hues `AiryField` washes the crown with.
+    /// The page's aurora at brand depth. The normal stops are designed as translucent background
+    /// washes; paper drawn in them looked almost white, which is why the old shower felt anaemic.
     private func tint(_ i: Int) -> Color {
-        switch i {
-        case 0: Theme.purple
-        case 1: Theme.iridescent[0]
-        case 2: Theme.iridescent[1]
-        case 3: Theme.iridescent[2]
-        default: Theme.iridescent[4]
-        }
+        Theme.iridescentDeep[i % Theme.iridescentDeep.count]
     }
 
     var body: some View {
@@ -1494,14 +2145,7 @@ private struct RevealConfetti: View {
     /// Nothing travels, nothing turns, nothing repeats — the moment is still marked, and the
     /// vestibular system is left alone.
     private var still: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(RevealConfettiScatter.pieces.enumerated()), id: \.offset) { _, p in
-                    let at = RevealConfettiScatter.restingPlacement(p, in: geo.size)
-                    piece(p, at: at)
-                }
-            }
-        }
+        confettiCanvas(progress: nil)
         .opacity(restFade)
         .onAppear {
             withAnimation(.easeOut(duration: RevealConfettiScatter.restIn)
@@ -1513,33 +2157,60 @@ private struct RevealConfetti: View {
     }
 
     private func field(_ progress: Double) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(RevealConfettiScatter.pieces.enumerated()), id: \.offset) { _, p in
-                    // Each piece's own clock: it waits out its delay, then falls the rest of the way.
-                    if let at = RevealConfettiScatter.placement(p, progress: progress, in: geo.size) {
-                        piece(p, at: at)
-                    }
+        confettiCanvas(progress: progress)
+    }
+
+    /// One Canvas draw call for the entire shower. The previous implementation mounted a SwiftUI
+    /// view per piece on every display-link tick; Canvas keeps the richer field cheaper than the
+    /// old 26-piece version while still drawing at 60 fps.
+    private func confettiCanvas(progress: Double?) -> some View {
+        Canvas(opaque: false, rendersAsynchronously: true) { context, size in
+            for p in RevealConfettiScatter.pieces {
+                let at: RevealConfettiScatter.Placement?
+                if let progress {
+                    at = RevealConfettiScatter.placement(p, progress: progress, in: size)
+                } else {
+                    at = RevealConfettiScatter.restingPlacement(p, in: size)
+                }
+                guard let at else { continue }
+
+                var piece = context
+                piece.opacity = at.opacity
+                piece.translateBy(x: at.x, y: at.y)
+                piece.rotate(by: .degrees(at.angle))
+                piece.scaleBy(x: at.foreshortening, y: 1)
+                let width = p.width * p.depth
+                let length = p.length * p.depth
+                let rect = CGRect(x: -width / 2, y: -length / 2, width: width, height: length)
+                switch p.kind {
+                case .paper:
+                    piece.fill(Path(roundedRect: rect, cornerRadius: width * 0.22),
+                               with: .color(tint(p.hue)))
+                case .circle:
+                    let diameter = width * 1.2
+                    piece.fill(Path(ellipseIn: CGRect(x: -diameter / 2, y: -diameter / 2,
+                                                      width: diameter, height: diameter)),
+                               with: .color(tint(p.hue)))
+                case .spark:
+                    var diamond = Path()
+                    diamond.move(to: CGPoint(x: 0, y: -length / 2))
+                    diamond.addLine(to: CGPoint(x: width / 2, y: 0))
+                    diamond.addLine(to: CGPoint(x: 0, y: length / 2))
+                    diamond.addLine(to: CGPoint(x: -width / 2, y: 0))
+                    diamond.closeSubpath()
+                    piece.fill(diamond, with: .color(tint(p.hue)))
+                case .streamer:
+                    var curl = Path()
+                    curl.move(to: CGPoint(x: 0, y: -length / 2))
+                    curl.addCurve(to: CGPoint(x: 0, y: length / 2),
+                                  control1: CGPoint(x: width * 1.4, y: -length * 0.18),
+                                  control2: CGPoint(x: -width * 1.4, y: length * 0.18))
+                    piece.stroke(curl, with: .color(tint(p.hue)),
+                                 style: StrokeStyle(lineWidth: max(1.8, width * 0.72),
+                                                    lineCap: .round))
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private func piece(_ p: RevealConfettiScatter.Piece,
-                       at: RevealConfettiScatter.Placement) -> some View {
-        Group {
-            if p.round {
-                Circle().fill(tint(p.hue)).frame(width: 5, height: 5)
-            } else {
-                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(tint(p.hue))
-                    .frame(width: 3.5, height: p.length)
-            }
-        }
-        .rotationEffect(.degrees(at.angle))
-        .opacity(at.opacity)
-        .position(x: at.x, y: at.y)
     }
 }
 
@@ -1550,32 +2221,45 @@ private struct RevealConfetti: View {
 enum RevealConfettiScatter {
     /// Held before the first piece moves, so the fall begins as the hero settles rather than
     /// against a blank screen; `total` is the whole thing including the hold.
-    static let lead = 0.30
-    static let fall = 2.9
+    static let lead = 0.08
+    static let fall = 3.05
     static var total: Double { lead + fall }
 
     /// The Reduce Motion still: in, hold, out — and gone. Deliberately shorter than the fall; a
     /// motionless scatter that outstays a second reads as debris rather than as a celebration.
-    static let restLead = 0.15
-    static let restIn = 0.45
-    static let restHold = 0.55
-    static let restOut = 0.90
+    static let restLead = 0.10
+    static let restIn = 0.34
+    static let restHold = 0.42
+    static let restOut = 0.78
     static var restTotal: Double { restLead + restIn + restHold + restOut }
 
     /// How long the layer stays mounted, so the caller can tear it down at the right moment in
     /// either mode. Nothing may keep drawing — or ticking — past this.
     static func duration(reduceMotion: Bool) -> Double { reduceMotion ? restTotal : total }
 
+    enum Kind: Int, CaseIterable {
+        case paper
+        case circle
+        case spark
+        case streamer
+    }
+
     struct Piece {
-        let x: Double            // 0…1 across the width
-        let delay: Double        // 0…0.35 of the fall
-        let speed: Double        // 0.8…1.2
+        let originX: Double      // two side cannons plus a smaller crown emitter
+        let originY: Double
+        let delay: Double        // two quick deterministic volleys, never one flat curtain
+        let velocityX: Double
+        let velocityY: Double    // negative launches upward before gravity wins
+        let gravity: Double
         let spin: Double         // turns over the fall
-        let drift: Double        // lateral sway, in fractions of width
+        let drift: Double        // small flutter on top of the ballistic path
         let driftRate: Double
         let length: CGFloat
+        let width: CGFloat
+        let depth: CGFloat
+        let alpha: Double
         let hue: Int
-        let round: Bool
+        let kind: Kind
     }
 
     struct Placement {
@@ -1583,13 +2267,12 @@ enum RevealConfettiScatter {
         let y: CGFloat
         let angle: Double
         let opacity: Double
+        let foreshortening: CGFloat
     }
 
-    /// Twenty-six pieces, not two hundred: this is a plan arriving, not a party.
-    static let count = 26
-    /// The brightest a piece ever gets. Confetti at full strength over the athlete's own name is a
-    /// graphic sitting on the page instead of light passing over it.
-    static let peakOpacity = 0.85
+    /// A full celebration, still cheap because all seventy-two pieces share one Canvas draw call.
+    static let count = 72
+    static let peakOpacity = 1.0
 
     /// One deterministic scatter, built at type load. A tiny LCG rather than `Double.random`, so
     /// the layout is identical on every launch and every screenshot.
@@ -1600,40 +2283,83 @@ enum RevealConfettiScatter {
             return Double((seed >> 33) & 0xFFFFFF) / Double(0xFFFFFF)
         }
         return (0..<count).map { i in
-            Piece(x: 0.04 + next() * 0.92,
-                  delay: next() * 0.34,
-                  speed: 0.80 + next() * 0.40,
-                  spin: 1.2 + next() * 2.4,
-                  drift: 0.02 + next() * 0.05,
-                  driftRate: 0.7 + next() * 1.1,
-                  length: 7 + CGFloat(next()) * 5,
-                  hue: i % 5,
-                  round: next() > 0.78)
+            let kind: Kind = switch i % 10 {
+            case 0: .spark
+            case 1: .circle
+            case 2: .streamer
+            default: .paper
+            }
+            let emitter = i % 5
+            let originX: Double
+            let originY: Double
+            let velocityX: Double
+            let velocityY: Double
+            if emitter <= 1 {
+                originX = -0.04 + next() * 0.035
+                originY = 0.22 + next() * 0.08
+                velocityX = 0.28 + next() * 0.34
+                velocityY = -(0.48 + next() * 0.32)
+            } else if emitter <= 3 {
+                originX = 1.005 + next() * 0.035
+                originY = 0.22 + next() * 0.08
+                velocityX = -(0.28 + next() * 0.34)
+                velocityY = -(0.48 + next() * 0.32)
+            } else {
+                originX = 0.42 + next() * 0.16
+                originY = -0.08 + next() * 0.03
+                velocityX = -0.24 + next() * 0.48
+                velocityY = 0.05 + next() * 0.12
+            }
+            let volley = i % 9 == 0 ? 0.05 : 0
+            let authoredLength: CGFloat = kind == .streamer
+                ? 17 + CGFloat(next()) * 11
+                : 8 + CGFloat(next()) * 11
+            let authoredWidth: CGFloat = kind == .streamer
+                ? 3.0 + CGFloat(next()) * 2.0
+                : 3.4 + CGFloat(next()) * 3.6
+            return Piece(originX: originX, originY: originY,
+                         delay: min(0.15, next() * 0.10 + volley),
+                         velocityX: velocityX, velocityY: velocityY,
+                         gravity: 1.55 + next() * 0.38,
+                         spin: 1.4 + next() * 4.4,
+                         drift: 0.008 + next() * 0.028,
+                         driftRate: 0.80 + next() * 1.60,
+                         length: authoredLength,
+                         width: authoredWidth,
+                         depth: 0.78 + CGFloat(next()) * 0.52,
+                         alpha: 0.82 + next() * 0.18,
+                         hue: i % 5,
+                         kind: kind)
         }
     }()
 
     /// Where a piece is at `progress` (0…1 across the fall), or nil before it has started.
-    /// It enters above the top edge and leaves below the bottom, fading out over its last third so
-    /// no piece ever blinks out at full strength.
+    /// Side pieces fire upward and inward; crown pieces open outward from above. Gravity then pulls
+    /// every path through the page, with a paper-flip foreshortening and a long clean fade.
     static func placement(_ p: Piece, progress: Double, in size: CGSize) -> Placement? {
         let t = min(1, max(0, (progress - p.delay) / max(0.01, 1 - p.delay)))
         guard t > 0 else { return nil }
-        let travelled = t * p.speed
-        let fade = t < 0.08 ? t / 0.08 : (t > 0.68 ? max(0, (1 - t) / 0.32) : 1)
-        return Placement(x: (p.x + sin(t * .pi * 2 * p.driftRate) * p.drift) * size.width,
-                         y: -0.10 * size.height + 1.25 * size.height * travelled,
+        let fade = t < 0.045 ? t / 0.045 : (t > 0.76 ? max(0, (1 - t) / 0.24) : 1)
+        let twinkle = p.kind == .spark ? 0.78 + 0.22 * sin(t * .pi * 6) : 1
+        let sway = sin(t * .pi * 2 * p.driftRate) * p.drift * sin(t * .pi)
+        let flip: CGFloat = p.kind == .paper
+            ? 0.22 + 0.78 * abs(CGFloat(cos(t * .pi * (2.2 + p.spin * 0.35))))
+            : 1
+        return Placement(x: (p.originX + p.velocityX * t + sway) * size.width,
+                         y: (p.originY + p.velocityY * t + p.gravity * t * t) * size.height,
                          angle: t * 360 * p.spin,
-                         opacity: peakOpacity * fade)
+                         opacity: peakOpacity * p.alpha * fade * twinkle,
+                         foreshortening: flip)
     }
 
     /// The still frame Reduce Motion gets. The same pieces, spread down the upper page — a piece
-    /// that waited longer in the fall sits higher here, so the scatter still reads as arriving from
-    /// above without anything having to move. Opacity is the layer's, not the piece's.
+    /// frozen at the crest of the cannons. Opacity is the layer's, not the piece's.
     static func restingPlacement(_ p: Piece, in size: CGSize) -> Placement {
-        let t = 0.62 - p.delay                      // 0.28…0.62 of the fall
-        return Placement(x: p.x * size.width,
-                         y: -0.10 * size.height + 1.25 * size.height * t * p.speed,
+        let t = 0.44 - p.delay * 0.35
+        return Placement(x: (p.originX + p.velocityX * t) * size.width,
+                         y: (p.originY + p.velocityY * t + p.gravity * t * t) * size.height,
                          angle: t * 360 * p.spin,
-                         opacity: peakOpacity)
+                         opacity: peakOpacity * p.alpha,
+                         foreshortening: 1)
     }
 }
