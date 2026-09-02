@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.6.0"      # 2026-08-30: 1.5.0 (build 35) shipped; the plan-system/coach sweep ships as 1.6.0. Must match the ASC version record EXACTLY.
-    CURRENT_PROJECT_VERSION: "37"   # build 37 (v1.6.0) — conversion funnel: required opt-ins before reveal, showcase before checkout, diagnostic analytics.
+    MARKETING_VERSION: "1.7.0"      # 2026-09-02: 1.6.0 (build 36) is in review; the hard-paywall funnel test + running-planner domain + the reveal rebuild ship as 1.7.0. Must match the ASC version record EXACTLY.
+    CURRENT_PROJECT_VERSION: "37"   # build 37 (v1.7.0) — conversion funnel: required opt-ins before reveal, showcase before checkout, hard onboarding paywall, diagnostic analytics, Sentry.
     # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 SHIFTS 33's step order: a `units` beat was inserted after `disciplines`, so index 4 is UNITS and everything from there on moves up one (33: 24 = account; 34: 25 = account). The funnel view groups by build precisely so the two never average together, which is why this number had to move before upload. Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
