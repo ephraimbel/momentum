@@ -6,7 +6,12 @@ import XCTest
 /// (§8.3/§8.5). Not part of the normal suite; run explicitly.
 final class RealRouteRunUITest: XCTestCase {
 
-    override func setUp() { super.setUp(); continueAfterFailure = false }
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        continueAfterFailure = false
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["REAL_ROUTE_UI_TEST"] == "1",
+                          "External simulated-route probe; set TEST_RUNNER_REAL_ROUTE_UI_TEST=1 to run")
+    }
 
     func testRealRouteRun() {
         let app = XCUIApplication()

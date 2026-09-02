@@ -89,8 +89,23 @@ final class CommunityFeedUITests: XCTestCase {
     /// screenshots are the point (a thread has to READ like people typed it), so each one is
     /// attached alongside a printed transcript of every line on screen — the transcript is how the
     /// copy gets judged as text, the shot is how it gets judged as a page.
-    func testCommentThreadsReadLikePeopleLight() throws { try walkComments(appearance: "light") }
-    func testCommentThreadsReadLikePeopleDark() throws { try walkComments(appearance: "dark") }
+    func testCommentThreadsReadLikePeopleLight() throws {
+        try requireVisualAudit()
+        try walkComments(appearance: "light")
+    }
+
+    func testCommentThreadsReadLikePeopleDark() throws {
+        try requireVisualAudit()
+        try walkComments(appearance: "dark")
+    }
+
+    /// These two walks deliberately generate dozens of screenshots and full accessibility
+    /// transcripts. Keep them available for an intentional community copy review without making
+    /// every app release run spend minutes and hundreds of MB auditing a back-burnered surface.
+    private func requireVisualAudit() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["COMMUNITY_UI_AUDIT"] == "1",
+                          "Community visual audit; set TEST_RUNNER_COMMUNITY_UI_AUDIT=1 to run")
+    }
 
     private func walkComments(appearance: String) throws {
         // Starts halfway down the 400-post wall on purpose. The top of the wall is minutes to a
@@ -102,15 +117,25 @@ final class CommunityFeedUITests: XCTestCase {
 
         var opened = 0
         for page in 0..<24 {
+            // `swipeUp()` returns when the gesture ends, before the paging spring necessarily
+            // reaches its snap point. Opening a sheet during that last fraction of movement can
+            // produce a valid-but-transitional compositor frame (warped sheet corners) that is
+            // useless for a visual audit. Interaction responsiveness is covered elsewhere; this
+            // walk deliberately captures the settled reading state.
+            usleep(500_000)
             // Never break out on a missing rail: a page that has not laid out yet must cost one
             // swipe, not the rest of the walk (that turned a passing run into "1 thread" once).
-            let bubble = app.buttons.matching(NSPredicate(format: "label == %@", "Comments"))
-                .allElementsBoundByIndex.first(where: \.isHittable)
-            let count = bubble.flatMap { Int($0.value as? String ?? "") } ?? 0
-            if let bubble, count > 0 {
+            // Only the snapped post exports this identifier. Querying every label-matched button
+            // made XCUITest traverse hundreds of lazy pages and could spend over an hour resolving
+            // stale off-screen frames in dark mode.
+            let bubble = app.buttons["active-post-comments"]
+            let activeBubble = bubble.exists && bubble.isHittable ? bubble : nil
+            let count = activeBubble.flatMap { Int($0.value as? String ?? "") } ?? 0
+            if let bubble = activeBubble, count > 0 {
                 bubble.tap()
                 let done = app.buttons["Done"]
                 XCTAssertTrue(done.waitForExistence(timeout: 10), "Comments sheet did not open on page \(page).")
+                usleep(500_000) // let the adaptive sheet finish its presentation before capture
                 let lines = app.staticTexts.allElementsBoundByIndex.map(\.label).filter { !$0.isEmpty }
                 // The rail promised a number; the list has to show exactly that many.
                 let header = lines.first { $0.hasSuffix(" comments") || $0 == "1 comment" } ?? "?"
@@ -121,7 +146,17 @@ final class CommunityFeedUITests: XCTestCase {
                 attach(app, name: "comments-\(appearance)-\(String(format: "%02d", page))")
                 opened += 1
                 done.tap()
-                XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 10), "Sheet did not dismiss.")
+                // `Close` lives behind the sheet, so it exists throughout dismissal. Waiting on
+                // it let the next swipe race the outgoing presentation and occasionally captured
+                // a half-dismissed sheet instead of the next post's thread. Gate on the thing that
+                // actually leaves, then require the pager control to be tappable again.
+                let gone = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "exists == false"), object: done)
+                XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: 10), .completed,
+                               "Comments sheet did not finish dismissing on page \(page).")
+                let close = app.buttons["Close"]
+                XCTAssertTrue(close.waitForExistence(timeout: 10) && close.isHittable,
+                              "Pager did not become interactive after dismissing comments.")
             }
             app.swipeUp()
         }

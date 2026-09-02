@@ -11,7 +11,12 @@ final class WebsiteShotsUITests: XCTestCase {
     /// the System-appearance feed-invalidation loop. Flip to `[]` to shoot the light theme again.
     private let darkArgs = ["-com.momentum.appearance", "dark"]
 
-    override func setUp() { super.setUp(); continueAfterFailure = false }
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        continueAfterFailure = false
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["WEBSITE_SHOTS"] == "1",
+                          "Website capture rig; set TEST_RUNNER_WEBSITE_SHOTS=1 to run")
+    }
 
     private func dump(_ app: XCUIApplication, _ name: String) {
         try? FileManager.default.createDirectory(atPath: dumpDir, withIntermediateDirectories: true)

@@ -72,9 +72,9 @@ struct TimeInZonesCard: View {
                 #endif
                 return
             }
-            // Prefer the workout's own captured HR series (strap / Watch via Health, persisted live)
-            // — Health only carries a series for *imported* workouts, so without this our own
-            // recordings would never show zones. Fall back to the Health query for imports.
+            // Prefer the workout's own captured HR series (strap / Watch, persisted live). If it is
+            // absent, query Apple Health only inside this already-known Momentum workout window.
+            // The query enriches this workout with signals; it never discovers or imports one.
             let local = (workout.gps?.hrSamples ?? [])
                 .sorted { $0.t < $1.t }
                 .map { (date: $0.t, bpm: Double($0.bpm)) }

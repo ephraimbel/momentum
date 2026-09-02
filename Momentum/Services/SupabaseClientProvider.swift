@@ -14,7 +14,13 @@ enum SupabaseClientProvider {
             !urlString.isEmpty, !key.isEmpty,
             let url = URL(string: urlString)
         else { return nil }
-        return SupabaseClient(supabaseURL: url, supabaseKey: key)
+        return SupabaseClient(
+            supabaseURL: url,
+            supabaseKey: key,
+            options: SupabaseClientOptions(
+                auth: .init(emitLocalSessionAsInitialSession: true)
+            )
+        )
     }()
 
     static var isConfigured: Bool { client != nil }
@@ -24,6 +30,15 @@ enum SupabaseClientProvider {
     static func accessToken() async -> String? {
         guard let client else { return nil }
         return try? await client.auth.session.accessToken
+    }
+
+    /// Force a single refresh after the Data API rejects a token. `auth.session` normally refreshes
+    /// stale sessions for us, but a token can still be revoked or cross its expiry between being
+    /// read and reaching PostgREST. Sync uses this only after an actual 401 and retries once — never
+    /// in a loop — so a genuinely invalid account stays safely local instead of hammering auth.
+    static func refreshAccessToken() async -> String? {
+        guard let client else { return nil }
+        return try? await client.auth.refreshSession().accessToken
     }
 
 }

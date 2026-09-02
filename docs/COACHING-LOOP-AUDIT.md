@@ -1,6 +1,10 @@
 # Coaching-Loop Audit — does the plan actually adapt?
 ### How the AI + training plan works today, where it's good, and what's missing for a real adaptive coach
 
+> **Historical audit (2026-06-10; superseded for implementation on 2026-09-01).** Follow
+> [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md). Apple Health never creates Momentum workouts,
+> and recent-to-usual load ratios must not be presented as injury prediction or universal clearance.
+
 > Audited 2026-06-10 against the live code (`PlanEngine`, `PlanCoaching`, `AthleteModelEngine`,
 > `AIService`, edge functions, `NotificationService`). Grounded in file:line evidence. Honors the
 > PRD §9 principle: **the deterministic engine computes numbers; the AI only narrates/proposes.**

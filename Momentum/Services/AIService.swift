@@ -98,7 +98,7 @@ final class AIService: AIServing {
             f["fitness"] = "easy pace \(Int(m.paceAtEffortTrendPct.rounded()))% at the same effort"
         }
         if m.currentACWR > 0 {
-            f["load"] = "ACWR \(String(format: "%.2f", m.currentACWR)), overreach past \(String(format: "%.1f", m.overreachThresholdACWR))"
+            f["loadContext"] = "last 7d vs recent weekly norm \(String(format: "%.2f", m.currentACWR))×; prior high-strain observation around \(String(format: "%.1f", m.priorHighStrainLoadRatio))×; low-confidence context only, never injury prediction or clearance"
         }
         return f
     }

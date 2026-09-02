@@ -122,7 +122,7 @@ struct PlanProfessionalAuditTests {
         let peakLong = m.map(\.longM).max() ?? 0
         #expect(peakWeek >= 65_000, "peak week \(peakWeek / 1000)km never reached marathon volume")
         #expect(peakLong >= 26_000, "peak long run \(peakLong / 1000)km leaves the athlete under-prepared")
-        #expect(peakLong <= 33_000, "long run \(peakLong / 1000)km beyond the injury-safe cap")
+        #expect(peakLong <= 33_000, "long run \(peakLong / 1000)km beyond the product cap")
 
         // Bosquet taper: race week lands at 25–60% of peak (post-race days are cleared, so the
         // floor sits below the raw 45–55% multiplier band).

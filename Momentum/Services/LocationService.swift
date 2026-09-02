@@ -11,6 +11,8 @@ import Observation
 final class LocationService: NSObject, LocationServing, CLLocationManagerDelegate {
     @ObservationIgnored private let manager = CLLocationManager()
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var authorizationRequestInFlight = false
+    @ObservationIgnored private var authorizationCompletions: [(Bool) -> Void] = []
     /// Keeps `liveUpdates` delivering while the app is backgrounded (locked phone in a pocket — the
     /// normal case for a run). Without this session iOS suspends location delivery on background,
     /// and the first fixes on return are dropped as stale — freezing distance while the timer runs.
@@ -41,7 +43,7 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         authorizationStatus == .denied || authorizationStatus == .restricted
     }
 
-    func requestAuthorization() {
+    func requestAuthorization(completion: ((Bool) -> Void)? = nil) {
 #if DEBUG
         // UI tests drive a synthetic route (see `fixes()`); skip the real prompt so no system alert
         // interrupts the flow, report authorized so the acquiring gate behaves normally, and seed a
@@ -52,11 +54,19 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
             lastLocation = Self.isRun4
                 ? CLLocationCoordinate2D(latitude: 37.7735, longitude: -122.4825)      // run4 snake-route start
                 : CLLocationCoordinate2D(latitude: 37.7917, longitude: -122.3996)      // --ui-test-route track
+            completion?(true)
             return
         }
 #endif
+        guard authorizationStatus == .notDetermined else {
+            if isAuthorized { manager.requestLocation() }
+            completion?(isAuthorized)
+            return
+        }
+        if let completion { authorizationCompletions.append(completion) }
+        guard !authorizationRequestInFlight else { return }
+        authorizationRequestInFlight = true
         manager.requestWhenInUseAuthorization()
-        if isAuthorized { manager.requestLocation() }   // one-shot fix to center the home map
     }
 
     /// Ask for a single fresh fix (used to recenter the home map on demand).
@@ -81,7 +91,12 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         let status = manager.authorizationStatus
         Task { @MainActor in
             self.authorizationStatus = status
-            if self.isAuthorized { manager.requestLocation() }   // grant just landed → grab a fix
+            if self.isAuthorized { self.manager.requestLocation() } // grant landed → shared map fix
+            guard status != .notDetermined else { return }
+            self.authorizationRequestInFlight = false
+            let completions = self.authorizationCompletions
+            self.authorizationCompletions.removeAll()
+            completions.forEach { $0(self.isAuthorized) }
         }
     }
 

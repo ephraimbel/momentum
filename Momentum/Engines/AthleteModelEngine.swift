@@ -122,7 +122,7 @@ struct AthleteModelEngine {
         f.currentACWR = ProgressInsights(workouts: workouts, now: now, calendar: calendar).acwr
         let weeksOfData = weeksSpanned(sorted, now: now, calendar: calendar)
         f.signalSampleCounts[Signal.load.rawValue] = min(workouts.count, weeksOfData * 3)
-        f.overreachThresholdACWR = overreachThreshold(sorted, now: now, calendar: calendar)
+        f.priorHighStrainLoadRatio = priorHighStrainLoadRatio(sorted, now: now, calendar: calendar)
         f.typicalRecoveryDays = typicalRecoveryDays(sorted, calendar: calendar)
 
         // ── Achievement (PR cadence) ──────────────────────────────────────────
@@ -211,10 +211,11 @@ struct AthleteModelEngine {
     }
 
 
-    /// **v1 heuristic** (gated to low confidence): the lowest ACWR preceding a "strain event" —
-    /// a missed session or an easy run that felt hard (RPE ≥ 7). Clamped to a sane band; defaults
-    /// to 1.5 until ≥3 events exist. Refined in a later pass.
-    private static func overreachThreshold(_ sorted: [Workout], now: Date, calendar: Calendar) -> Double {
+    /// **v1 provisional context** (gated to low confidence): the lowest recent-to-usual ratio before
+    /// an easy run rated RPE ≥ 7. It defaults to 1.5 until at least three observations and is clamped
+    /// for display stability. It cannot establish causation, injury probability, or a personal limit.
+    private static func priorHighStrainLoadRatio(_ sorted: [Workout], now: Date,
+                                                  calendar: Calendar) -> Double {
         var acwrs: [Double] = []
         for w in sorted where w.type == .run {
             let feltHard = (w.perceivedEffort ?? 0) >= 7 && isEasyRunPlanned(w)
@@ -355,7 +356,7 @@ struct AthleteFacts: Sendable, Equatable {
     var e1rmTrendByExercise: [String: Double] = [:]
     var weeklyVolumeTrendPct: Double = 0
     var currentACWR: Double = 0
-    var overreachThresholdACWR: Double = 1.5
+    var priorHighStrainLoadRatio: Double = 1.5
     var typicalRecoveryDays: Double = 1
     var prCountByMonth: [String: Int] = [:]
     var lastPRAt: Date?

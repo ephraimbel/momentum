@@ -622,7 +622,7 @@ struct PlanEngineTests {
         #expect(half.paceOverride == PlanEngine.pace(.tempo, p5k: 300))
     }
 
-    // MARK: Injury history (the "safer ramp where you've been hurt" promise)
+    // MARK: Prior-injury history (conservative planning modifier)
 
     @Test func injuryHistoryCapsAggressiveRamp() {
         // An aggressive pick with an injury history ramps no faster than balanced (1.08/wk) and
@@ -636,7 +636,7 @@ struct PlanEngineTests {
         var lastBuild: Double?
         for week in plan.weeks where !week.isDeload && !week.isTaper {
             // Capped at the balanced 8% ramp (not aggressive's 11%); ×1.02 absorbs clean-distance
-            // snapping wobble on the weekly total — still unmistakably the safer cadence.
+            // snapping wobble on the weekly total — still unmistakably the lower-pressure cadence.
             if let prev = lastBuild { #expect(week.runVolumeM <= prev * 1.08 * 1.02 + 1) }
             lastBuild = week.runVolumeM
         }
@@ -718,8 +718,7 @@ struct PlanEngineTests {
 
     /// The full run/lift table, pinned. This exists because the old code derived LIFT days first
     /// and `.rounded()` is half-away-from-zero, so every tie went to the gym: "Balanced" produced
-    /// 1 run / 2 lift on a 3-day week and was bit-identical to "Lifting comes first" on 3 and 5
-    /// days. The relative-ordering assertions above could not see it (both were 2 at five days).
+    /// 1 run / 2 lift on a 3-day week. The relative-ordering assertions above could not see it.
     /// Assert the ACTUAL counts, at every day count an athlete can pick.
     @Test func hybridSplitTableIsPinned() {
         func split(_ priority: HybridPriority?, days: Int) -> (run: Int, lift: Int) {
@@ -732,12 +731,12 @@ struct PlanEngineTests {
         }
         // days:                     2       3       4       5       6       7
         // Running-led throughout (2026-08-29): lifting supports the running, so "balanced" is a
-        // running plan with a little more gym than "mainly running", and "lifting comes first" is
-        // a true 50/50 week rather than a strength programme with running attached.
+        // running plan with a little more gym than "mainly running", and more strength support is
+        // as close to 50/50 as the schedule allows without becoming lift-dominant.
         let expected: [HybridPriority: [(Int, Int)]] = [
             .running:  [(1, 1), (2, 1), (3, 1), (4, 1), (5, 1), (6, 1)],
             .balanced: [(1, 1), (2, 1), (3, 1), (3, 2), (4, 2), (5, 2)],
-            .lifting:  [(1, 1), (1, 2), (2, 2), (2, 3), (3, 3), (3, 4)],
+            .lifting:  [(1, 1), (2, 1), (2, 2), (3, 2), (3, 3), (4, 3)],
         ]
         for (priority, rows) in expected {
             for (i, want) in rows.enumerated() {
@@ -752,9 +751,15 @@ struct PlanEngineTests {
             let s = split(.balanced, days: days)
             #expect(s.run >= s.lift, "balanced \(days)d gave \(s.run) run / \(s.lift) lift")
         }
-        // The three choices must actually differ where it matters, not collapse into each other.
-        for days in [3, 5, 7] {
+        // The strength-support choice differs where the day count can express it without handing
+        // an odd deciding day to the gym. Three and five days quantize to the balanced split.
+        for days in [4, 6, 7] {
             #expect(split(.balanced, days: days) != split(.lifting, days: days))
+        }
+        // No selected goal or emphasis can turn a Momentum week lift-dominant.
+        for days in 2...7 {
+            let s = split(.lifting, days: days)
+            #expect(s.run >= s.lift, "strength support \(days)d gave \(s.run) run / \(s.lift) lift")
         }
         // Every hybrid week keeps at least one run and at least one lift (2+ days).
         for days in 2...7 {
@@ -767,15 +772,17 @@ struct PlanEngineTests {
 
     /// A hybrid athlete must never be handed a week whose only run is a lone easy run:
     /// `cardioSessions` gates the long run at runDays >= 2, so a 1-run week has no long run at all.
-    /// Only "Lifting comes first" on a 3-day week may sit there, and that is an explicit choice.
+    /// Even the most strength-supportive choice keeps enough running for a long run.
     @Test func balancedHybridAlwaysEarnsALongRun() {
-        for days in 3...7 {
-            var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: days)
-            inp.hybridPriority = .balanced
-            let week = PlanEngine.generate(profile: inp, catalog: catalog,
-                                           startDate: Date(timeIntervalSinceReferenceDate: 0)).weeks[0]
-            #expect(week.sessions.filter { $0.discipline == .running }.count >= 2,
-                    "balanced \(days)d week must carry enough runs for a long run")
+        for priority in HybridPriority.allCases {
+            for days in 3...7 {
+                var inp = inputs(disciplines: [.running, .strength], goal: .generalFitness, days: days)
+                inp.hybridPriority = priority
+                let week = PlanEngine.generate(profile: inp, catalog: catalog,
+                                               startDate: Date(timeIntervalSinceReferenceDate: 0)).weeks[0]
+                #expect(week.sessions.filter { $0.discipline == .running }.count >= 2,
+                        "\(priority) \(days)d week must carry enough runs for a long run")
+            }
         }
     }
 

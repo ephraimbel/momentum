@@ -9,6 +9,7 @@ struct PostCommentsView: View {
     @Environment(CommentStore.self) private var comments
     @Environment(ModerationStore.self) private var moderation
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query private var profiles: [UserProfile]
 
     @State private var draft = ""
@@ -59,16 +60,24 @@ struct PostCommentsView: View {
                             let rows = visible
                             if rows.isEmpty {
                                 Text("No comments yet. Be the first.")
-                                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                                     .padding(.top, Theme.Space.sm)
                             } else {
                                 // Singular when there is one. A "1 comments" header is the same small
                                 // lie as a count that disagrees with the list under it.
                                 Text(rows.count == 1 ? "1 comment" : "\(rows.count) comments")
                                     .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-                                    .foregroundStyle(Theme.inkTertiary)
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                                    .contentTransition(.numericText())
+                                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: rows.count)
                                     .accessibilityIdentifier("comment-count")
-                                ForEach(rows) { row($0).id($0.id) }
+                                ForEach(rows) {
+                                    row($0)
+                                        .id($0.id)
+                                        .transition(.opacity.combined(with: .offset(y: 5)))
+                                }
                             }
                         }
                         .padding(Theme.Space.lg)
@@ -107,6 +116,13 @@ struct PostCommentsView: View {
             // Dismissing the sheet used to throw an unsent comment away. Keep it.
             .onDisappear { comments.setDraft(draft, for: item.id) }
         }
+        // Sparse threads should feel intentional instead of like an empty full-screen page. The
+        // athlete can pull to full height as the conversation grows, exactly like a premium social
+        // sheet, while the composer remains attached to the keyboard-safe bottom edge.
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+        .presentationBackground(Theme.background)
     }
 
     private var reportingBinding: Binding<Bool> {
@@ -117,7 +133,7 @@ struct PostCommentsView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(item.title).font(.rounded(Theme.FontSize.headline, weight: .bold)).foregroundStyle(Theme.ink)
             Text("\(item.authorName) · \(item.statLine)")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
         }
     }
 
@@ -136,14 +152,15 @@ struct PostCommentsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("View \(comment.authorName)'s profile")
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(comment.authorName).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                        .onTapGesture {
-                            if comment.isCommunity, let h = comment.authorHandle,
-                               let athlete = CommunityDirectory.athlete(handle: h) { shownAthlete = athlete }
-                        }
-                    Text(comment.date.formatted(.relative(presentation: .named)))
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        commenterName(comment)
+                        commentTimestamp(comment)
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        commenterName(comment)
+                        commentTimestamp(comment)
+                    }
                 }
                 Text(comment.text).font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -169,6 +186,26 @@ struct PostCommentsView: View {
                 }
             }
         }
+    }
+
+    private func commenterName(_ comment: Comment) -> some View {
+        Text(comment.authorName)
+            .font(.rounded(Theme.FontSize.caption, weight: .bold))
+            .foregroundStyle(Theme.ink)
+            .lineLimit(1)
+            .onTapGesture {
+                if comment.isCommunity, let h = comment.authorHandle,
+                   let athlete = CommunityDirectory.athlete(handle: h) { shownAthlete = athlete }
+            }
+    }
+
+    private func commentTimestamp(_ comment: Comment) -> some View {
+        Text(comment.date.formatted(.relative(presentation: .named)))
+            .font(.rounded(Theme.FontSize.label, weight: .medium))
+            // Tertiary dark ink is 3.96:1 on the warm-charcoal canvas; these are small words, so
+            // secondary ink keeps them above the common 4.5:1 readability target.
+            .foregroundStyle(Theme.inkSecondary)
+            .lineLimit(1)
     }
 
     private var composer: some View {
@@ -199,7 +236,10 @@ struct PostCommentsView: View {
         let handle = profile.flatMap { $0.handle.isEmpty ? nil : $0.handle }
         // The draft is cleared ONLY on a comment that was actually added. Clearing it either way
         // would throw away text the athlete typed with nothing to show for it.
-        guard let posted = comments.add(draft, to: item.id, authorName: name, authorHandle: handle) else { return }
+        let posted = withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) {
+            comments.add(draft, to: item.id, authorName: name, authorHandle: handle)
+        }
+        guard let posted else { return }
         draft = ""
         comments.setDraft("", for: item.id)     // it was sent; there is nothing left to restore
         composing = false

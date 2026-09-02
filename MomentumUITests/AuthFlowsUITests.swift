@@ -8,6 +8,7 @@ import XCTest
 /// come in via TEST_RUNNER_ env vars (E2E_EMAIL / E2E_PASS / E2E_NEWPASS); between tests the
 /// orchestrator confirms the user (admin API) and fires the recovery link (see the session notes
 /// in scripts/e2e_email_confirm.sh for the pattern). Clean up e2e.* users afterwards.
+@MainActor
 final class AuthFlowsUITests: XCTestCase {
 
     private var email: String { ProcessInfo.processInfo.environment["E2E_EMAIL"] ?? "" }
@@ -18,11 +19,25 @@ final class AuthFlowsUITests: XCTestCase {
     /// account page is reached through the returning-athlete door.
     private func launchAtGate() -> XCUIApplication {
         continueAfterFailure = false
+        seedLocalProfileFixture()
         let app = XCUIApplication()
         app.launchArguments = ["--reset-auth", "--uitest-password"]
         app.launch()
         openAccountPage(app, from: "reset-auth should land on the welcome")
         return app
+    }
+
+    /// These scenarios deliberately exercise a RETURNING athlete. Depending on which suite ran
+    /// first, the simulator may be freshly installed; relying on a prior test to leave a profile
+    /// made a successful recovery route into onboarding and look like an auth failure. DemoSeed is
+    /// idempotent and DEBUG-only, so establish the documented fixture before every isolated walk.
+    private func seedLocalProfileFixture() {
+        let seed = XCUIApplication()
+        seed.launchArguments = ["--seed-demo", "--debug-free"]
+        seed.launch()
+        XCTAssertTrue(seed.tabBars.buttons["Fuel"].waitForExistence(timeout: 15),
+                      "auth-flow fixture should contain a local athlete profile")
+        seed.terminate()
     }
 
     /// Welcome hero → the account page. Works from either welcome variant ("Get started" or
@@ -31,7 +46,16 @@ final class AuthFlowsUITests: XCTestCase {
         let returning = app.buttons["I already have an account"]
         XCTAssertTrue(returning.waitForExistence(timeout: 10), message)
         returning.tap()
-        XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
+        let emailField = app.textFields["Email"]
+        // The welcome settles in with a transform animation; on a freshly relaunched simulator
+        // the first synthesized tap can arrive during that settle and be discarded. Verify the
+        // destination and retry the stable control instead of mistaking a missed UI event for an
+        // authentication failure.
+        for _ in 0..<4 where !emailField.exists {
+            if returning.exists && returning.isHittable { returning.tap() }
+            _ = emailField.waitForExistence(timeout: 2)
+        }
+        XCTAssertTrue(emailField.waitForExistence(timeout: 5))
     }
 
     private func signIn(_ app: XCUIApplication, email: String, password: String) {
@@ -44,7 +68,7 @@ final class AuthFlowsUITests: XCTestCase {
     // budget; the signup-prompt beat itself is covered live by EmailAuthUITests).
     func test1_messagingWrongPasswordAndUnconfirmed() throws {
         continueAfterFailure = false
-        XCTAssertFalse(email.isEmpty, "pass TEST_RUNNER_E2E_EMAIL")
+        try requireCredentials(email: true, password: true)
         let app = launchAtGate()
 
         // Sign-in with the right password while unconfirmed → the specific nudge.
@@ -66,7 +90,7 @@ final class AuthFlowsUITests: XCTestCase {
     // 2 — recovery link → set new password → sign out (Settings) → sign in with the new password.
     // Orchestrator: confirm the user first, then fire the recovery deep link ~20s into the run.
     func test2_passwordResetSignOutSignIn() throws {
-        XCTAssertFalse(newPass.isEmpty, "pass TEST_RUNNER_E2E_NEWPASS")
+        try requireCredentials(email: true, newPassword: true)
         let app = launchAtGate()
 
         // The recovery link signs the athlete in AND raises the set-new-password sheet — but iOS
@@ -108,6 +132,7 @@ final class AuthFlowsUITests: XCTestCase {
     // 3 — guest → Settings → "More ways to sign in" → email sign-in upgrades the account
     // (onFirstCloudSession claims the local identity; verified in Postgres by the orchestrator).
     func test3_guestUpgradeViaEmail() throws {
+        try requireCredentials(email: true, newPassword: true)
         let app = launchAtGate()
 
         app.buttons["Continue without an account"].tap()
@@ -137,6 +162,7 @@ final class AuthFlowsUITests: XCTestCase {
     // 4 — in-app account deletion (App Store 5.1.1(v)): sign in, delete from Settings,
     // land back on the gate. The orchestrator verifies the server side is empty afterwards.
     func test4_deleteAccount() throws {
+        try requireCredentials(email: true, password: true)
         let app = launchAtGate()
         signIn(app, email: email, password: pass)
         XCTAssertTrue(app.tabBars.buttons["Fuel"].waitForExistence(timeout: 30), "sign-in should enter the app")
@@ -163,6 +189,20 @@ final class AuthFlowsUITests: XCTestCase {
     }
 
     // MARK: helpers
+
+    /// These walks require server-side fixtures and must be entered through `scripts/e2e_auth.sh`.
+    /// A normal full-scheme run has no such fixture, so missing credentials mean "not applicable",
+    /// not "the app failed." Keep the check inside each test because the required password differs.
+    private func requireCredentials(email needsEmail: Bool = false,
+                                    password needsPassword: Bool = false,
+                                    newPassword needsNewPassword: Bool = false) throws {
+        var missing: [String] = []
+        if needsEmail && email.isEmpty { missing.append("TEST_RUNNER_E2E_EMAIL") }
+        if needsPassword && pass.isEmpty { missing.append("TEST_RUNNER_E2E_PASS") }
+        if needsNewPassword && newPass.isEmpty { missing.append("TEST_RUNNER_E2E_NEWPASS") }
+        try XCTSkipIf(!missing.isEmpty,
+                      "Run through scripts/e2e_auth.sh; missing \(missing.joined(separator: ", "))")
+    }
 
     /// Fill the email/password boxes without submitting, clearing any prior values.
     private func signInFields(_ app: XCUIApplication, email: String, password: String) {

@@ -1,6 +1,16 @@
 # momentum — Execution Plan
 
 > Companion to [`PRD.md`](PRD.md). The PRD says *what & why*; this says *what to build, in what order, and when it's done*. Section refs (§) point into the PRD. **Part II of the PRD is authoritative on any conflict.**
+>
+> **Current doctrine (2026-09-01):** [`ENDURANCE-FOCUS.md`](ENDURANCE-FOCUS.md) is the positioning
+> source and [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md) is the active running-grade program.
+> Apple Health supplies signals only and never creates Momentum workouts. Load ratios describe recent
+> exposure change; they do not predict injury or define a universal safe band. Older status notes
+> below are implementation history, not authority to restore superseded behavior or claims.
+> Gate 0 governance artifacts: [`RUNNING-EVIDENCE-REGISTRY.md`](RUNNING-EVIDENCE-REGISTRY.md),
+> [`RUNNING-CLAIMS-INVENTORY.md`](RUNNING-CLAIMS-INVENTORY.md),
+> [`RUNNING-ADVISORY-RUBRIC.md`](RUNNING-ADVISORY-RUBRIC.md), and
+> [`RUNNING-DECISIONS.md`](RUNNING-DECISIONS.md).
 
 ## Guiding sequence
 Build the **two capture engines first** — they are the riskiest, most foundational pieces. Nothing visual matters until both feel excellent. Then layer the design system, the unified store, AI + plans, monetization, and polish. Defer Watch and social.

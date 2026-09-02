@@ -1,5 +1,9 @@
 import SwiftUI
 
+private struct WorkoutReplaySelection: Identifiable {
+    let id: UUID
+}
+
 /// The immersive, full-screen way to relive your training — tap a tile on the profile grid and swipe
 /// up/down through your workouts like a feed of your own runs and lifts (the "new way of logging"). Each
 /// page is the full-bleed route / muscle map / photo with the session's hero stats laid over a soft
@@ -21,6 +25,15 @@ struct ImmersiveWorkoutPager: View {
     var byline: WorkoutByline? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @State private var replaySelection: WorkoutReplaySelection?
+    /// A cover swap is browsing state, not an edit to the athlete's saved cover preference. Keep
+    /// it at the pager root so a vertical swipe that recycles a lazy page does not forget which
+    /// side the viewer brought forward. The saved `coverIsPhoto` remains the initial value.
+    @State private var photoHeroOverrides: [UUID: Bool] = [:]
+    @State private var photoPageByWorkout: [UUID: Int] = [:]
+    /// Only the snapped page owns a live Mapbox canvas. LazyVStack keeps neighbors alive; letting
+    /// every route page run a map wastes GPU memory and can unload the app after rapid relaunches.
+    @State private var visibleWorkoutID: UUID?
 
     var body: some View {
         GeometryReader { geo in
@@ -33,8 +46,12 @@ struct ImmersiveWorkoutPager: View {
                             ImmersiveWorkoutPage(
                                 workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
                                 byline: byline, isFirst: workout.id == startID,
+                                isActive: (visibleWorkoutID ?? startID) == workout.id,
                                 topInset: geo.safeAreaInsets.top, bottomInset: geo.safeAreaInsets.bottom,
-                                onClose: { dismiss() })
+                                photoHeroRequested: photoHeroBinding(for: workout),
+                                photoPage: photoPageBinding(for: workout.id),
+                                onClose: { dismiss() },
+                                onOpenReplay: { replaySelection = .init(id: workout.id) })
                             .frame(width: geo.size.width, height: fullHeight)
                             .clipped()
                             .id(workout.id)
@@ -43,6 +60,7 @@ struct ImmersiveWorkoutPager: View {
                     .scrollTargetLayout()
                 }
                 .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $visibleWorkoutID)
                 .scrollIndicators(.hidden)
                 .ignoresSafeArea()
                 // Open on the tapped workout (`.scrollPosition`'s initial value isn't honored for a lazy
@@ -52,12 +70,35 @@ struct ImmersiveWorkoutPager: View {
                     // sync), scrollTo would silently no-op and the pager would open on the newest
                     // workout instead — close rather than show the wrong one.
                     guard workouts.contains(where: { $0.id == startID }) else { dismiss(); return }
+                    visibleWorkoutID = startID
                     var tx = Transaction(); tx.disablesAnimations = true
                     withTransaction(tx) { proxy.scrollTo(startID, anchor: .top) }
                 }
             }
         }
         .background(Theme.background)
+        .fullScreenCover(item: $replaySelection) { selection in
+            if let workout = workouts.first(where: { $0.id == selection.id }) {
+                WorkoutRouteReplayView(workout: workout, distanceUnit: distanceUnit)
+            }
+        }
+        // This pager is itself a full-screen cover. A locked replay tap needs a presentation host
+        // in this live context or the paywall would wait behind the pager until it closes.
+        .nestedPaywallHost()
+    }
+
+    private func photoHeroBinding(for workout: Workout) -> Binding<Bool> {
+        Binding(
+            get: {
+                guard !workout.orderedPhotosData.isEmpty else { return false }
+                return photoHeroOverrides[workout.id] ?? workout.coverIsPhoto
+            },
+            set: { photoHeroOverrides[workout.id] = $0 })
+    }
+
+    private func photoPageBinding(for id: UUID) -> Binding<Int> {
+        Binding(get: { photoPageByWorkout[id] ?? 0 },
+                set: { photoPageByWorkout[id] = max(0, $0) })
     }
 }
 
@@ -109,11 +150,16 @@ private struct ImmersiveWorkoutPage: View {
     var distanceUnit: DistanceUnit
     var byline: WorkoutByline?
     var isFirst: Bool
+    var isActive: Bool
     var topInset: CGFloat
     var bottomInset: CGFloat
+    @Binding var photoHeroRequested: Bool
+    @Binding var photoPage: Int
     var onClose: () -> Void
+    var onOpenReplay: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PaywallController.self) private var paywall
     @State private var showHint = false
     /// The full editor, the same one the history detail opens.
     @State private var editing = false
@@ -126,42 +172,27 @@ private struct ImmersiveWorkoutPage: View {
     /// on every multi-photo post. The default is the two-button column (36 + 8 + 36) so the very
     /// first frame is already right; the re-center control growing the column moves the pill down.
     @State private var controlColumnHeight: CGFloat = 80
-    /// The thumbnail's tap target — the route/muscle map full screen.
-    @State private var showOwnVisual = false
-
-    /// **Photos are the pages (owner call 2026-08-29).** The old cover rule made the session's
-    /// visual page one and paged photos behind it (flipped by "Photo as cover"), so whichever the
-    /// athlete didn't pick was hidden behind a swipe nobody was told about. Now the photograph is
-    /// always the hero, swiping moves between photographs, and the route/muscle map is always
-    /// present as a `PostMediaThumb` above the byline. `coverIsPhoto` is untouched — it still does
-    /// its real job, choosing which image represents this post in the GRID.
+    /// The saved cover choice establishes the first frame; tapping the small alternate swaps the
+    /// two surfaces in place without mutating that saved choice. Photos remain a horizontal set.
     private var photos: [Data] { workout.orderedPhotosData }
+    private var photosAreHero: Bool { !photos.isEmpty && photoHeroRequested }
 
-    /// The session's own visual, for the thumbnail and its full-screen tap target. Hit-testing off
-    /// inside the thumbnail: a pannable map in a 62pt card would just fight the finger.
+    /// The session's own visual in either slot. Hit-testing is off inside the thumbnail: a
+    /// pannable map in a 62pt card would just fight the finger.
     /// `.tile` in the thumbnail, `.immersive` full screen. The immersive style is composed for a
     /// full page — inside a 62pt card it rendered as an empty wash. `.tile` is the style the grid
     /// already uses at this size, so the thumbnail is literally the tile the athlete knows.
     private func ownVisual(interactive: Bool) -> some View {
-        WorkoutTileMedia(workout: workout, style: interactive ? .immersive : .tile,
+        let live = interactive && isActive
+        return WorkoutTileMedia(workout: workout, style: live ? .immersive : .tile,
+                         respectsPhotoCover: false,
                          distanceUnit: distanceUnit,
-                         mapCameraHandle: interactive ? mapCamera : nil)
-            .allowsHitTesting(interactive)
+                         mapCameraHandle: live ? mapCamera : nil)
     }
 
     var body: some View {
         ZStack {
-            if photos.count > 1 {
-                // The counter pill sits BELOW the whole top-right control column (measured), with
-                // the same gap the column's buttons keep between themselves.
-                FullBleedMediaPager(pages: photos.map { .photo($0) },
-                                    pillTopPadding: topInset + Theme.Space.sm + controlColumnHeight + Theme.Space.sm)
-                    .animation(.easeOut(duration: 0.25), value: controlColumnHeight)
-            } else if let only = photos.first {
-                PagedPhoto(data: only).ignoresSafeArea()
-            } else {
-                ownVisual(interactive: true)
-            }
+            heroMedia
 
             // Soft light scrims keep ink controls legible over any media (photos, maps, muscle
             // art). Eased (SoftScrim), not two-stop — a linear fade "ends in a line" over dark
@@ -184,6 +215,10 @@ private struct ImmersiveWorkoutPage: View {
                 Spacer(minLength: 0)
                 if isFirst, showHint, !reduceMotion { swipeHint.transition(.opacity) }
                 statsOverlay
+                    // Match the Community pager's dense-overlay contract. The full activity stays
+                    // readable and VoiceOver-complete without allowing scaled display text to
+                    // expand the hero wider than the device.
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, topInset + Theme.Space.sm)
@@ -191,14 +226,59 @@ private struct ImmersiveWorkoutPage: View {
         }
         .contentShape(Rectangle())
         .sheet(isPresented: $editing) { editSheet }
-        .fullScreenCover(isPresented: $showOwnVisual) {
-            PostMediaFullScreen { ownVisual(interactive: true) }
+        .onChange(of: workout.coverIsPhoto) { _, newValue in
+            guard !photos.isEmpty else { photoHeroRequested = false; return }
+            swapHero(toPhotos: newValue, haptic: false)
+        }
+        .onChange(of: photos.count) { _, count in
+            if count == 0 { photoHeroRequested = false; photoPage = 0 }
+            else if photoPage >= count { photoPage = 0 }
         }
         .task {
             guard isFirst else { return }
             withAnimation(.easeIn(duration: 0.4).delay(0.5)) { showHint = true }
             try? await Task.sleep(for: .seconds(2.6))
             withAnimation(.easeOut(duration: 0.5)) { showHint = false }
+        }
+    }
+
+    @ViewBuilder
+    private var heroMedia: some View {
+        if photosAreHero {
+            photoHero
+                .transition(.opacity.combined(with: .scale(scale: 0.992)))
+                .accessibilityIdentifier("workout-photos-hero")
+        } else {
+            ownVisual(interactive: true)
+                // A live Mapbox view cannot safely participate in matched geometry: SwiftUI
+                // reparents its platform view mid-flight, which can blank the map and corrupt
+                // the full-page frame. A tiny transform + crossfade keeps the exchange smooth
+                // while the map remains in its real hero container.
+                .transition(.opacity.combined(with: .scale(scale: 0.992)))
+                .accessibilityIdentifier("workout-visual-hero")
+        }
+    }
+
+    @ViewBuilder
+    private var photoHero: some View {
+        if photos.count > 1 {
+            // The counter pill sits BELOW the whole top-right control column (measured), with
+            // the same gap the column's buttons keep between themselves.
+            FullBleedMediaPager(
+                pages: photos.map { .photo($0) }, page: $photoPage,
+                pillTopPadding: topInset + Theme.Space.sm + controlColumnHeight + Theme.Space.sm)
+                .animation(.easeOut(duration: 0.25), value: controlColumnHeight)
+        } else if let only = photos.first {
+            PagedPhoto(data: only).ignoresSafeArea()
+        }
+    }
+
+    private func swapHero(toPhotos: Bool, haptic: Bool = true) {
+        guard !toPhotos || !photos.isEmpty else { return }
+        if haptic { Haptics.selection() }
+        withAnimation(reduceMotion ? .easeOut(duration: 0.16)
+                                   : .spring(response: 0.42, dampingFraction: 0.88)) {
+            photoHeroRequested = toPhotos
         }
     }
 
@@ -214,6 +294,24 @@ private struct ImmersiveWorkoutPage: View {
                 ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
                     .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
                     .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                // Route controls belong to the route canvas. When photos are the hero, the route
+                // is one tap away in the alternate rectangle and these controls stay out of the
+                // photograph's chrome.
+                if !photosAreHero, workout.type.isGPS, (workout.gps?.distanceM ?? 0) > 0 {
+                    let locked = !paywall.isEntitled(to: .routeReplay)
+                    Button {
+                        if locked { paywall.present(for: .routeReplay) }
+                        else { onOpenReplay(); Haptics.light() }
+                    } label: {
+                        Image(systemName: locked ? "lock.fill" : "play.fill")
+                            .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface))
+                            .overlay(Circle().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
+                    }
+                    .accessibilityIdentifier("routeReplayButton")
+                    .accessibilityLabel(locked ? "Replay route, Pro" : "Replay route")
+                    .accessibilityHint(locked ? "Opens the Pro offer" : "Animates this recorded route")
+                }
                 // Edit lives here because this pager is the athlete's OWN media — its single call
                 // site is their profile grid (other people's posts open in `CommunityPager`), so
                 // there is no "is this mine" question to ask. This is where people actually look
@@ -226,7 +324,7 @@ private struct ImmersiveWorkoutPage: View {
                 .accessibilityLabel("Edit activity")
                 // Appears only once the athlete pinch-explores the route map; one tap re-frames
                 // the whole route. Joins the trailing control column so the map stays uncluttered.
-                if mapCamera.isExplored {
+                if !photosAreHero, mapCamera.isExplored {
                     Button { mapCamera.recenter() } label: {
                         Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
                             .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
@@ -255,10 +353,19 @@ private struct ImmersiveWorkoutPage: View {
     /// numbers. Without a byline (previews) the date carries the top line on its own.
     private var statsOverlay: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            // The session's own visual, above the byline — present on every post that has a photo,
-            // so the route is never the thing the photo hid.
+            // One alternate-media door, never an extra page: whichever surface is not the hero
+            // sits here and trades places with it on tap. With no photos there is nothing to swap,
+            // so the rectangle is absent.
             if !photos.isEmpty {
-                PostMediaThumb { ownVisual(interactive: false) } onTap: { showOwnVisual = true }
+                if photosAreHero {
+                    PostMediaThumb(label: workout.type.isStrengthStyle ? "Strength session visual" : "Route map") {
+                        ownVisual(interactive: false)
+                    } onTap: { swapHero(toPhotos: false) }
+                } else if let photo = selectedPhoto {
+                    PostMediaThumb(label: photos.count == 1 ? "Workout photo" : "Workout photos") {
+                        PagedPhoto(data: photo)
+                    } onTap: { swapHero(toPhotos: true) }
+                }
             }
             if let byline {
                 bylineRow(byline)
@@ -276,6 +383,10 @@ private struct ImmersiveWorkoutPage: View {
             StatGrid(cells: metricCells, valueSize: 24, leading: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var selectedPhoto: Data? {
+        photos.indices.contains(photoPage) ? photos[photoPage] : photos.first
     }
 
     /// Photo · name · Pro seal · date, then "@handle · City" — the community byline exactly, minus

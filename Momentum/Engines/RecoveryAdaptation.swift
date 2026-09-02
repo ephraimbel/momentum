@@ -52,14 +52,15 @@ enum RecoveryAdaptation {
         return Decision(reason: reasons.joined(separator: " and "))
     }
 
-    // MARK: Overtraining tripwire (§8.1) — load + physiology agreeing is a different animal
+    // MARK: Multi-signal load-response guardrail (§8.1)
 
-    /// The forced-cutback condition: training load already in the danger zone (ACWR beyond ~1.5) AND
-    /// the body agreeing (HRV suppressed or resting HR elevated). Load alone can be a planned peak;
-    /// physiology alone can be a bad night — together they're the classic overtraining signature.
+    /// The forced-cutback condition: recent load is much higher than the athlete's recent pattern
+    /// AND a recovery signal is also outside their norm. Either input alone is too ambiguous for a
+    /// structural response; together they justify a conservative cutback, not an overtraining or
+    /// injury diagnosis. The method name remains for source compatibility with existing call sites.
     static func tripwire(acwr: Double, signals: RecoverySignals) -> Decision? {
         guard acwr > 1.5 else { return nil }
-        var reasons = ["your training load has spiked (\(String(format: "%.1f", acwr))× your recent norm)"]
+        var reasons = ["your training load is much higher than recent (\(String(format: "%.1f", acwr))× your recent norm)"]
         if signals.hrvTrend == .down { reasons.append("HRV is suppressed") }
         if signals.restingHRTrend == .down { reasons.append("resting HR is elevated") }
         guard reasons.count >= 2 else { return nil }             // load must be corroborated by the body

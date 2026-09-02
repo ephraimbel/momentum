@@ -294,7 +294,7 @@ struct PlanCoachAuditPart3Tests {
 
     // MARK: Routes — every injury the step offers
 
-    /// The injuries step promises "a safer ramp where you've been hurt". Every area, singly and
+    /// The injuries step promises a conservative history-aware ramp. Every area, singly and
     /// in the pairs athletes actually report together.
     @Test func everyInjuryHistoryIsActuallyProtected() {
         var findings: [Finding] = []

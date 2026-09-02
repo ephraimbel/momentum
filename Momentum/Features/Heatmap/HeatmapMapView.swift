@@ -19,7 +19,7 @@ struct HeatmapMapView: UIViewRepresentable {
         let map = MapView(frame: .zero)
         map.gestures.options.rotateEnabled = false
         map.gestures.options.pitchEnabled = false
-        map.ornaments.options = MapChrome.hidden    // no Mapbox logo/attribution/scale bar/compass
+        map.ornaments.options = MapChrome.minimal
         map.mapboxMap.styleURI = style.styleURI
         // Observe EVERY style load, not just the first: switching the base style tears down all
         // runtime-added sources/layers, so the heat must re-apply each time or it silently vanishes

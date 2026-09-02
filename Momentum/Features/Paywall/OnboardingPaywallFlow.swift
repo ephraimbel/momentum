@@ -8,26 +8,20 @@ import SwiftUI
 /// and the yearly-first plan pair. One paywall page everywhere; this flow only adds the tour in
 /// front of it.
 ///
-/// SOFT since 2026-08-06 (user call, reversing the 2026-07-28 hard flip): the checkout page
-/// carries a close button (only there — the tour page has no X; its CTA is the way forward),
-/// and closing is a decision, not a deferral — it clears `onboardingGatePending` so the wall
-/// never re-raises, and onboarding continues to the account beat. A force-quit mid-wall still
-/// re-raises it once (the flag arms before presentation), which is what `startAtCheckout`
-/// serves: the relaunch gate re-enters at the checkout page, because the athlete already saw
-/// the story.
+/// HARD for onboarding since 2026-09-01: there is no close button and interactive dismissal is
+/// disabled. Purchase (or Restore) is the normal path through; a force-quit re-raises the gate at
+/// checkout because `onboardingGatePending` is persisted. The one safety escape remains deliberately
+/// narrow: after two genuine App Store failures, `PaywallCheckout` lets the athlete defer until the
+/// next launch so an outage can never brick the app. Contextual paywalls elsewhere stay dismissible.
 struct OnboardingPaywallFlow: View {
     /// Relaunch gate: skip straight to the checkout page (the story was told last launch).
     var startAtCheckout = false
+    /// The promise the athlete just saw on their plan reveal. Nil for relaunches/contextless hosts.
+    var personalizedOutcome: String?
     /// Called INSTEAD of dismissing when the athlete becomes entitled — see PaywallCheckout.
     var onEntitled: (() -> Void)?
-    /// Called INSTEAD of dismissing when the athlete closes the wall un-entitled. Same contract
-    /// as `onEntitled`: a host that keeps this cover alive for a following beat (the relaunch
-    /// gate) swaps content here rather than dismissing — tearing down and re-presenting a cover
-    /// drops the second presentation under load.
-    var onClose: (() -> Void)?
-
     @Environment(PaywallController.self) private var paywall
-    @Environment(\.dismiss) private var dismiss
+    @Environment(Services.self) private var services
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var step: Int
@@ -42,11 +36,11 @@ struct OnboardingPaywallFlow: View {
 
     private var offering: PaywallOffering { paywall.offering }
 
-    init(startAtCheckout: Bool = false, onEntitled: (() -> Void)? = nil,
-         onClose: (() -> Void)? = nil) {
+    init(startAtCheckout: Bool = false, personalizedOutcome: String? = nil,
+         onEntitled: (() -> Void)? = nil) {
         self.startAtCheckout = startAtCheckout
+        self.personalizedOutcome = personalizedOutcome
         self.onEntitled = onEntitled
-        self.onClose = onClose
         _step = State(initialValue: startAtCheckout ? 1 : 0)
     }
 
@@ -71,7 +65,7 @@ struct OnboardingPaywallFlow: View {
         // Warm-charcoal dark moment, same non-leaking mechanism as PaywallView (never
         // `.preferredColorScheme` — it flows up to the hosting window and sticks after dismiss).
         .environment(\.colorScheme, .light)   // bright wall (owner call 2026-08-27), matching the light setup before it
-        .interactiveDismissDisabled(true)   // the X is the one dismissal — it must clear the gate flag
+        .interactiveDismissDisabled(true)
         .alert("Nothing to restore", isPresented: $nothingToRestore) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -80,7 +74,12 @@ struct OnboardingPaywallFlow: View {
         // Analytics for the paywall itself are logged by `PaywallView` when its page shows —
         // logging here too would double-count the funnel.
         .onAppear {
+            if step == 0 { services.analytics.log(.onboardingShowcase(action: "viewed")) }
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
+        }
+        .onChange(of: step) { old, new in
+            if old == 0, new == 1 { services.analytics.log(.onboardingShowcase(action: "continued")) }
+            if new == 0 { services.analytics.log(.onboardingShowcase(action: "viewed")) }
         }
     }
 
@@ -93,21 +92,22 @@ struct OnboardingPaywallFlow: View {
             removal: .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity))
     }
 
+    // `Motion.travel` (the onboarding step spring, damping 0.86), not `Motion.lively`: lively's
+    // overshoot is right for a selection pop and wrong for a whole page, which visibly bounced
+    // off its rest position before settling. Same hand as every other step in the funnel.
     private func advance() {
         goingBack = false
-        withAnimation(reduceMotion ? nil : Motion.lively) { step += 1 }
+        withAnimation(reduceMotion ? nil : Motion.travel) { step += 1 }
     }
 
     private func back() {
         goingBack = true
-        withAnimation(reduceMotion ? nil : Motion.lively) { step -= 1 }
+        withAnimation(reduceMotion ? nil : Motion.travel) { step -= 1 }
     }
 
-    /// Back chevron and the close button on the paywall page, Restore alone on the tour (the
-    /// paywall's own fine print carries Restore there — two on one page would be noise). The gate
-    /// is soft (2026-08-06) and the X is the one skip affordance, but it lives ONLY on the
-    /// checkout page (user call, same day): the tour is a story, not an ask — its own CTA is the
-    /// way forward, and the skip decision belongs where the money is.
+    /// Back to the showcase from checkout; Restore alone on the showcase. Checkout already carries
+    /// Restore in its fine print, so duplicating it in the chrome would be noise. There is no close:
+    /// this view is the onboarding-only hard gate, while ordinary in-app paywalls own their X.
     private var chrome: some View {
         HStack(spacing: Theme.Space.md) {
             if step > 0 {
@@ -124,25 +124,10 @@ struct OnboardingPaywallFlow: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
                     .disabled(restoring)
-            } else {
-                Button { close() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.inkSecondary)
-                        .frame(width: 34, height: 34).momentumGlass(in: Circle())
-                }
-                .accessibilityLabel("Close")
             }
         }
         .padding(.horizontal, Theme.Space.lg)
-        .animation(reduceMotion ? nil : Motion.lively, value: step)
-    }
-
-    /// Skipping satisfies the gate: clear the persisted flag so the wall never re-raises —
-    /// the X is a decision, not a deferral. Pro stays behind the contextual gates everywhere
-    /// else in the app; this only ends the onboarding ask.
-    private func close() {
-        paywall.onboardingGatePending = false
-        if let onClose { onClose() } else { dismiss() }
+        .animation(reduceMotion ? nil : Motion.travel, value: step)
     }
 
     private func restore() {
@@ -186,17 +171,16 @@ struct OnboardingPaywallFlow: View {
         }
     }
 
-    // MARK: Page two — the close
+    // MARK: Page two — checkout
 
     /// THE paywall — the same `PaywallView` the rest of the app shows (owner call 2026-08-05:
     /// one paywall page everywhere; the bespoke trial-timeline page is gone). It brings its own
     /// background, checkout, analytics and entitlement handling; the flow just hosts it and adds
-    /// the back chevron to the tour. `hard: true` here means only "render no close button of
-    /// your own" — the flow's chrome owns the X, whose close path also clears the gate flag
-    /// (PaywallView's own close is a plain dismiss, which would leave the flag armed and loop
-    /// the relaunch gate).
+    /// the back chevron to the showcase. `hard: true` suppresses its contextual close affordance
+    /// and activates the two-failure App Store escape.
     private var pagePaywall: some View {
-        PaywallView(feature: .fullPlan, hard: true, onEntitled: onEntitled)
+        PaywallView(feature: .fullPlan, hard: true,
+                    personalizedOutcome: personalizedOutcome, onEntitled: onEntitled)
     }
 
     /// "Try now" is only honest when a trial is actually behind it, and whether one IS behind it is

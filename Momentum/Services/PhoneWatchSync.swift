@@ -99,11 +99,31 @@ final class PhoneWatchSync: NSObject {
                 }
                 // A quality session's guided structure, whole: the watch runs the same step
                 // tracker the phone does, so the wrist can coach reps without the phone along.
-                if s.discipline == .running,
-                   let structured = StructuredWorkoutBuilder.build(from: s, p5kSPerKm: plan.p5kSPerKm,
-                                                                   raceDistanceM: profiles.first?.raceDistanceM),
-                   let steps = try? JSONEncoder().encode(structured) {
+                let structured = s.discipline == .running
+                    ? StructuredWorkoutBuilder.build(
+                        from: s,
+                        p5kSPerKm: plan.p5kSPerKm,
+                        raceDistanceM: profiles.first?.raceDistanceM,
+                        goalRacePaceSPerKm: plan.goalRacePaceSPerKm
+                    )
+                    : nil
+                if let structured, let steps = try? JSONEncoder().encode(structured) {
                     context["sessionSteps"] = steps
+                }
+                // One versioned contract now travels beside the legacy keys above. The latter stay
+                // populated for an older or temporarily stale Watch; unknown versions always fall
+                // back there instead of blocking a run.
+                let intentRecords = (try? ctx.fetch(FetchDescriptor<PlannedSessionIntentRecord>())) ?? []
+                let intentRecord = intentRecords.first { $0.plannedSessionID == s.id }
+                let prescription = ExecutionPrescriptionBuilder.build(
+                    plan: plan,
+                    session: s,
+                    intentRecord: intentRecord,
+                    structuredWorkout: structured
+                )
+                if prescription.validationIssues.isEmpty,
+                   let payload = try? JSONEncoder().encode(prescription) {
+                    context["executionPrescription"] = payload
                 }
             } else {
                 context["sessionCleared"] = true

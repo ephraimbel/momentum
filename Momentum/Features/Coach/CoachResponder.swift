@@ -11,7 +11,7 @@ enum CoachResponder {
         var notes: [String] = []                 // active memory, pinned first
         var preferredSessionMinutes: Int = 0
         var topDiscipline: String? = nil          // most-trained discipline (display name)
-        var overreachACWR: Double = 0             // learned ratio where this athlete struggles
+        var priorHighStrainLoadRatio: Double = 0  // low-confidence observation, never a safety limit
         var paceTrendPct: Double = 0              // easy-pace change at matched effort; negative = fitter
     }
 
@@ -261,16 +261,16 @@ enum CoachResponder {
             return LocalTurn(text: throttleText(ctx), card: nil)
         }
 
-        // Bump the load (must be earned — mirrors proposeAdjustment's gate).
+        // Bump the load (explicit review + consent — mirrors proposeAdjustment's gate).
         if has(["bump", "increase my", "more volume", "add volume", "train more", "harder week", "step it up", "ramp up"]) {
             guard hasUpcoming else { return nil }
             guard ctx.canAdaptLoad else { return LocalTurn(text: throttleText(ctx), card: nil) }
             if ctx.insights.recommendation == .increase {
                 let card = CoachCardPayload(kind: .bumpLoad, label: "Raise ~10%")
-                return LocalTurn(text: "Your load's been light and well-absorbed, so you've earned it. Want me to nudge the upcoming sessions up about 10%?",
+                return LocalTurn(text: "This week was lighter than your recent pattern. If that was intentional and the sessions felt good, want me to nudge the upcoming sessions up about 10%?",
                                  card: card)
             }
-            return LocalTurn(text: "I'd hold off. Your completed load hasn't earned a bump yet, and adding volume ahead of your recovery is how streaks end. Keep stacking sessions and I'll offer it the moment it's safe.",
+            return LocalTurn(text: "I'd hold the plan. Your recent pattern doesn't support a bump review right now, and no single ratio can declare an increase safe.",
                              card: nil)
         }
 
@@ -476,15 +476,7 @@ enum CoachResponder {
 
     /// Display names for goals (mirrors the plan-settings labels).
     static func goalLabel(_ goal: Goal) -> String {
-        switch goal {
-        case .loseFat: "Lose fat / get fit"
-        case .buildMuscle: "Build muscle"
-        case .getStronger: "Get stronger"
-        case .raceDistance: "Run a race"
-        case .endurance: "Improve endurance"
-        case .generalFitness: "General fitness"
-        case .stayConsistent: "Stay consistent"
-        }
+        goal.planLabel
     }
 
     /// A capitalized word right before a distance token ("the Comrades Marathon") names a specific
@@ -854,21 +846,23 @@ enum CoachResponder {
 
         // Overtraining / recovery
         if has(["overtrain", "overdoing", "too much", "rest", "recover", "tired", "sore", "burn"]) {
-            let thresh = (a?.overreachACWR ?? 0) > 0.8 ? a!.overreachACWR : 1.5
             if i.recommendation == .rest {
-                return "Yes, ease off. Your load balance is \(acwrText(i)), past the 0.8 to 1.3 sweet spot, and you tend to struggle above \(String(format: "%.1f", thresh)). Take a rest or recovery day and we'll rebuild. Rest is where the gains land."
+                return TrainingLoadContext.summary(ratio: i.acwr)
+                    + " Your recent response also supports easing off, so take a rest or recovery day. Rest is where the gains land."
             }
             if i.recommendation == .ease {
-                return "You're pushing a bit, load balance \(acwrText(i)). Not alarming, but I'd pull the next session back about 15% so you absorb the work."
+                return TrainingLoadContext.summary(ratio: i.acwr)
+                    + " I’d pull the next session back about 15% so you can absorb the work."
             }
-            return "You're not overdoing it. Load balance \(acwrText(i)), \(i.acwr >= 0.8 ? "right in" : "a touch below") the 0.8 to 1.3 sweet spot. Listen to your body, but the numbers say you've got room."
+            return TrainingLoadContext.summary(ratio: i.acwr)
+                + " No single ratio can say you are or aren’t overdoing it, so let pain, illness, and how you feel lead."
         }
 
         // Push harder / increase
         if has(["more", "harder", "increase", "push", "add", "ramp", "build"]) {
             switch i.recommendation {
             case .increase, .hold, .start:
-                return "You've got room. I'd add about 10% next week rather than all at once. Open Progress, tap the coach chip, and I'll bump your plan."
+                return "Your recent load does not call for a protective cutback. If the sessions are also landing well, we can consider one small, bounded progression next week. Open Progress to review it first."
             case .ease, .rest:
                 return "I'd hold off on more right now, your load's already high at \(acwrText(i)). Let's absorb this block first, then ramp."
             }
@@ -919,7 +913,7 @@ enum CoachResponder {
         let i = ctx.insights
         if let nudge = capabilityNudge(q) { return nudge }
         let lead = i.hasData
-            ? "Right now you're \(i.status.rawValue.lowercased()), load balance \(acwrText(i))."
+            ? "Your recent load is \(acwrText(i)) — \(TrainingLoadContext.band(ratio: i.acwr).displayName.lowercased())."
             : "We're just getting started. Log a few sessions and I'll have a lot more to say."
         let tails = [
             "I can help with how you're trending, what to do today, recovery, or your records. Just ask.",
@@ -963,15 +957,15 @@ enum CoachResponder {
             if let n = r.hrvNote { bits.append("HRV \(n)") }
             if let n = r.restingHRNote { bits.append("resting HR \(n)") }
             if let n = r.sleepNote { bits.append("sleep \(n)") }
-            return "Tired and under-recovered aren't the same thing, so I checked your signals: \(bits.joined(separator: ", ")). You're cleared to train. Start the warmup, and if it still feels like concrete after ten minutes, downshift to easy and take the win anyway."
+            return "Tired and under-recovered aren't the same thing, so I checked your signals: \(bits.joined(separator: ", ")). No recovery signal is calling for an automatic ease, but that is not a clearance test. Start the warmup, and if it still feels like concrete after ten minutes, downshift to easy."
         }
         // No wearable data — answer from load, and say how to get the better answer.
         let i = ctx.insights
         switch i.recommendation {
         case .rest, .ease:
-            return "Your training load is on the higher side (\(acwrText(i))), so tired tracks. Take today easy or off entirely, that IS the plan working. Connect Apple Health and I'll read your HRV, resting HR, and sleep every morning to answer this properly."
+            return "Your last 7 days are high relative to your recent norm (\(acwrText(i))). That supports a conservative easy or rest day, especially because you feel tired. Connect Apple Health and I'll add HRV, resting HR, and sleep context from the day you connect."
         default:
-            return "Your load says you have room (\(acwrText(i))), but numbers don't overrule how you feel. Start easy, and if it doesn't come around in ten minutes, call it. Connect Apple Health and I'll read HRV, resting HR, and sleep to give you a sharper answer."
+            return "Your load is \(acwrText(i)) versus your recent norm, but that does not clear you to push. Start easy, and if it doesn't come around in ten minutes, call it. Connect Apple Health and I'll read HRV, resting HR, and sleep to add recovery context."
         }
     }
 

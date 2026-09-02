@@ -4,7 +4,8 @@ import SwiftData
 /// The injury feedback loop (ENDURANCE-FOCUS §8.2): the athlete reports an issue — a body area and how
 /// bad it is — and the plan responds deterministically and safely. Never a diagnosis, never a red
 /// "failed" state: we reduce the aggravating stress, preserve fitness with non-impact work, say the
-/// red flags out loud, and gate the way back. The AI narrates; these rules decide.
+/// red flags out loud, and gate the way back. The AI narrates; these conservative product rules
+/// decide how the plan changes, without diagnosing the issue or predicting recovery time.
 enum InjurySeverity: String, Codable, Sendable, CaseIterable, Identifiable {
     case twinge, moderate, severe
     var id: String { rawValue }
@@ -76,8 +77,8 @@ enum InjuryResponse {
                     if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 0.9, unit: unit) }
                     s.rationale = "\(marker) \(areaName). Easy running only while it settles."
                 case .moderate, .severe:
-                    // Rest the impact; keep the engine with non-impact cross-training. Severe halves
-                    // the duration and makes it explicitly optional (pain-free only).
+                    // Remove impact. The replacement is always optional; severe reports get a much
+                    // shorter placeholder and explicit professional-care language in the outcome.
                     let duration: Double
                     if let dur = s.targetDurationS {
                         duration = dur
@@ -94,8 +95,8 @@ enum InjuryResponse {
                     s.targetPaceSPerKm = nil
                     s.targetDurationS = (severity == .severe ? duration * 0.5 : duration).rounded()
                     s.rationale = severity == .severe
-                        ? "\(marker) \(areaName). No running. Easy spin only if it is completely pain-free, otherwise rest."
-                        : "\(marker) \(areaName). No impact. Easy cross-training keeps your fitness while it heals."
+                        ? "\(marker) \(areaName). No running. This optional easy spin is only a placeholder; rest instead if it is uncomfortable or you have not been advised that it is appropriate."
+                        : "\(marker) \(areaName). No impact running. Easy non-impact work is optional and should stop if it aggravates the area."
                 }
                 changed += 1
             }
@@ -104,7 +105,8 @@ enum InjuryResponse {
         profile.activeInjuryArea = area.rawValue
         profile.activeInjurySeverity = severity.rawValue
         profile.activeInjuryUntil = until
-        // Remember the area for future plan generation (protective ramps), no duplicates.
+        // Remember the area as a conservative planning modifier, with no duplicates. This history
+        // does not diagnose the athlete or establish current capacity.
         if !profile.injuryHistory.contains(area.rawValue) {
             profile.injuryHistory = (profile.injuryHistory + [area.rawValue]).sorted()
         }
@@ -157,8 +159,8 @@ enum InjuryResponse {
                 restored += 1
             }
             // The return gate: the first week back holds NO quality anywhere — including sessions the
-            // injury window never touched. Re-injury risk peaks right here, when the athlete feels
-            // fine and the plan still says "intervals".
+            // injury window never touched. Early confidence can outrun rebuilt tolerance: the athlete
+            // may feel fine while the untouched plan still says "intervals".
             let gateEnd = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: today)) ?? today
             let eager = plan.sessions.filter {
                 ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
@@ -236,20 +238,20 @@ enum InjuryResponse {
         case .twinge:
             return Outcome(
                 headline: "Training around your \(area)",
-                detail: "Kept you running, dropped the intensity for \(InjurySeverity.twinge.windowDays) days. Most twinges settle with easy running and rest.",
-                guidance: "Ice and gentle mobility can help. If it sharpens, changes your stride, or lasts beyond a week, report it again or see a physio.",
+                detail: "Kept the next \(InjurySeverity.twinge.windowDays) days low-intensity and reduced aggravating work. This is a conservative plan adjustment, not a diagnosis.",
+                guidance: "Monitor it during and after activity. If it sharpens, changes your stride, worsens, or concerns you, stop and seek qualified assessment.",
                 sessionsChanged: changed)
         case .moderate:
             return Outcome(
                 headline: "Resting the impact on your \(area)",
-                detail: "Swapped \(InjurySeverity.moderate.windowDays) days of running for easy cross-training. Your fitness holds while it heals.",
-                guidance: "If it isn't clearly improving in 3–5 days, a physio is worth the visit. Sharp pain, swelling, or pain at rest → get it looked at now.",
+                detail: "Replaced \(InjurySeverity.moderate.windowDays) days of impact running with optional easy non-impact work only if it feels comfortable.",
+                guidance: "Pain that changes gait or function, persists, worsens, swells, or occurs at rest deserves qualified assessment.",
                 sessionsChanged: changed)
         case .severe:
             return Outcome(
                 headline: "Protecting your \(area), no running",
-                detail: "Stood running down for \(InjurySeverity.severe.windowDays) days. Optional pain-free spinning keeps the engine; everything else waits.",
-                guidance: "Please see a professional. Sharp pain, limping, or not being able to bear weight isn't something to train through. We'll be ready when you're cleared.",
+                detail: "Removed impact running for \(InjurySeverity.severe.windowDays) days. Do not use the app to test the area; the replacement sessions are optional placeholders, not treatment advice.",
+                guidance: "Please seek appropriate professional care. Sharp pain, limping, or inability to bear weight is not something to train through.",
                 sessionsChanged: changed)
         }
     }

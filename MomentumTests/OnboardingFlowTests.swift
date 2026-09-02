@@ -51,7 +51,7 @@ struct OnboardingFlowTests {
         #expect(weekOneDays.count == 4)
     }
 
-    @Test func importedRestingHRUnlocksKarvonenZones() throws {
+    @Test func healthRestingHRUnlocksKarvonenZones() throws {
         // Resting HR captured at the Health consent moment persists to the profile — and Karvonen
         // zones differ measurably from the %-max fallback (plan-quality audit fix #6).
         let pc = PersistenceController.inMemory()
@@ -60,7 +60,7 @@ struct OnboardingFlowTests {
         vm.activities = [.run]
         vm.goal = .endurance
         vm.birthYear = Calendar.current.component(.year, from: Date()) - 30
-        vm.importedRestingHR = 52
+        vm.healthRestingHR = 52
 
         let profile = vm.finish(in: ctx)
         #expect(profile.restingHR == 52)
@@ -68,7 +68,7 @@ struct OnboardingFlowTests {
         let karvonen = try #require(HRZones.zones(maxHR: maxHR, restingHR: 52))
         let percentMax = try #require(HRZones.zones(maxHR: maxHR, restingHR: nil))
         #expect(karvonen[0].bpm.lowerBound > percentMax[0].bpm.lowerBound)   // Z1 floor rises off resting HR
-        // Nothing imported → profile stays nil and zones fall back (regression).
+        // No Health resting-HR signal → profile stays nil and zones fall back (regression).
         let bare = OnboardingViewModel()
         bare.activities = [.run]
         #expect(bare.finish(in: ctx).restingHR == nil)
@@ -112,13 +112,14 @@ struct OnboardingFlowTests {
         vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
         #expect(vm.steps.contains(.session))          // lifters set it (it drives exercise count)
+        #expect(vm.running)                           // every coached plan keeps its running foundation
         vm.activities = [.run, .strength]
         #expect(vm.steps.contains(.session))          // hybrids lift too → keep it
 
         vm.step = .disciplines
         #expect(vm.canAdvance)                        // activities chosen
         vm.activities = []
-        #expect(!vm.canAdvance)                        // must pick at least one
+        #expect(vm.canAdvance)                         // running itself is already a complete plan
 
         // The identity step is the (optional) profile photo since the @handle claim left with
         // the community back-burner (2026-07-16) — always passable, photo or not.
@@ -176,7 +177,10 @@ struct OnboardingFlowTests {
         #expect(try idx(.injuries) < idx(.race))             // before the race specifics
         #expect(try idx(.experience) < idx(.health))         // running level + pace → recovery consent
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
-        #expect(try idx(.intensity) < idx(.building))        // last decision before the build
+        #expect(try idx(.intensity) < idx(.notifications))   // decisions → required permission context
+        #expect(try idx(.notifications) < idx(.primers))     // reminders → location
+        #expect(try idx(.primers) < idx(.building))          // permissions settle before generation
+        #expect(try idx(.building) < idx(.reveal))           // anticipation → personalized payoff
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
         #expect(steps.contains(.session))                    // …but session length is everyone's
 
@@ -217,14 +221,17 @@ struct OnboardingFlowTests {
     /// There is NO rating beat in onboarding (removed 2026-08-22). It shipped from 2026-07-26 as the
     /// last screen before the checkout, which is both an App Review 5.6.3 risk this app was already
     /// rejected under and the worst seat in the funnel — spending the athlete's patience immediately
-    /// before asking for money. `primers` must now hand straight to the paywall, and the only rating
-    /// ask left is the engagement-gated one after a first saved workout.
+    /// before asking for money. The only rating ask left is the engagement-gated one after a first
+    /// saved workout. The permission beats
+    /// precede plan generation; reveal then raises showcase + checkout and advances to account.
     @Test func onboardingHasNoRatingBeat() {
         let all = OnboardingViewModel.Step.allCases
         #expect(!all.contains { "\($0)".localizedCaseInsensitiveContains("rate") },
                 "no rating step may exist in the onboarding flow")
-        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .primers)! + 1,
-                "primers hands straight to the paywall, which advances to account")
+        let steps = OnboardingViewModel().steps
+        #expect(steps.firstIndex(of: .primers)! < steps.firstIndex(of: .building)!)
+        #expect(steps.firstIndex(of: .account)! == steps.firstIndex(of: .reveal)! + 1,
+                "the reveal raises showcase + checkout, which advances to account")
     }
 
     /// The account beat is the LAST step, AFTER the paywall (owner call 2026-07-27 — the sign-in
@@ -232,23 +239,42 @@ struct OnboardingFlowTests {
     /// someone). It must not be an answerable question, and onboarding must read as *finished* by
     /// the time it shows, since every question was answered a while back.
     @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() {
-        let all = OnboardingViewModel.Step.allCases
-        #expect(all.last == .account, "account must be the last step — nothing follows it")
-        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .primers)! + 1,
-                "the paywall is raised between these two; account must be the step primers advances to")
-
         let vm = OnboardingViewModel()
+        let all = vm.steps
+        #expect(all.last == .account, "account must be the last step — nothing follows it")
+        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .reveal)! + 1,
+                "the showcase/paywall is raised from reveal, then advances to account")
+
         vm.step = .account
         #expect(!vm.isQuestionStep, "no header, no Continue bar, no progress notch")
         #expect(vm.progress == 1, "every question is long since answered")
 
-        // `advance()` from the last primer lands here — that is how the paywall's onDismiss reaches
+        // `advance()` from the reveal lands here — that is how the paywall's onDismiss reaches
         // it (`goToAccountBeat` → `goNext`), since the wall never changed the step underneath it.
-        vm.step = .primers
+        vm.step = .reveal
         vm.advance()
         #expect(vm.step == .account)
         // And it is a genuine terminus: advancing off the end must not wrap or stall elsewhere.
         vm.advance()
         #expect(vm.step == .account)
+    }
+
+    @Test func raceRevealFramesTheTargetAsAPursuitNotAGuarantee() {
+        let vm = OnboardingViewModel()
+        vm.goal = .raceDistance
+        vm.raceDistance = .fiveK
+        vm.goalHours = 0
+        vm.goalMinutes = 20
+        vm.hasRace = true
+        vm.raceDate = Calendar.current.date(byAdding: .day, value: 90, to: Date())!
+
+        let timed = vm.projectedOutcome()
+        #expect(timed.hasPrefix("Chasing 20 min for your 5K on "))
+        #expect(!timed.localizedCaseInsensitiveContains("ready"))
+
+        vm.goalMinutes = 0
+        let untimed = vm.projectedOutcome()
+        #expect(untimed.hasPrefix("Building toward your 5K on "))
+        #expect(!untimed.localizedCaseInsensitiveContains("ready"))
     }
 }

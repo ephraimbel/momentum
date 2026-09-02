@@ -20,7 +20,9 @@ struct PlanSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var name: String
-    @State private var goal: Goal
+    /// A new plan has no silently inherited objective: the athlete actively chooses what this block
+    /// is for. Adjusting an existing plan starts from its current goal, ready to confirm or change.
+    @State private var goal: Goal?
     @State private var raceDistance: RaceDistance?
     @State private var hasRaceDate: Bool
     @State private var raceDate: Date
@@ -37,6 +39,11 @@ struct PlanSettingsSheet: View {
     @State private var equipment: Equipment
     @State private var showRacePicker = false
     @State private var saveFailed = false
+    /// The live starting point used by the generator. Seeded immediately through the same staleness
+    /// rules as generation, then refreshed once from Momentum-logged workouts when the sheet appears.
+    @State private var currentWeeklyM: Double?
+    @State private var currentLongestM: Double?
+    @State private var baselineUsesLoggedRuns = false
 
     init(profile: UserProfile, mode: Mode = .adjust, onDone: @escaping () -> Void) {
         self.profile = profile
@@ -44,12 +51,15 @@ struct PlanSettingsSheet: View {
         self.onDone = onDone
         // A new plan starts with a blank name (its own occasion); adjusting keeps the current one.
         _name = State(initialValue: mode == .create ? "" : (profile.plan?.name ?? ""))
-        _goal = State(initialValue: profile.goal)
-        _raceDistance = State(initialValue: profile.raceDistanceM.map(RaceDistance.nearest(toMeters:)))
-        _hasRaceDate = State(initialValue: profile.raceDate != nil)
-        _raceDate = State(initialValue: profile.raceDate
-            ?? Calendar.current.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date())
-        let goalS = profile.goalFinishTimeS
+        _goal = State(initialValue: mode == .create ? nil : profile.goal)
+        let defaultRaceDate = Calendar.current.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date()
+        // Beginning again keeps useful coaching context (availability, equipment, current fitness),
+        // but not the previous finish line. Distance, date, and time are decisions about THIS goal.
+        _raceDistance = State(initialValue: mode == .create
+            ? nil : profile.raceDistanceM.map(RaceDistance.nearest(toMeters:)))
+        _hasRaceDate = State(initialValue: mode == .adjust && profile.raceDate != nil)
+        _raceDate = State(initialValue: mode == .adjust ? (profile.raceDate ?? defaultRaceDate) : defaultRaceDate)
+        let goalS = mode == .create ? nil : profile.goalFinishTimeS
         _hasGoalTime = State(initialValue: goalS != nil)
         _goalHours = State(initialValue: goalS.map { Int($0) / 3600 } ?? 4)
         _goalMinutes = State(initialValue: goalS.map { (Int($0) % 3600) / 60 } ?? 0)
@@ -60,15 +70,35 @@ struct PlanSettingsSheet: View {
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
         _equipment = State(initialValue: profile.equipment)
+        // Do not flash a months-old onboarding peak while the bounded background query runs. The
+        // empty-evidence snapshot preserves fresh declarations and applies the conservative returning
+        // baseline for established athletes; the task below then replaces it with recent run evidence.
+        let startingFitness = PlanFitnessEvidence.snapshot(
+            runs: [],
+            declaredWeeklyM: profile.weeklyRunVolumeM,
+            declaredLongestM: profile.longestRunM,
+            profileCreatedAt: profile.createdAt,
+            endingAt: Date(),
+            calendar: .current
+        )
+        _currentWeeklyM = State(initialValue: startingFitness.weeklyM)
+        _currentLongestM = State(initialValue: startingFitness.longestM)
     }
 
-    private var lifting: Bool { profile.disciplines.contains(Discipline.strength.rawValue) }
+    private var lifting: Bool {
+        goal == .buildMuscle || goal == .getStronger
+            || profile.disciplines.contains(Discipline.strength.rawValue)
+    }
     private var racing: Bool { goal == .raceDistance }
+    /// Momentum sells running coaching. The selected goal changes the destination and the role of
+    /// supporting strength; it never turns this sheet into a generic non-running plan builder.
+    private var runningFocus: Bool {
+        true
+    }
     /// Only athletes who both run AND lift get the balance dial — it's the one control that
     /// splits the training week between the two (the engine reads it only when both are present).
     private var hybrid: Bool {
-        profile.disciplines.contains(Discipline.running.rawValue)
-            && profile.disciplines.contains(Discipline.strength.rawValue)
+        runningFocus && lifting
     }
 
     /// Anything the generator reads changed → save rebuilds the upcoming weeks.
@@ -97,7 +127,15 @@ struct PlanSettingsSheet: View {
         return d > Calendar.current.startOfDay(for: Date()) ? d : nil
     }
     private var newGoalFinishTimeS: Double? {
-        racing && hasGoalTime ? Double(goalHours * 3600 + goalMinutes * 60) : nil
+        let seconds = Double(goalHours * 3600 + goalMinutes * 60)
+        return racing && hasGoalTime && seconds > 0 ? seconds : nil
+    }
+
+    private var canCommit: Bool {
+        guard goal != nil else { return false }
+        if racing && raceDistance == nil { return false }
+        if racing && hasGoalTime && newGoalFinishTimeS == nil { return false }
+        return true
     }
 
     /// The honest read for the race + date on screen right now — same engine as onboarding.
@@ -108,13 +146,21 @@ struct PlanSettingsSheet: View {
         return PlanFeasibility.assess(raceDistanceM: distanceM,
                                       goalFinishTimeS: newGoalFinishTimeS,
                                       currentP5kSPerKm: profile.plan?.p5kSPerKm,
-                                      currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
+                                      currentWeeklyVolumeM: currentWeeklyM ?? 0,
                                       weeksAvailable: weeks,
                                       experience: experience,
                                       injuryProne: !profile.injuryHistory.isEmpty,
                                       daysPerWeek: days,   // the BUFFERED picker value — verdict updates live
                                       intensity: intensity,
                                       targetWeeklyVolumeM: targetWeekly)
+    }
+
+    private var recommendedIntensity: PlanIntensity {
+        if let recommendation = feasibility?.recommended { return recommendation }
+        let experience = ExperienceLevel(rawValue: profile.experience[Discipline.running.rawValue] ?? "")
+            ?? ExperienceLevel(rawValue: profile.experience[Discipline.strength.rawValue] ?? "")
+            ?? .some
+        return experience == .new || !profile.injuryHistory.isEmpty ? .gentle : .balanced
     }
 
     var body: some View {
@@ -124,6 +170,7 @@ struct PlanSettingsSheet: View {
                     nameSection
                     goalSection
                     if racing { raceSection }
+                    startingPointSection
                     if hybrid { balanceSection }
                     intensitySection
                     if racing { ceilingSection }
@@ -144,7 +191,10 @@ struct PlanSettingsSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(confirmTitle) { apply() }.fontWeight(.semibold)
+                    Button(confirmTitle) { apply() }
+                        .fontWeight(.semibold)
+                        .disabled(!canCommit)
+                        .accessibilityValue(commitAccessibilityValue)
                 }
             }
             // Hosted at stack level so the catalog can open from ANY state — picking a race is
@@ -165,6 +215,9 @@ struct PlanSettingsSheet: View {
                     }
                 }
             }
+            .task {
+                await refreshStartingPoint()
+            }
             .onAppear {
                 #if DEBUG
                 // --race-picker: open the catalog directly (screenshot verification; sim can't tap).
@@ -172,6 +225,15 @@ struct PlanSettingsSheet: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showRacePicker = true }
                 }
                 #endif
+            }
+            .onChange(of: hasGoalTime) { _, enabled in
+                // Never open a 5K target-time picker at the old generic 4:00 default. Start from the
+                // athlete's current fitness estimate (or a distance-appropriate fallback), then let
+                // them make the actual goal decision minute by minute.
+                if enabled, mode == .create || profile.goalFinishTimeS == nil { seedGoalTime() }
+            }
+            .onChange(of: raceDistance) { _, _ in
+                if hasGoalTime, mode == .create || profile.goalFinishTimeS == nil { seedGoalTime() }
             }
         }
         .presentationBackground(Theme.background)
@@ -182,7 +244,7 @@ struct PlanSettingsSheet: View {
     /// Name the block after what it's FOR ("Austin Marathon") — the name becomes the Plan page
     /// title and marks plan sessions wherever they surface.
     private var nameSection: some View {
-        section("PLAN NAME") {
+        section("PLAN NAME · OPTIONAL") {
             TextField("e.g. Austin Marathon", text: $name)
                 .font(.rounded(Theme.FontSize.body, weight: .semibold))
                 .foregroundStyle(Theme.ink)
@@ -193,24 +255,94 @@ struct PlanSettingsSheet: View {
         }
     }
 
-    /// Running-first, always — racing leads, strength supports (ENDURANCE-FOCUS §1).
+    /// One explicit objective anchors every generated block. A new-plan flow intentionally has no
+    /// preselected card: tapping Create without deciding used to rebuild the old goal under a new name.
     private var goalSection: some View {
-        let goals: [(Goal, String, String)] = [
-            (.raceDistance, "Run a race", "flag.checkered"),
-            (.endurance, "Run farther & faster", "wind"),
-            (.stayConsistent, "Stay consistent", "calendar"),
-            (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"),
-            (.getStronger, "Get stronger", "dumbbell.fill"),
-            (.loseFat, "Lose fat / get fit", "flame")]
-        return section("FOCUS") {
-            VStack(spacing: Theme.Space.sm) {
-                ForEach(goals, id: \.0) { g in
-                    SelectionCard(title: g.1, systemImage: g.2, isSelected: goal == g.0) {
-                        withAnimation(Motion.standard) { goal = g.0 }
+        let goals: [Goal] = [
+            .raceDistance, .endurance, .stayConsistent, .generalFitness,
+            .loseFat, .buildMuscle, .getStronger]
+        return section("YOUR GOAL") {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text(mode == .create
+                     ? "Choose the outcome first. We’ll build the training load, recovery, and week around it."
+                     : "This is the anchor for every upcoming session. Change it and we’ll re-point the block from today.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, Theme.Space.xs)
+                ForEach(goals, id: \.self) { item in
+                    SelectionCard(title: item.planLabel, subtitle: item.planSubtitle,
+                                  systemImage: item.planSystemImage, isSelected: goal == item) {
+                        withAnimation(Motion.standard) { goal = item }
                     }
                 }
             }
         }
+    }
+
+    /// The coaching hand-off: show the exact baseline regeneration will use before asking how hard
+    /// to push. This is not editable here because it is evidence, not preference — the controls below
+    /// are the athlete's decisions; this card is the coach saying "here is where we are starting."
+    @ViewBuilder
+    private var startingPointSection: some View {
+        if runningFocus {
+            section("WHERE YOU ARE NOW") {
+                VStack(alignment: .leading, spacing: Theme.Space.md) {
+                    if currentWeeklyM != nil || currentLongestM != nil {
+                        HStack(spacing: 0) {
+                            baselineMetric(currentWeeklyM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—",
+                                           "PER WEEK")
+                            Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                            baselineMetric(currentLongestM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—",
+                                           "LONGEST RUN")
+                            if let p5k = profile.plan?.p5kSPerKm, p5k > 0 {
+                                Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                                baselineMetric(PlanFeasibility.hms(p5k * 5), "5K FITNESS")
+                            }
+                        }
+                    } else {
+                        Text("Not enough running history yet")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        Text("We’ll start conservatively and recalibrate from the runs you log in Momentum.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text(baselineUsesLoggedRuns
+                         ? "Based on your recent Momentum workouts, with your saved starting point as a guardrail."
+                         : "Based on your saved starting point. Momentum workouts will replace the estimate as your history grows.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(Theme.Space.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(cardBackground)
+            }
+        } else {
+            section("WHERE YOU ARE NOW") {
+                HStack(spacing: 0) {
+                    baselineMetric(experienceLabel(for: .strength), "EXPERIENCE")
+                    Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                    baselineMetric("\(profile.daysPerWeek)", "DAYS / WEEK")
+                    Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                    baselineMetric("\(profile.sessionMinutes)m", "SESSION")
+                }
+                .padding(Theme.Space.md)
+                .background(cardBackground)
+            }
+        }
+    }
+
+    private func baselineMetric(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(.display(17, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.65)
+            Text(label)
+                .font(.rounded(9, weight: .bold)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     /// The heart of the sheet: which race, when, and how fast — with the honest verdict live.
@@ -273,7 +405,7 @@ struct PlanSettingsSheet: View {
                         }
                         .pickerStyle(.wheel)
                         Picker("Minutes", selection: $goalMinutes) {
-                            ForEach(Array(stride(from: 0, to: 60, by: 5)), id: \.self) { Text("\($0) min").tag($0) }
+                            ForEach(0..<60, id: \.self) { Text(String(format: "%02d min", $0)).tag($0) }
                         }
                         .pickerStyle(.wheel)
                     }
@@ -361,8 +493,8 @@ struct PlanSettingsSheet: View {
     private var balanceSection: some View {
         let opts: [(HybridPriority, String, String, String)] = [
             (.running, "Running comes first", "Lift to support the miles", "figure.run"),
-            (.balanced, "Balanced", "Both matter, side by side", "figure.run.circle"),
-            (.lifting, "Lifting comes first", "Run to stay conditioned", "dumbbell.fill")]
+            (.balanced, "Balanced runner", "More strength, with running still leading", "figure.run.circle"),
+            (.lifting, "More strength support", "Near-even split; the extra day stays a run", "dumbbell.fill")]
         return section("RUN & LIFT BALANCE") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(opts, id: \.0) { o in
@@ -375,13 +507,19 @@ struct PlanSettingsSheet: View {
         }
     }
 
-    /// How hard to push — the athlete's dial (safety caps from injury history still apply).
-    /// The risk note shows here too — changing mid-plan deserves the same honesty as onboarding.
+    /// How hard to push — explicitly framed as the route to the selected goal, not a generic effort
+    /// preference. The engine's recommendation is visible here just as it is during onboarding.
     private var intensitySection: some View {
-        section("HOW HARD TO PUSH") {
-            VStack(spacing: Theme.Space.sm) {
+        section("THE PATH TO YOUR GOAL") {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                Text("Intensity changes how quickly volume grows, the peak load, and how much quality work fits. Recovery guardrails never switch off.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, Theme.Space.xs)
                 ForEach(PlanIntensity.allCases) { level in
-                    SelectionCard(title: level.label, subtitle: level.subtitle,
+                    SelectionCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
+                                  subtitle: level.subtitle,
                                   isSelected: intensity == level,
                                   iridescent: level == .podium) {
                         intensity = level
@@ -395,22 +533,33 @@ struct PlanSettingsSheet: View {
                         .foregroundStyle(Theme.inkSecondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                if let note = intensity.riskNote {
+                    Text(note)
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, Theme.Space.xs)
+                }
             }
         }
     }
 
     // MARK: Mileage ceiling (2026-08-28)
 
+    private var distanceUnit: DistanceUnit {
+        (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved()
+    }
     private var metersPerUnit: Double {
-        (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved() == .metric ? 1_000 : 1609.344
+        distanceUnit == .metric ? 1_000 : 1609.344
     }
     private var unitLabel: String {
-        (DistanceUnit(rawValue: profile.distanceUnit) ?? .auto).resolved() == .metric ? "km" : "mi"
+        distanceUnit == .metric ? "km" : "mi"
     }
     /// Ceiling choices in the athlete's unit: the coach's call, then four steps above their
     /// current weekly volume. The current cap is always offered so an odd value isn't lost.
     private var ceilingChoices: [Int] {
-        let weekly = Int(((profile.weeklyRunVolumeM ?? 0) / metersPerUnit / 5).rounded()) * 5
+        let weekly = Int(((currentWeeklyM ?? 0) / metersPerUnit / 5).rounded()) * 5
         var out = [0] + [10, 20, 30, 40].map { weekly + $0 }
         if let t = targetWeekly {
             let v = Int((t / metersPerUnit).rounded())
@@ -467,6 +616,54 @@ struct PlanSettingsSheet: View {
         }
     }
 
+    // MARK: Current-goal coaching context
+
+    @MainActor
+    private func refreshStartingPoint() async {
+        let now = Date()
+        let worker = PlanFitnessWorker(modelContainer: context.container)
+        guard let snapshot = try? await worker.snapshot(
+            declaredWeeklyM: profile.weeklyRunVolumeM,
+            declaredLongestM: profile.longestRunM,
+            profileCreatedAt: profile.createdAt,
+            endingAt: now
+        ), !Task.isCancelled else { return }
+        baselineUsesLoggedRuns = snapshot.usesLoggedRuns
+        currentWeeklyM = snapshot.weeklyM
+        currentLongestM = snapshot.longestM
+    }
+
+    private func experienceLabel(for discipline: Discipline) -> String {
+        let level = ExperienceLevel(rawValue: profile.experience[discipline.rawValue] ?? "") ?? .some
+        return switch level {
+        case .new: "New"
+        case .some: "Some"
+        case .experienced: "Experienced"
+        }
+    }
+
+    /// Seed the time control with a coherent starting point for the selected distance. This is only
+    /// a convenience when the athlete turns the optional target ON; it is never saved until they
+    /// commit, and every minute remains editable.
+    private func seedGoalTime() {
+        guard let distance = raceDistance else { return }
+        let seconds: Double
+        if let p5k = profile.plan?.p5kSPerKm, p5k > 0 {
+            seconds = PlanFeasibility.predictedFinishS(distanceM: distance.meters, p5kSPerKm: p5k)
+        } else {
+            seconds = switch distance {
+            case .fiveK: 30 * 60
+            case .tenK: 60 * 60
+            case .half: 2 * 3_600
+            case .marathon: 4 * 3_600
+            case .fiftyK: 5.5 * 3_600
+            }
+        }
+        let totalMinutes = min(9 * 60 + 59, max(1, Int((seconds / 60).rounded())))
+        goalHours = totalMinutes / 60
+        goalMinutes = totalMinutes % 60
+    }
+
     // MARK: Building blocks
 
     private var cardBackground: some View {
@@ -505,6 +702,13 @@ struct PlanSettingsSheet: View {
         mode == .create ? "Create plan" : (structural ? "Rebuild plan" : "Save")
     }
 
+    private var commitAccessibilityValue: String {
+        if goal == nil { return "Choose a goal" }
+        if racing && raceDistance == nil { return "Choose a race distance" }
+        if racing && hasGoalTime && newGoalFinishTimeS == nil { return "Choose a valid goal time" }
+        return mode == .create ? "Ready to create" : "Ready to save"
+    }
+
     private var footerNote: String {
         switch mode {
         case .create:
@@ -517,27 +721,55 @@ struct PlanSettingsSheet: View {
     }
 
     private func apply() {
-        // Rename-only edits must NOT rebuild — regenerating the upcoming weeks is for structural
-        // changes. A NEW plan always rebuilds: that's the point of beginning again.
-        let rebuild = structural || mode == .create
-        profile.goal = goal
-        profile.daysPerWeek = days
-        profile.sessionMinutes = minutes
-        profile.equipment = equipment
-        profile.raceDistanceM = newRaceDistanceM
-        profile.raceDate = newRaceDate
-        profile.goalFinishTimeS = newGoalFinishTimeS
-        profile.planIntensity = intensity.rawValue
-        profile.targetWeeklyRunVolumeM = targetWeekly
-        if hybrid { profile.hybridPriority = hybridPriority.rawValue }
-        if lifting { profile.strengthSplit = strengthSplit.rawValue }
-        if rebuild {
-            PlanService.rebuild(for: profile, in: context)   // preserves calibrated pace + cross-training
+        guard let goal, canCommit else { return }
+        // Resolve the season/event identity while the current plan is still attached. The command is
+        // buffered like the form: cancel never constructs or writes it; Save is the only dual-write
+        // path for the legacy goal fields and their running-domain sidecars.
+        let configuration: PlanConfigurationCommand
+        do {
+            configuration = try PlanConfigurationCommand.legacyUICommand(
+                id: UUID(),
+                profile: profile,
+                startsNewSeason: mode == .create,
+                planName: name,
+                goal: goal,
+                raceDate: newRaceDate,
+                raceDistanceM: newRaceDistanceM,
+                goalFinishTimeS: newGoalFinishTimeS,
+                in: context
+            )
+        } catch {
+            saveFailed = true
+            return
         }
-        profile.plan?.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A structural rebuild that silently fails to persist is the worst kind of ghost — the
-        // athlete saw "success", and their plan reverts on next launch. Keep the sheet open.
-        do { try context.save() } catch {
+        // Rename-only edits must NOT rebuild — regenerating the upcoming weeks is for structural
+        // changes. A NEW plan always rebuilds: that's the point of beginning again. Autosave stays
+        // off until every profile, plan, season, event, metadata, and intent mutation is staged.
+        let rebuild = structural || mode == .create
+        let previousAutosave = context.autosaveEnabled
+        context.autosaveEnabled = false
+        defer { context.autosaveEnabled = previousAutosave }
+        do {
+            profile.goal = goal
+            profile.daysPerWeek = days
+            profile.sessionMinutes = minutes
+            profile.equipment = equipment
+            profile.raceDistanceM = newRaceDistanceM
+            profile.raceDate = newRaceDate
+            profile.goalFinishTimeS = newGoalFinishTimeS
+            profile.planIntensity = intensity.rawValue
+            profile.targetWeeklyRunVolumeM = targetWeekly
+            if hybrid { profile.hybridPriority = hybridPriority.rawValue }
+            if lifting { profile.strengthSplit = strengthSplit.rawValue }
+            if rebuild {
+                _ = try PlanService.stageRebuild(for: profile, in: context)
+            }
+            _ = try configuration.apply(in: context, now: Date())
+            if rebuild {
+                _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+            }
+            try context.save()
+        } catch {
             context.rollback()
             saveFailed = true
             return

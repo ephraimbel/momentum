@@ -324,7 +324,7 @@ enum PlanCoaching {
                 if let d = s.targetDistanceM { s.targetDistanceM = RunRounding.snap(meters: d * 1.1, unit: unit) }
                 if let dur = s.targetDurationS { s.targetDurationS = (dur * 1.1).rounded() }
                 for pe in s.strengthTargets { pe.targetSets = min(6, pe.targetSets + 1) }
-                s.rationale = "Nudged up ~10% — your load says you've earned more."
+                s.rationale = "Nudged up ~10% after your review of a lighter-than-recent week."
             }
         case .ease:
             for s in future {
@@ -512,10 +512,10 @@ enum PlanCoaching {
         return updated
     }
 
-    /// Automatically protect the athlete from overreaching (PRD §9.4) — the closed-loop half of
-    /// `apply`. Reads the ACWR recommendation from *completed* load and, **only when it says ease or
-    /// rest**, applies it to upcoming sessions. Deliberately never auto-*increases* load (raising
-    /// volume without consent is the unsafe direction — that stays a manual/coach-proposed action).
+    /// Conservatively respond when a much-higher-than-recent completed load is corroborated by a
+    /// recent session landing harder than prescribed (PRD §9.4). A ratio alone is descriptive and
+    /// can never mutate the plan. Deliberately never auto-*increases* load; raising volume remains a
+    /// reviewed, athlete-confirmed action.
     ///
     /// Gated to **at most once per 7 days** via `plan.lastAdaptedAt`, which is the safeguard against
     /// the compounding that `apply`'s doc warns about (the rec is from completed load, so re-applying
@@ -527,15 +527,39 @@ enum PlanCoaching {
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
 
-        let rec = ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation
-        guard rec == .ease || rec == .rest else { return nil }   // protective directions only
+        let loadRec = ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation
+        guard loadRec == .ease || loadRec == .rest else { return nil }
+        // The load ratio is not a clearance or injury model. Require the athlete's recent response
+        // to agree before a structural mutation; races are excluded because high effort is expected.
+        guard let response = corroboratingRunResponse(in: workouts, today: today, calendar: calendar)
+        else { return nil }
+        let rec: ProgressInsights.Recommendation = response == .recover ? .rest : .ease
         guard apply(rec, to: plan, from: today, in: context, calendar: calendar) > 0 else { return nil }
         let (headline, detail): (String, String) = rec == .rest
-            ? ("Recovery inserted", "Your training load's been climbing, so your next session is now a recovery day. Rest is where it sticks.")
-            : ("Eased your week", "Your recent load spiked, so I trimmed this week's volume to keep you fresh and healthy.")
+            ? ("Recovery inserted", "Your recent load is much higher than your recent pattern and a session landed much harder than planned, so your next session is now a recovery day.")
+            : ("Eased your week", "Your recent load is above your recent pattern and a session landed harder than planned, so I made a conservative trim.")
         CoachingEvent.record(kind: rec == .rest ? .recover : .ease, headline: headline, detail: detail,
                              on: today, in: context, calendar: calendar)
         return rec   // `apply` already recorded `lastAdaptedAt` + saved
+    }
+
+    /// Subjective corroboration for the legacy automatic load path. Only a recent planned run with
+    /// explicit plan-fit/RPE mismatch qualifies; an unplanned hard effort or race is not evidence
+    /// that an ordinary prescription missed. Kept local so load math cannot quietly broaden it.
+    private static func corroboratingRunResponse(in workouts: [Workout], today: Date,
+                                                 calendar: Calendar) -> EffortAdaptation.Outcome? {
+        guard let cutoff = calendar.date(byAdding: .day, value: -3, to: today) else { return nil }
+        return workouts
+            .filter { $0.startedAt >= cutoff && $0.startedAt <= today && $0.type.discipline == .running }
+            .sorted { $0.startedAt > $1.startedAt }
+            .compactMap { workout in
+                guard let runType = workout.plannedSession?.runType, runType != .race else { return nil }
+                let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort,
+                                                     runType: runType,
+                                                     planFit: workout.planFit)
+                return outcome == .ease || outcome == .recover ? outcome : nil
+            }
+            .first
     }
 
     /// Autoregulated strength deload (PRD §9.2's plan-level half): when the last two strength
@@ -624,8 +648,9 @@ enum PlanCoaching {
         let sessionsAffected: Int
     }
 
-    /// Offer an opt-in load increase when *completed* load (ACWR) says the athlete is under-loaded and
-    /// has earned more — but only if nothing was adapted in the last 7 days (mirrors `autoAdapt`'s
+    /// Offer an opt-in review when completed load is lighter than the recent pattern. A light ratio
+    /// does not prove readiness or permission to add; the athlete must confirm the week was intentional
+    /// and landed well. Nothing is offered if the plan changed in the last 7 days (mirrors `autoAdapt`'s
     /// safeguard, so a proposal can't stack on an auto-ease) and there are future sessions to change.
     /// Returns `nil` when there's nothing to offer. Deterministic — this is what `apply` would do.
     static func proposeAdjustment(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
@@ -643,8 +668,8 @@ enum PlanCoaching {
         }
         guard !future.isEmpty else { return nil }
         return Proposal(rec: .increase,
-                        headline: "You've earned more",
-                        detail: "Your load's been light and well-absorbed — bump next week about 10%?",
+                        headline: "Review next week's load",
+                        detail: "This week was lighter than your recent pattern. If that was intentional and the sessions felt good, add about 10% next week?",
                         sessionsAffected: future.count)
     }
 

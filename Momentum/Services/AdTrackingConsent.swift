@@ -56,7 +56,7 @@ enum AdTrackingConsent {
         #endif
     }
 
-    /// Mirror the athlete's answer into Meta's SDK.
+    /// Mirror the athlete's answer into Meta's advertiser-ID collection gate.
     ///
     /// `FacebookAdvertiserIDCollectionEnabled` is true in Info.plist so the SDK *may* read the
     /// IDFA, but "may" is not "should": we set the flag explicitly from the ATT status so a denial
@@ -66,7 +66,9 @@ enum AdTrackingConsent {
         #if canImport(FBSDKCoreKit) && canImport(AppTrackingTransparency)
         let authorized = ATTrackingManager.trackingAuthorizationStatus == .authorized
         Settings.shared.isAdvertiserIDCollectionEnabled = authorized
-        Settings.shared.isAdvertiserTrackingEnabled = authorized
+        // FBSDK 17+ reads `ATTrackingManager.trackingAuthorizationStatus` directly. Its former
+        // advertiser-tracking setter is deprecated and ignored on iOS 17+, so setting the ID
+        // collection gate is the only explicit SDK state we need to maintain.
         #endif
     }
 }

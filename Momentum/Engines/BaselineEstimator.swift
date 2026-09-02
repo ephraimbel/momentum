@@ -1,14 +1,15 @@
 import Foundation
 
-/// Estimates a runner's current baseline from their recent run history (Apple Health import — the
-/// "it already understands me" onboarding moment, ENDURANCE-FOCUS §4). Pure + deterministic.
+/// Estimates a runner's current baseline from recent runs intentionally recorded in Momentum or
+/// restored through Momentum account sync (ENDURANCE-FOCUS §4). Apple Health never supplies these
+/// samples. Pure + deterministic.
 ///
 /// Doctrine: training runs are not races, so the pace estimate is deliberately conservative — we take
 /// the best sustained effort at face value (no all-out bonus). A slightly slow seed self-corrects in
 /// the first calibration weeks; a fast one causes every easy run to feel hard and erodes trust.
 enum BaselineEstimator {
 
-    /// One historical run (from HealthKit or our own store).
+    /// One historical Momentum run, projected into plain values by the caller.
     struct RunSample: Sendable {
         let date: Date
         let distanceM: Double

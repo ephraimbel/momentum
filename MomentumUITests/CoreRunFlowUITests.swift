@@ -55,7 +55,7 @@ final class CoreRunFlowUITests: XCTestCase {
         attach("1-early-trace")
 
         // ── 4. Draw the whole ~4-mile trace in one continuous sweep (no pause gap) ──────
-        sleep(84)
+        waitForTraceDuration(84, observing: finish)
         attach("2-tracking-trace")        // ~4 mi, smooth
 
         // ── 5. Pause → Resume (burst done → real-time tail → negligible trace gap) ──────
@@ -192,6 +192,18 @@ final class CoreRunFlowUITests: XCTestCase {
             let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
             start.press(forDuration: 0.05, thenDragTo: end)
             n += 1
+        }
+    }
+
+    /// Keep the runner active while the deterministic GPS feed draws the long route. A single
+    /// 84-second `sleep` gives XCTest no activity to observe and recent runners terminate the test
+    /// as unresponsive before the feed completes. Sampling the control also turns that dead time
+    /// into a useful assertion: recording must remain interactive throughout the animation.
+    private func waitForTraceDuration(_ duration: TimeInterval, observing control: XCUIElement) {
+        let deadline = Date().addingTimeInterval(duration)
+        while Date() < deadline {
+            sleep(UInt32(min(7, max(1, deadline.timeIntervalSinceNow))))
+            XCTAssertTrue(control.exists, "The live workout controls disappeared while the route was drawing.")
         }
     }
 

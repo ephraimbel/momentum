@@ -10,7 +10,10 @@ final class OnboardingPerfUITests: XCTestCase {
     func testOnboardingOpensFast() {
         measure(metrics: [XCTClockMetric()]) {
             let app = XCUIApplication()
-            app.launchArguments = ["--onboarding", "--onboarding-guest"]
+            // UI tests share one simulator container. Reset every iteration so an existing demo
+            // profile or recovery marker cannot steal the presentation slot from onboarding and
+            // turn this launch benchmark into a test of whatever the prior suite left open.
+            app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest"]
             app.launch()
             XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 20), "onboarding never opened")
             app.terminate()
@@ -38,7 +41,7 @@ final class OnboardingPerfUITests: XCTestCase {
         var stalls: [String] = []
         for i in 0..<16 {
             // Gated steps: answer them so the walk can continue.
-            if app.staticTexts["What do you want to do?"].exists, !app.buttons["Continue"].isEnabled {
+            if app.staticTexts["What supports your running?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()
             }
             if app.staticTexts["What's your main goal?"].exists, !app.buttons["Continue"].isEnabled {

@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.6.0"      # 2026-08-30: 1.5.0 (build 35) shipped; the plan-system/coach sweep ships as 1.6.0. Must match the ASC version record EXACTLY.
-    CURRENT_PROJECT_VERSION: "36"   # build 36 (v1.6.0) — plan/coach sweep: voice coach background audio, race-floored hybrid run days, plan reveal + onboarding doors.
+    CURRENT_PROJECT_VERSION: "37"   # build 37 (v1.6.0) — conversion funnel: required opt-ins before reveal, showcase before checkout, diagnostic analytics.
     # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 SHIFTS 33's step order: a `units` beat was inserted after `disciplines`, so index 4 is UNITS and everything from there on moves up one (33: 24 = account; 34: 25 = account). The funnel view groups by build precisely so the two never average together, which is why this number had to move before upload. Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
@@ -45,6 +45,12 @@ packages:
   FacebookSDK:
     url: https://github.com/facebook/facebook-ios-sdk
     from: "18.1.0"
+  # Error-only production diagnostics (owner call 2026-08-31). The SDK is config-gated by
+  # SENTRY_DSN and deliberately has tracing, profiling, replay, logs, screenshots and automatic
+  # breadcrumbs disabled so the $0 Developer plan remains sufficient and health data stays local.
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa.git
+    from: "9.24.0"
 #   Superwall:
 #     url: https://github.com/superwall/Superwall-iOS
 #     from: "4.0.0"
@@ -71,6 +77,10 @@ targets:
       configs:
         Debug:
           SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        # Sentry's dSYM scanner must read the complete .dSYM bundle during Archive. Keep script
+        # sandboxing on everywhere else; this narrow Release override follows Sentry's Apple docs.
+        Release:
+          ENABLE_USER_SCRIPT_SANDBOXING: NO
     info:
       path: Momentum/Resources/Info.plist
       properties:
@@ -101,7 +111,7 @@ targets:
         NSCameraUsageDescription: "momentum uses the camera to scan food barcodes, to attach photos to a workout right after you finish it, and to take a photo for a share card."
         NSMicrophoneUsageDescription: "momentum uses the microphone so you can speak instead of typing — a meal, a workout, a question for your coach."
         NSSpeechRecognitionUsageDescription: "momentum uses speech recognition to turn what you say into text — meals, workouts, coach questions."
-        NSHealthShareUsageDescription: "momentum reads heart rate, heart-rate variability, resting heart rate, sleep, body weight, and workout data to personalize your stats, recovery, and coaching."
+        NSHealthShareUsageDescription: "momentum reads recovery signals and workout time windows to personalize coaching without importing workouts."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSPhotoLibraryAddUsageDescription: "momentum saves the share cards you make to your photo library."
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
@@ -118,6 +128,9 @@ targets:
         # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
         SupabaseURL: "$(SUPABASE_URL)"
         SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
+        # Error monitoring only. The public DSN is injected rather than committed; blank means the
+        # SDK never initializes. See docs/SENTRY-SETUP.md for the free-plan/privacy runbook.
+        SentryDSN: "$(SENTRY_DSN)"
         # Native Google sign-in (GoogleNativeAuth, 2026-08-20): the iOS OAuth client in the
         # owner's "momentum app" Google Cloud project. Public by design (client IDs ship in the
         # binary); Supabase's Google provider lists it as an accepted audience. Empty → the
@@ -188,8 +201,15 @@ targets:
       - package: RevenueCat        # billing live 2026-07-15 (RC project "Momentum", entitlement `pro`, offering `default`)
     #   - package: Superwall       # not set up — RevenueCat-only per user; native PaywallView is the fallback
       - package: TikTokBusinessSDK # TikTok ads attribution (SKAN-only, no ATT) — TikTokAdsService
-      - package: FacebookSDK       # Meta ads attribution (SKAN-only, no ATT) — MetaAdsService
+      - package: FacebookSDK       # Meta ads attribution (SKAN + ATT-gated IDFA) — MetaAdsService
         product: FacebookCore
+      - package: Sentry            # error-only crash/hang monitoring; config-gated, no replay/tracing/PII
+    postBuildScripts:
+      - name: Upload dSYMs to Sentry
+        path: scripts/upload_sentry_dsyms.sh
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(DWARF_DSYM_FOLDER_PATH)/$(DWARF_DSYM_FILE_NAME)/Contents/Resources/DWARF/$(EXECUTABLE_NAME)"
 
   # WidgetKit/ActivityKit extension — hosts the rest-timer Live Activity. The shared
   # `RestActivityAttributes.swift` is compiled into BOTH this target and the app (Live Activity
@@ -267,6 +287,7 @@ targets:
       - path: Momentum/Engines/Geo.swift            # shared: haversine (RouteSmoothing dependency)
       - path: Momentum/Engines/WorkoutLogParser.swift # shared: the voice-log grammar (pure Swift — receipts on the wrist)
       - path: Momentum/Engines/StructuredWorkout.swift # shared: step model + tracker + pure builders (guided runs on the wrist; the PlannedSession-facing builder stays phone-side)
+      - path: Momentum/Engines/Running/Execution/ExecutionPrescription.swift # shared: one versioned intent/legacy execution contract with safe skew fallback
       - path: Momentum/Features/Plan/StructuredWorkoutSummary.swift # shared: step → human row labels (pure display math over Formatters)
       # The voice coach, whole: the wrist says the SAME words the phone does because it runs the
       # same three pure files. Only the speaker (WatchVoiceCoach) is platform-specific.
@@ -305,6 +326,12 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: MomentumTests
+        excludes:
+          - Fixtures
+      # Immutable store exported by the committed build-36 source. Keep it a resource rather than
+      # compiling the fixture directory so migrations are tested against released bytes.
+      - path: MomentumTests/Fixtures/ArchivedRunningSchemaV1Build36.store
+        buildPhase: resources
     dependencies:
       - target: Momentum
     settings:

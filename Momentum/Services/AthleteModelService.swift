@@ -120,7 +120,7 @@ final class AthleteModelService: AthleteModelServing {
         m.e1rmTrendByExercise = f.e1rmTrendByExercise
         m.weeklyVolumeTrendPct = f.weeklyVolumeTrendPct
         m.currentACWR = f.currentACWR
-        m.overreachThresholdACWR = f.overreachThresholdACWR
+        m.priorHighStrainLoadRatio = f.priorHighStrainLoadRatio
         m.typicalRecoveryDays = f.typicalRecoveryDays
         m.prCountByMonth = f.prCountByMonth
         m.lastPRAt = f.lastPRAt

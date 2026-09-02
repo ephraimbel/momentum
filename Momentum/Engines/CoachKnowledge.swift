@@ -11,7 +11,7 @@ import Foundation
 enum CoachKnowledge {
 
     /// The interpolation inputs — every field optional; answers degrade gracefully without them.
-    struct Facts {
+    struct Facts: Sendable {
         var p5kSPerKm: Double? = nil
         var raceDistanceM: Double? = nil
         var weeksToRace: Int? = nil
@@ -19,9 +19,9 @@ enum CoachKnowledge {
         var distanceUnit: DistanceUnit = .auto
     }
 
-    struct Topic {
+    struct Topic: Sendable {
         let keywords: [String]
-        let answer: (Facts) -> String
+        let answer: @Sendable (Facts) -> String
     }
 
     /// The library answer for a message, or nil when no topic matches (the caller keeps its own
@@ -87,7 +87,7 @@ enum CoachKnowledge {
             "Cadence is your steps per minute. There's no magic 180: most runners land somewhere between 160 and 185, and it naturally rises with speed. If yours is very low it can mean overstriding, so think shorter, quicker steps landing under your hips rather than forcing a number."
         },
         Topic(keywords: ["overstriding", "heel strike", "foot strike", "footstrike", "running form", "posture", "technique"]) { _ in
-            "Good form is mostly posture: run tall, lean slightly from the ankles, and let your feet land under your hips instead of reaching out in front. Where your foot strikes matters far less than where it lands relative to your body. Change form gradually if at all, because sudden overhauls are an injury risk."
+            "Good form is individual, but relaxed posture helps: run tall, lean slightly from the ankles, and avoid forcing a foot strike. Change one cue at a time and only when it solves a real problem; sudden overhauls can disrupt a stride that was working."
         },
         Topic(keywords: ["breathing", "out of breath", "winded", "breathe while"]) { _ in
             "If you're gasping on easy runs, the fix is pace, not lungs: slow down until you could speak in sentences. Belly breathing (letting your stomach expand) beats shallow chest breaths, and rhythmic patterns like three steps in, two out can settle things on harder efforts."
@@ -119,12 +119,12 @@ enum CoachKnowledge {
         },
         Topic(keywords: ["should i lift", "strength training help", "lifting help", "weights help", "gym help", "strength work for run"]) { f in
             let days = f.daysPerWeek > 0 ? " Your plan already budgets for it around your \(f.daysPerWeek) training days." : ""
-            return "Yes. Two short strength sessions a week measurably cut injury risk and improve running economy. For runners that means heavy and simple (squats, hinges, calf raises, core), not exhausting circuits. Keep it away from your hardest run days when you can." + days
+            return "Well-designed strength work can support running economy and force production. For runners that means progressive, well-recovered work—squats, hinges, calf raises, and trunk work—not exhausting circuits. Keep demanding lower-body work away from your hardest run when the schedule allows." + days
         },
         Topic(keywords: ["get faster", "run faster", "improve my 5k", "improve my 10k", "improve my time", "speed up my", "how do i improve"]) { f in
-            var out = "Three things make runners faster, in order: consistency over months, enough easy volume, and one or two quality sessions a week. That's exactly how your plan is built. The unglamorous truth is that missing zero weeks beats any magic workout."
+            var out = "Running improvement usually comes from consistent weeks, mostly easy work, and a small amount of targeted quality that fits your experience and event. Your plan builds those pieces gradually; no single workout carries the season."
             if let p5k = f.p5kSPerKm, p5k > 0 {
-                out += " Your calibrated fitness updates every time you show real speed, so the plan's paces climb with you."
+                out += " Your pace estimate changes only when comparable running evidence supports it, so one unusually good or bad day does not rewrite the plan."
             }
             return out
         },
@@ -134,16 +134,16 @@ enum CoachKnowledge {
             "VDOT is Jack Daniels' fitness score: one number derived from a race performance that maps to all your training paces. It's how a 5K time can prescribe your easy, tempo, and interval paces. Your plan uses the same tables, calibrated from your own running."
         },
         Topic(keywords: ["acwr", "acute chronic", "load balance", "what is training load", "training load mean"]) { _ in
-            "Your load balance (ACWR) compares the last 7 days of training against your 28-day norm. The sweet spot is roughly 0.8 to 1.3: below it you're detraining, above about 1.5 injury risk climbs fast. It's the number I watch before saying yes to more volume."
+            TrainingLoadContext.methodExplanation
         },
         Topic(keywords: ["hrv", "heart rate variability"]) { _ in
-            "HRV is the tiny variation between heartbeats, and it's one of the best windows into recovery: higher than your norm generally means recovered, suppressed means stress (training, sleep, illness, life). It only means something against your own baseline, which is exactly how I read it."
+            "HRV is the variation between heartbeats. It can add recovery context when compared with your own stable baseline, but it is noisy and can move with training, sleep, illness, alcohol, measurement timing, and life stress. I never use one reading as clearance or as a diagnosis."
         },
         Topic(keywords: ["resting heart rate", "resting hr", "rhr"]) { _ in
-            "Resting heart rate falls as you get fitter and rises when you're under-recovered or getting sick. A morning value 4 or more beats above your norm is worth respecting with an easier day. Trend beats any single reading."
+            "Resting heart rate can shift with fitness, fatigue, temperature, hydration, illness, medication, and measurement conditions. I compare it with your own recent baseline and other signals; one morning value does not automatically cancel or approve a session."
         },
         Topic(keywords: ["max heart rate", "maximum heart rate", "max hr", "220 minus"]) { _ in
-            "The 220-minus-age formula misses badly for lots of people, sometimes by 15 or more beats. The best field estimate is the highest value you see at the end of a hard uphill finish or a 5K race. Set it in your profile and your zones recalculate instantly."
+            "Age formulas are rough population estimates and can miss an individual's max heart rate. Use a trustworthy value you already observed in an appropriate hard effort, or keep the estimate and treat the zones as provisional. You never need to perform an unsupervised maximal test just to use the plan."
         },
         Topic(keywords: ["heart rate drift", "hr drift", "cardiac drift", "heart rate keeps climbing", "hr keeps going up", "hr so high on easy"]) { _ in
             "Heart rate drifting upward at a steady pace is normal: heat, dehydration, and accumulating fatigue all push it up over a run. It's why later kilometers read higher for the same effort. If easy runs start high from the first kilometer, that's more often pace, heat, caffeine, or a rough night."
@@ -155,21 +155,21 @@ enum CoachKnowledge {
             "It's real: sustained aerobic exercise releases endocannabinoids that lift mood and blunt discomfort. It tends to show up on relaxed, medium-length runs rather than hard ones. If you've felt it, that's your brain paying you for consistency."
         },
         Topic(keywords: ["hit the wall", "bonk", "the wall at"]) { _ in
-            "The wall is glycogen running out, usually past 90 minutes of hard running. The fix is fueling before and during (carbs early and often), pacing honestly in the first half, and training your gut on long runs. Marathoners who fuel properly mostly don't meet it."
+            "A late-race collapse can involve depleted carbohydrate stores, pacing, heat, hydration, muscle damage, or several factors together. Practiced fueling, an honest first half, and event-specific long runs can reduce the chance, but no tactic guarantees it."
         },
 
         // ── Environment and gear ──────────────────────────────────────────────────────────
         Topic(keywords: ["treadmill"]) { _ in
-            "Treadmills count fully: same engine, same adaptations. A 1% incline roughly matches outdoor effort at most paces. GPS obviously can't track it, so log those runs manually and they'll credit your plan the same as any road run."
+            "Treadmill runs count. Belt calibration, cooling, and the runner change how treadmill pace compares with outdoors, so there is no universal incline correction. Follow effort first, confirm the distance you trust, and log it manually so the session credits your plan."
         },
         Topic(keywords: ["uphill", "downhill", "hill repeats", "hilly", "run hills", "incline"]) { _ in
             "Hills are strength work in disguise. Going up: shorten your stride, pump your arms, and hold effort steady rather than pace (your pace should slow). Coming down: slight forward lean, quick light steps, and don't brake with your heels, since downhill braking is what shreds quads."
         },
         Topic(keywords: ["shoe", "sneaker", "footwear", "carbon plate"]) { _ in
-            "Shoes are personal, but the rules of thumb hold: comfort predicts injury risk better than any category label, most shoes are done between 500 and 800 km, and rotating two pairs measurably lowers injury rates. Save carbon plates for races and workouts, and do your easy volume in something with more life in it."
+            "Shoes are personal: prioritize comfort, fit, and how they feel late in a run over category labels. Lifespan varies with the runner, shoe, and surface, so replace a pair when cushioning, grip, or comfort meaningfully changes. Introduce carbon-plated shoes gradually before racing in them."
         },
         Topic(keywords: ["hot out", "in the heat", "humid", "summer running", "run in heat"]) { _ in
-            "Heat is honest: your pace slows 3 to 5% and that's physiology, not weakness. Run by effort instead of pace, go early or late, and drink to thirst. Full heat adaptation takes about two weeks of consistent exposure, and the fitness you build in it shows up when it cools."
+            "Heat and humidity often slow pace, but the size of the change is personal and condition-specific. Run by effort, choose a cooler time or route when possible, bring appropriate fluids for the session, and build exposure gradually. Stop and seek help for concerning heat-illness symptoms."
         },
         Topic(keywords: ["cold out", "winter run", "freezing", "in the snow", "run in the cold"]) { _ in
             "Cold running is mostly a dressing problem: dress for 10 degrees warmer than the actual temperature, because you'll heat up fast. Layers you can shed, something for hands and ears, and a longer warmup before any quality work. Traction beats pace on ice, so shorten your stride."
@@ -186,33 +186,33 @@ enum CoachKnowledge {
             "Carb loading only matters for efforts beyond about 90 minutes. It's 36 to 48 hours of carb-focused meals at normal portions, not one giant pasta night. Nothing new on race weekend: familiar foods, slightly bigger carb share, done."
         },
         Topic(keywords: ["electrolyte", "salt tab", "sodium", "cramping"]) { _ in
-            "Electrolytes matter on hot days and efforts past about 90 minutes, especially if you finish crusted in salt. Drinking to thirst plus some sodium on long hot sessions covers most runners. Cramps are usually more about pacing and conditioning than salt, though: the fitter you are at the pace, the less you cramp."
+            "Fluid and sodium needs vary with duration, weather, sweat rate, acclimation, and the athlete. Practice a fueling-and-fluid plan during long runs instead of guessing on race day. Cramps can have several contributors, so recurring or severe episodes deserve individual review rather than an automatic salt prescription."
         },
         Topic(keywords: ["caffeine", "coffee before"]) { _ in
             "Caffeine genuinely works: roughly 2 to 3 mg per kg about 45 to 60 minutes before a hard session or race improves endurance performance. A normal coffee covers most people. Practice it in training first, and skip late-day doses since sleep is the bigger lever."
         },
         Topic(keywords: ["lose weight", "weight loss", "burn fat", "calories", "diet"]) { _ in
-            "I coach fueling, not dieting, so I won't hand out calorie targets. What I can tell you: underfueling training is the fastest way to get slower, sick, or hurt, and performance improves body composition far more sustainably than restriction does. Fuel the work, sleep well, and let consistency do the quiet part. For anything beyond that, a registered dietitian is the right pro."
+            "I coach fueling, not dieting, so I won't set a weight-loss calorie target or promise a weight outcome. Momentum can build a consistent running routine and help you eat enough for the work. For an individual body-composition goal—especially alongside high training load—a registered dietitian is the right professional."
         },
 
         // ── Recovery ──────────────────────────────────────────────────────────────────────
         Topic(keywords: ["stretch", "foam roll", "mobility", "flexib", "yoga"]) { _ in
-            "The evidence is modest but friendly: dynamic movement before running, and save long static stretches or the foam roller for after, if you enjoy them. Neither prevents injury on its own. If you have ten spare minutes, easy strength work returns more than stretching."
+            "A short dynamic warm-up can help you feel ready to move; static stretching or foam rolling afterward is optional if it feels useful. None is an injury guarantee. Choose the small routine you will repeat without taking recovery away from the training that matters."
         },
         Topic(keywords: ["doms", "soreness normal", "muscle soreness", "sore after", "legs are sore from"]) { _ in
             "Next-day soreness after new or hard work is normal adaptation, peaks around 48 hours, and easy movement helps it clear. The line to respect: soreness is dull, both-sided, and fades as you warm up. Pain that's sharp, one-sided, or gets worse while running is different, and if that's what you've got, tell me where and I'll adjust the plan."
         },
         Topic(keywords: ["how much sleep", "sleep do i need", "sleep important", "sleep for recovery", "sleep and running"]) { _ in
-            "Sleep is the best legal performance enhancer there is: it's when the actual rebuilding happens. Athletes in training generally need 7 to 9 hours, and chronic shortage shows up as flat legs, elevated resting HR, and higher injury risk. If you must choose, an extra hour of sleep beats an extra easy run."
+            "Sleep is where much of the rebuilding happens. Many adults land around 7 to 9 hours, but your own trend and how you function matter more than chasing one perfect number. Repeated short nights can show up as flat legs, elevated resting HR, and poor session quality; recovery can be more valuable than squeezing in extra easy volume."
         },
         Topic(keywords: ["overtraining syndrome", "burned out", "burnout", "no motivation to run"]) { _ in
-            "Persistent flatness, disturbed sleep, elevated resting HR, and vanishing motivation are the classic overreaching signs, and the cure is unheroic: several genuinely easy days and honest sleep. Motivation dips are also just normal, so don't diagnose yourself off one bad week. I watch your load and recovery signals for exactly this, and I'll pull the plan back before you dig a hole."
+            "Persistent flatness, sleep disruption, unusual fatigue, or a major motivation change deserves attention, but those signs are not specific enough for the app to diagnose overtraining. Ease the immediate pressure, review the full context, and involve a qualified clinician when symptoms persist or concern you."
         },
         Topic(keywords: ["shin splint"]) { _ in
-            "Shin splints usually trace to ramping volume too fast, worn shoes, or lots of hard surface. Prevention is gradual load (which your plan enforces), fresh shoes, and calf strength. If your shins are actively hurting, tell me it hurts and where, and I'll take you through the injury flow and train around it."
+            "Shin pain has several possible causes, and I can't diagnose it from chat. Tell me where it hurts and how it behaves so I can reduce aggravating training; focal, worsening, or persistent pain should be assessed by a qualified professional rather than trained through."
         },
         Topic(keywords: ["prevent injur", "avoid injur", "injury prevention", "stay healthy", "not get hurt"]) { _ in
-            "Most running injuries are load errors: too much, too soon, too fast. Your protection is already built in here: gradual ramps, a hard weekly-change budget, recovery watching, and strength work. Your end of the deal is sleeping enough, respecting easy days, and telling me early when something feels off. Early honesty costs a session; late honesty costs a month."
+            "No plan can promise injury prevention. Momentum uses conservative progression, recovery spacing, runner-strength support, and early symptom feedback to avoid unnecessary training pressure. Tell me early when something changes; persistent, worsening, or concerning pain belongs with a qualified professional."
         },
 
         // ── Race craft ────────────────────────────────────────────────────────────────────

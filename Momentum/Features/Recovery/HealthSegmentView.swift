@@ -291,24 +291,21 @@ struct HealthSegmentView: View {
             series: { _ in points })
     }
 
-    /// LOAD's tap-through: the acute:chronic ratio day by day, read from the app's one ACWR
-    /// source (`ProgressInsights`) evaluated at each day — never a second formula. The sweet
-    /// spot rides behind it as the band, so "am I in it?" is answered by the picture.
+    /// LOAD's tap-through: the recent-to-usual ratio day by day, read from the app's one formula
+    /// (`ProgressInsights`) evaluated at each day. No target band: this is change context, not a
+    /// universal safe zone or injury score.
     private var loadDetail: TrendDetail {
         // Value tuples, captured HERE on the main actor — SwiftData models must never cross to
         // another actor. The series below then computes with no model access at all.
         let sessions = workouts.map { (date: $0.startedAt, load: TrainingLoad.session($0)) }
         return TrendDetail(
             id: "training-load-acwr",
-            title: "Training load",
-            unit: "ACWR",
+            title: "Load change",
+            unit: "RATIO",
             form: .line,
             stats: [.average, .latest],
             hugsY: true,
             tint: Theme.purple,
-            band: (lower: 0.8, upper: 1.3),
-            bandTint: Theme.purple,
-            bandNote: "the sweet spot · 0.8–1.3",
             explainer: MetricExplainers.recoveryForm,
             format: { String(format: "%.2f", $0) },
             series: { weeks in

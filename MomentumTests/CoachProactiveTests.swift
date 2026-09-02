@@ -325,7 +325,7 @@ struct CoachProactiveTests {
         // The fixture must produce the chronic the ratios below assume, or the test is vacuous.
         #expect(ProgressInsights(workouts: workouts, now: anchor, calendar: cal).chronic == 420.0)
 
-        // Next week planned at 1.2× chronic (72 min × RPE 7 = 504) — inside the safe band.
+        // Next week planned at 1.2× the recent norm (72 min × RPE 7 = 504).
         let plan = planWithRun(durationS: 4_320, on: cal.date(byAdding: .day, value: 1, to: anchor)!, in: ctx)
         #expect(PlannedLoad.estimate(plan.sessions[0]) == 504.0)
         #expect(!CoachProactive.seedPlannedLoadRecheck(plan: plan, workouts: workouts,

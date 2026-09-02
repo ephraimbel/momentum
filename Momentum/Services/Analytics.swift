@@ -17,10 +17,16 @@ enum AnalyticsEvent: Equatable {
     /// `app_launched(first=true)`: installs that fired the launch but never a welcome action are
     /// the athletes who bounced at the door.
     case welcomeAction(action: String)
-    case onboardingStep(index: Int)
+    /// `index` preserves the enum's historical raw value; `position` is the athlete's actual
+    /// one-based position in their branched flow. The human-readable name makes funnel reports
+    /// resilient when steps are reordered without changing those historical raw values.
+    case onboardingStep(name: String, index: Int, position: Int, total: Int)
+    case onboardingShowcase(action: String)
+    case onboardingPermission(kind: String, status: String)
     case planGenerated(disciplines: Int)
-    case paywallView(placement: String)
-    case paywallConvert(product: String)
+    case paywallView(placement: String, pricingLive: Bool)
+    case paywallAction(action: String, placement: String, product: String)
+    case paywallConvert(product: String, placement: String)
     case workoutStarted(type: String)
     case setLogged(latencyMs: Int)
     case restTimerComplete
@@ -55,8 +61,11 @@ enum AnalyticsEvent: Equatable {
         case .appLaunched:       "app_launched"
         case .welcomeAction:     "welcome_action"
         case .onboardingStep:    "onboarding_step"
+        case .onboardingShowcase:"onboarding_showcase"
+        case .onboardingPermission:"onboarding_permission"
         case .planGenerated:     "plan_generated"
         case .paywallView:       "paywall_view"
+        case .paywallAction:     "paywall_action"
         case .paywallConvert:    "paywall_convert"
         case .workoutStarted:    "workout_started"
         case .setLogged:         "set_logged"
@@ -80,10 +89,16 @@ enum AnalyticsEvent: Equatable {
         switch self {
         case .appLaunched(let first):          ["first": String(first)]
         case .welcomeAction(let a):            ["action": a]
-        case .onboardingStep(let i):           ["index": String(i)]
+        case .onboardingStep(let n, let i, let p, let t):
+            ["step": n, "index": String(i), "position": String(p), "total": String(t)]
+        case .onboardingShowcase(let a):       ["action": a]
+        case .onboardingPermission(let k, let s): ["kind": k, "status": s]
         case .planGenerated(let d):            ["disciplines": String(d)]
-        case .paywallView(let p):              ["placement": p]
-        case .paywallConvert(let p):           ["product": p]
+        case .paywallView(let p, let live):    ["placement": p, "pricing_live": String(live)]
+        case .paywallAction(let a, let p, let product):
+            ["action": a, "placement": p, "product": product]
+        case .paywallConvert(let product, let placement):
+            ["product": product, "placement": placement]
         case .workoutStarted(let t):           ["type": t]
         case .setLogged(let ms):               ["latency_ms": String(ms)]
         case .restTimerComplete:               [:]
@@ -115,8 +130,11 @@ protocol AnalyticsServing: AnyObject {
     func northStarStatus() -> NorthStarFunnel.Status
 }
 
-/// The default, privacy-preserving analytics service. Every event goes three places: the unified
-/// log (local debugging), the on-device north-star funnel, and — since 2026-07-25 — `AnalyticsSink`,
+/// The default, privacy-preserving analytics service. Every event goes to the unified log, the
+/// on-device north-star funnel, Supabase, and a memory-only Sentry breadcrumb when configured.
+/// The breadcrumb is the same deliberately non-PII event name/dimensions already sent to Supabase;
+/// it gives a later crash useful navigation context without enabling Sentry's automatic UI/network
+/// breadcrumb collectors.
 /// which batches them to Supabase so the onboarding funnel and paywall view→convert rate are
 /// actually measurable off-device. No third-party SDK; the sink is a no-op until Supabase is
 /// configured, so an unconfigured build behaves exactly as it did before (log-only).
@@ -144,6 +162,7 @@ final class AnalyticsService: AnalyticsServing {
         // Event names + dimensions are non-PII, so logging them publicly is safe and useful in dev.
         let params = event.parameters.map { "\($0)=\($1)" }.sorted().joined(separator: " ")
         logger.info("event=\(event.name, privacy: .public) \(params, privacy: .public)")
+        SentryMonitor.addBreadcrumb(event)
 
         // Advance the north-star funnel on its two defining milestones.
         switch event {

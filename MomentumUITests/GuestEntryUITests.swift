@@ -9,6 +9,7 @@ import XCTest
 /// 2. **The returning athlete still has a door**, and it still shows every option — Sign in with
 ///    Apple included, which App Store 4.8 requires beside Google. This assertion is the only place
 ///    that rule is encoded; do not delete it.
+@MainActor
 final class GuestEntryUITests: XCTestCase {
 
     func testWelcomeEntersTheAppWithoutAnAccount() {
@@ -44,7 +45,12 @@ final class GuestEntryUITests: XCTestCase {
         // Entered with no credentials: onboarding on a fresh device, tabs on a lived-in one.
         let onboarding = app.staticTexts["What should we call you?"]
         let tabs = app.tabBars.firstMatch
-        let entered = onboarding.waitForExistence(timeout: 15) || tabs.waitForExistence(timeout: 15)
+        // We already know which door was rendered. Waiting for the impossible destination first
+        // made the lived-in path burn 15 seconds of repeated accessibility snapshots before it
+        // even checked the tab bar, which could get the UI-test runner killed under load.
+        let entered = fresh
+            ? onboarding.waitForExistence(timeout: 15)
+            : tabs.waitForExistence(timeout: 15)
         XCTAssertTrue(entered, "the primary CTA must enter the app with no account")
         if fresh {
             XCTAssertTrue(onboarding.exists, "with no profile, Get started goes straight into setup")
@@ -56,8 +62,15 @@ final class GuestEntryUITests: XCTestCase {
         app.terminate()
         app.launchArguments = []
         app.launch()
-        XCTAssertFalse(app.buttons["I already have an account"].waitForExistence(timeout: 6),
-                       "the local session must survive relaunch")
+        // Prove the positive destination instead of polling for an element that should stay
+        // absent. On a busy simulator, XCTest's repeated accessibility debug snapshots for an
+        // expected absence can outlive the requested timeout and get the runner watchdog-killed.
+        let remainedInside = fresh
+            ? app.staticTexts["What should we call you?"].waitForExistence(timeout: 10)
+            : app.tabBars.firstMatch.waitForExistence(timeout: 10)
+        XCTAssertTrue(remainedInside, "the local session must survive relaunch")
+        XCTAssertFalse(app.buttons["I already have an account"].exists,
+                       "relaunch must not return an entered athlete to the welcome")
         attach("4-relaunch-still-in")
     }
 
@@ -68,45 +81,30 @@ final class GuestEntryUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // --debug-free: a sim left dev-unlocked by an earlier --debug-pro would sail past the paywall.
-        app.launchArguments = ["--onboarding", "--onboarding-guest", "--onboarding-primers", "--debug-free"]
-        // The primer asks for location ~0.55s after it settles; dismiss it however it lands.
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
-                let b = alert.buttons[label]
-                if b.exists { b.tap(); return true }
-            }
-            return false
-        }
+        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-guest", "--onboarding-reveal", "--debug-free"]
         app.launch()
-        app.tap()
+        let revealCTA = app.buttons["This looks great"]
+        XCTAssertTrue(revealCTA.waitForExistence(timeout: 20), "should land on the plan reveal")
+        attach("beat-1-reveal")
+        revealCTA.tap()
 
-        // The location primer — the last step before the paywall since the rating beat was removed
-        // (2026-08-22). Its Continue raises the wall directly.
-        let mapYourRuns = app.staticTexts["Map your runs"]
-        XCTAssertTrue(mapYourRuns.waitForExistence(timeout: 15), "should land on the location primer")
-        attach("beat-1-primer")
-        app.buttons["Continue"].tap()
-
-        // The paywall — a two-page flow since 2026-08-05 (device tour, then checkout), SOFT since
-        // 2026-08-06: the checkout page's X skips it (the tour carries no X). This test takes the
-        // purchase path; the DEBUG seam grants locally, which is exactly the entitlement flip
-        // under test.
-        // The tour CTA is a STORE fact: "Try now" only while an intro trial exists, "Continue"
-        // otherwise (trial retired 2026-08-20) — match either, like OnboardingPaywallUITests.
+        // The onboarding paywall is a hard two-page flow (device tour, then checkout). This test
+        // takes the purchase path; the DEBUG seam grants locally, which is exactly the entitlement
+        // flip under test. Eligibility remains a STORE fact, so match "Try now" and "Continue".
         let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the paywall should follow the location primer")
-        XCTAssertFalse(app.buttons["Close"].exists, "the tour page carries no X — checkout-only")
+        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the showcase should follow the plan reveal")
+        XCTAssertFalse(app.buttons["Close"].exists, "the hard-wall tour must not carry an X")
         attach("beat-2-paywall")
         tryNow.tap()
-        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
+        let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Unlock my plan' OR label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the checkout page should follow the reminder page")
-        XCTAssertTrue(app.buttons["Close"].exists, "the checkout page must offer the soft gate's X")
+        XCTAssertFalse(app.buttons["Close"].exists, "the hard-wall checkout must not carry an X")
         trialCTA.tap()
 
         // …and subscribing lands on the account, not in the app. This is the whole change.
         let accountBeat = app.staticTexts["Save your progress"]
         XCTAssertTrue(accountBeat.waitForExistence(timeout: 10),
-                      "dismissing the paywall must hand off to the account beat, not complete onboarding")
+                      "subscribing must hand off to the account beat, not complete onboarding")
         XCTAssertTrue(app.appleSignInButton.exists, "SIWA must accompany third-party login (4.8)")
         XCTAssertTrue(app.buttons["Continue with Google"].exists)
         attach("beat-3-account")
@@ -131,14 +129,6 @@ final class GuestEntryUITests: XCTestCase {
         // stored identity and leaves the SwiftData profile behind, so after any sibling test (or a
         // manual --seed-demo launch) the app skipped setup entirely and the guard tripped. With the
         // wipe the walk now reliably starts in onboarding on any device.
-        //
-        // ⚠️ STILL FAILING, and not because of the precondition. The walker gets through the name,
-        // "What do you want to do?" and ~8 more Continues, then stalls dead around the HealthKit
-        // step: since the 5.1.1(iv) fix that Continue raises the real permission sheet from
-        // com.apple.Health with no skip, and the `healthApp` handling below never dismisses it on
-        // current iOS. The remaining ~70 iterations are the `sleep(1)` fallback, which is where the
-        // ~21 minute runtime comes from before the paywall assert fails. Fixing that means getting
-        // the system sheet automation right, not touching the app. Known burn-down item.
         app.launchArguments = ["--reset-store", "--reset-auth", "--debug-free", "--uitest-password"]
         app.launch()
 
@@ -164,52 +154,79 @@ final class GuestEntryUITests: XCTestCase {
         // safe as a loop guard: none of the generic taps below match "Start my …", so the walker
         // can't buy — pages one and two of the flow ("Try now", "Continue for free") sell without
         // transacting, so walking through them is free.
-        let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
+        let paywallCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Unlock my plan' OR label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
-        // anymore) — it presents from com.apple.Health, so drive that process directly.
-        let healthApp = XCUIApplication(bundleIdentifier: "com.apple.Health")
-        for _ in 0..<80 {
+        // anymore). iOS 26 hosts this sheet in HealthPrivacyService rather than Health.app.
+        let healthApp = XCUIApplication(bundleIdentifier: "com.apple.HealthPrivacyService")
+        // Never let a system-owned sheet turn this release gate into an hour-long accessibility
+        // poll. In-app actions are checked first; querying an absent cross-process Health element
+        // can itself take three seconds on iOS 26, so touch that process only while it is foreground.
+        let walkDeadline = Date().addingTimeInterval(120)
+        var advancedSteps = 0
+        var healthCategoriesEnabled = false
+        while Date() < walkDeadline, advancedSteps < 40 {
             if paywallCTA.exists { break }
-            // System permission alerts (notifications, location) block everything behind them.
-            for allow in [springboard.buttons["Don't Allow"], springboard.buttons["Allow"]]
-            where allow.exists && allow.isHittable { allow.tap() }
-            for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
-                let sw = healthApp.switches[label]
-                if sw.exists && sw.isHittable { sw.tap() }
-                let btn = healthApp.buttons[label]
-                if btn.exists && btn.isHittable { btn.tap() }
-            }
-            let allowHealth = healthApp.buttons["Allow"]
-            if allowHealth.exists && allowHealth.isHittable { allowHealth.tap() }
 
-            if app.staticTexts["What do you want to do?"].exists, !app.buttons["Continue"].isEnabled {
+            if app.staticTexts["What supports your running?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()
             }
             // Goal is gated too (2026-08-28): pick the plainest one so the walk isn't goal-shaped.
             if app.staticTexts["What's your main goal?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Stay consistent"].firstMatch.tap()
             }
-            let cont = app.buttons["Continue"]
             let looksGreat = app.buttons["This looks great"]
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
-            // The tour CTA is a STORE fact: "Try now" only while an intro trial exists, "Continue"
-        // otherwise (trial retired 2026-08-20) — match either, like OnboardingPaywallUITests.
-        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch                             // paywall flow, the tour page
+            // The tour CTA is a STORE fact: "Try now" while eligible, "Continue" otherwise.
+            let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch // paywall tour
             // "Continue" is NOT unique once the paywall cover is up: the primer's own Continue
             // stays in the hierarchy underneath it, `firstMatch` picks that covered one, and a
-            // walker keyed on `cont.isHittable` sleeps forever (found 2026-08-28 after a 1257s
+            // walker keyed on `firstMatch.isHittable` sleeps forever (found 2026-08-28 after a 1257s
             // timeout). Take the first Continue that is actually hittable, wherever it lives.
             let liveContinue = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
                 .first { $0.isHittable && $0.isEnabled }
-            if let liveContinue { liveContinue.tap() }
-            else if looksGreat.exists && looksGreat.isHittable { looksGreat.tap() }
-            else if maybeLater.exists && maybeLater.isHittable { maybeLater.tap() }
-            else if notNow.exists && notNow.isHittable { notNow.tap() }     // legacy skip labels
-            else if tryNow.exists && tryNow.isHittable { tryNow.tap() }
-            else { sleep(1) }                                               // building beat / animating in
+            let inAppAction = liveContinue
+                ?? [looksGreat, maybeLater, notNow, tryNow].first { $0.exists && $0.isHittable }
+            if let inAppAction {
+                inAppAction.tap()
+                advancedSteps += 1
+                usleep(300_000)
+                continue
+            }
+
+            // Notifications and location are SpringBoard alerts. Check for one alert before
+            // probing each possible label; absent cross-process elements are the expensive case.
+            var handledSystemSheet = false
+            if springboard.alerts.firstMatch.exists {
+                for label in ["Allow While Using App", "Allow Once", "Allow", "OK"] {
+                    let allow = springboard.buttons[label]
+                    if allow.exists && allow.isHittable {
+                        allow.tap()
+                        handledSystemSheet = true
+                        break
+                    }
+                }
+            }
+            if !handledSystemSheet, healthApp.state == .runningForeground {
+                handledSystemSheet = grantHealthSheet(
+                    healthApp,
+                    categoriesEnabled: &healthCategoriesEnabled
+                )
+            } else if healthApp.state != .runningForeground {
+                healthCategoriesEnabled = false
+            }
+            if handledSystemSheet { advancedSteps += 1 }
+            else { usleep(300_000) } // building beat / animating in
         }
-        XCTAssertTrue(paywallCTA.waitForExistence(timeout: 30), "the walk should reach the paywall")
+        let reachedPaywall = paywallCTA.waitForExistence(timeout: 5)
+        let visibleHeadings = app.staticTexts.allElementsBoundByIndex.prefix(8).map(\.label)
+        XCTAssertTrue(
+            reachedPaywall,
+            "the walk should reach the paywall within 120s; advanced=\(advancedSteps), "
+                + "appState=\(app.state.rawValue), healthState=\(healthApp.state.rawValue), "
+                + "visible=\(visibleHeadings)"
+        )
+        guard reachedPaywall else { return }
         paywallCTA.tap()
 
         let accountBeat = app.staticTexts["Save your progress"]
@@ -233,5 +250,43 @@ final class GuestEntryUITests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
+    }
+
+    @discardableResult
+    private func grantHealthSheet(_ healthApp: XCUIApplication,
+                                  categoriesEnabled: inout Bool) -> Bool {
+        var interacted = false
+        if !categoriesEnabled {
+            let allCategories = healthApp.cells["UIA.Health.AuthSheet.AllCategoryButton"]
+            if allCategories.exists && allCategories.isHittable {
+                allCategories.tap()
+                categoriesEnabled = true
+                interacted = true
+            } else {
+                let allText = healthApp.staticTexts["Turn On All"]
+                if allText.exists && allText.isHittable {
+                    allText.tap()
+                    categoriesEnabled = true
+                    interacted = true
+                }
+            }
+            if !categoriesEnabled {
+                for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
+                    let control = healthApp.switches[label].exists
+                        ? healthApp.switches[label] : healthApp.buttons[label]
+                    if control.exists && control.isHittable {
+                        control.tap()
+                        categoriesEnabled = true
+                        interacted = true
+                        break
+                    }
+                }
+            }
+        }
+        let allow = healthApp.buttons["Allow"]
+        guard allow.exists && allow.isHittable else { return interacted }
+        allow.tap()
+        categoriesEnabled = false
+        return true
     }
 }

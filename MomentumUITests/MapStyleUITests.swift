@@ -17,7 +17,11 @@ final class MapStyleUITests: XCTestCase {
     /// selecting one updates the persisted choice, and the sheet marks the selection.
     func testPickerOffersSatelliteAndPersistsChoice() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo"]
+        // This test asserts the default before testing persistence. Reset the app's persisted
+        // preference instead of using `-com.momentum.mapStyle realistic`: values in the launch
+        // argument defaults domain override every later write, which made a valid Satellite tap
+        // persist to disk while the running picker remained pinned to Realistic.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-pro"]
         app.launch()
 
         // Map style lives behind the corner "More" disc on Today (2026-08-27) — open the fan first.
@@ -48,7 +52,7 @@ final class MapStyleUITests: XCTestCase {
 
         // Relaunch: the choice must survive (the original bug — style reset to the default).
         app.terminate()
-        app.launchArguments = ["--seed-demo"]
+        app.launchArguments = ["--seed-demo", "--debug-pro"]
         app.launch()
         // Fresh launch, folded fan — open it again before reaching for Map style.
         let moreAgain = app.buttons["More"].firstMatch
@@ -65,7 +69,7 @@ final class MapStyleUITests: XCTestCase {
     /// The heatmap keeps its heat + stats when the base style changes (the "heat areas went away" bug).
     func testHeatmapSurvivesStyleSwitch() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--progress-tab"]
+        app.launchArguments = ["--seed-demo", "--debug-pro", "--progress-tab"]
         app.launch()
         app.tap()
 

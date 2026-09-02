@@ -282,7 +282,6 @@ struct StrengthLiveView: View {
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.bottom, Theme.Space.sm)
-        .momentumGlass(in: Rectangle(), stroke: false)
     }
 
     /// Sets the athlete TYPED INTO but never ✓-logged — what Finish would silently drop.

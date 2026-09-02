@@ -73,6 +73,19 @@ struct SocialSyncEngineTests {
         #expect(dto?.title == WorkoutType.run.title)
     }
 
+    @Test func selectedPhotoCoverPublishesAsTheRemoteFirstFrame() {
+        let workout = run(.public)
+        workout.coverIsPhoto = true
+        #expect(SocialSyncEngine.postDTO(for: workout, profile: profile())?.coverIsPhoto == true)
+    }
+
+    @Test func earnedContextSurvivesThePublishBoundary() {
+        let workout = run(.public)
+        let dto = SocialSyncEngine.postDTO(
+            for: workout, profile: profile(), earnedContext: "First 5K")
+        #expect(dto?.earnedContext == "First 5K")
+    }
+
     // MARK: publishActions — the sweep predicate
 
     @Test func sweepPublishesSharedUnstampedOldestFirst() {
@@ -145,13 +158,14 @@ struct SocialSyncEngineTests {
     // MARK: feedItem — remote rows render through the same card
 
     @Test func feedRowMapsToFeedItem() {
-        let row = SocialSyncEngine.FeedRow(
+        var row = SocialSyncEngine.FeedRow(
             id: UUID(), authorId: UUID(), authorName: "Maya", authorHandle: "maya",
             authorLocation: "Austin, TX", avatarPath: nil, workoutType: "run",
             startedAt: Date(), title: "Tempo", caption: "Negative split.",
             statLine: "5.0 mi · 40:00", prBadge: nil, muscles: ["chest": 0.5, "not-a-muscle": 1],
             route: [[37.0, -122.0], [37.1, -122.0]], mapStyle: "standard", aiRead: nil,
             photoPaths: [], reactionCount: 5, viewerReacted: true, createdAt: Date())
+        row.coverIsPhoto = true
         let item = SocialSyncEngine.feedItem(from: row, photos: [], avatar: nil)
         #expect(item.isCommunity == false)                 // a real athlete, never badged
         #expect(item.baseReactions == 4)                   // server count minus the viewer's own
@@ -159,6 +173,7 @@ struct SocialSyncEngineTests {
         #expect(item.muscles == [.chest: 0.5])             // unknown muscle keys dropped
         #expect(item.routeLatLon?.count == 2)
         #expect(item.authorHandle == "maya")
+        #expect(item.coverIsPhoto == true)
     }
 
     @Test func feedRowSingletonRouteDropsToNil() {
@@ -171,6 +186,21 @@ struct SocialSyncEngineTests {
         let item = SocialSyncEngine.feedItem(from: row, photos: [], avatar: nil)
         #expect(item.routeLatLon == nil)                   // not drawable → glyph media
         #expect(item.mapStyle == .standard)                // unknown style falls back
+    }
+
+    @Test func malformedFeedRouteIsSanitizedAtTheNetworkBoundary() {
+        let row = SocialSyncEngine.FeedRow(
+            id: UUID(), authorId: UUID(), authorName: "A", authorHandle: nil,
+            authorLocation: nil, avatarPath: nil, workoutType: "run", startedAt: Date(),
+            title: "Run", caption: nil, statLine: "", prBadge: nil, muscles: nil,
+            route: [[], [37], [Double.nan, -122], [37, -122], [37, -122], [37.1, -122.1]],
+            mapStyle: "standard", aiRead: nil, photoPaths: [], reactionCount: 0,
+            viewerReacted: false, createdAt: Date())
+
+        let item = SocialSyncEngine.feedItem(from: row, photos: [], avatar: nil)
+
+        #expect(item.routeLatLon == [[37, -122], [37.1, -122.1]])
+        #expect(item.hasRenderableRoute)
     }
 
     // MARK: profileDTO — redaction

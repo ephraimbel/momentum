@@ -8,16 +8,18 @@ import SwiftUI
 /// happened, never decoration.
 ///
 /// Meaning never rides on the ring alone: every call site carries it in the accessibility label
-/// too ("… trained today"), because iridescence is invisible to VoiceOver and to anyone who
+/// too ("… posted today"), because iridescence is invisible to VoiceOver and to anyone who
 /// cannot separate the two states by color.
 ///
 /// Reduce Motion holds the sweep at a fixed angle, so the iridescence stays and only the rotation
 /// stops — never a strobe. Pass `isStatic` from a host that scrolls hard or renders many rings at
 /// once — same contract as `ProgressRing.isStatic` and `MuscleMapView.forceStatic`.
 struct PresenceRing<Content: View>: View {
-    /// Posted / trained inside the presence window (24h at every current call site).
+    /// Posted inside the presence window (24h at every current call site).
     let active: Bool
-    var lineWidth: CGFloat = 3
+    /// The active stroke. A story/presence ring is a state indicator, so it must still read at a
+    /// glance when the avatar is small or the page is bright.
+    var lineWidth: CGFloat = 4
     /// Canvas gap between the photo and the ring — what makes it read as a ring rather than a
     /// border painted onto the image.
     var gap: CGFloat = 3
@@ -44,20 +46,37 @@ struct PresenceRing<Content: View>: View {
             // `IridescentMaterial` (the podium border) is the opposite problem: crisp but static.
             // An angular sweep is both, and it is the palette's established second form
             // (the pre-iOS-18 iridescence fallback), so it stays on-brand.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: frozen)) { context in
-                let turn = frozen ? 0 : context.date.timeIntervalSinceReferenceDate
-                    .truncatingRemainder(dividingBy: loop) / loop
+            ZStack {
+                // Static bloom: only the angular stroke needs timeline updates. Keeping blur out of
+                // the animated subtree avoids recomputing seven offscreen blur passes per frame in
+                // the Following tray.
                 Circle()
-                    .strokeBorder(
-                        AngularGradient(colors: Theme.iridescent + [Theme.iridescent[0]],
-                                        center: .center,
-                                        angle: .degrees(turn * 360)),
-                        lineWidth: lineWidth)
-                    .shadow(color: Theme.iridescent[0].opacity(0.6), radius: 5)
+                    .strokeBorder(Theme.purple.opacity(0.28), lineWidth: lineWidth + 1)
+                    .blur(radius: 2.5)
+
+                // The sweep takes six seconds per turn, so 15fps is visually continuous while
+                // halving the feed header's timeline/GPU work versus the former 30fps loop.
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: frozen)) { context in
+                    let turn = frozen ? 0 : context.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: loop) / loop
+                    // Presence is painted outright, not used as a translucent wash, so it needs
+                    // the palette's brand-depth stops. The former pastel stroke was actually
+                    // quieter than the inactive ink ring on a white profile.
+                    Circle()
+                        .strokeBorder(
+                            AngularGradient(colors: Theme.iridescentDeep + [Theme.iridescentDeep[0]],
+                                            center: .center,
+                                            angle: .degrees(turn * 360)),
+                            lineWidth: lineWidth)
+                        .shadow(color: Theme.purple.opacity(0.35), radius: 4)
+                }
             }
             .allowsHitTesting(false)
         } else {
-            Circle().strokeBorder(Theme.ink, lineWidth: lineWidth)
+            // Inactive is deliberately quiet. Keeping it thinner than the posted state makes the
+            // meaning legible even without color and gives the iridescent ring room to announce
+            // genuinely new work.
+            Circle().strokeBorder(Theme.ink.opacity(0.5), lineWidth: max(1.25, lineWidth * 0.42))
                 .allowsHitTesting(false)
         }
     }

@@ -85,8 +85,13 @@ struct AnalyticsEventTaxonomyTests {
 
     @Test func everyEventHasANonEmptySnakeCaseName() {
         let events: [AnalyticsEvent] = [
-            .onboardingStep(index: 1), .planGenerated(disciplines: 2),
-            .paywallView(placement: "coach"), .paywallConvert(product: "annual"),
+            .onboardingStep(name: "identity", index: 1, position: 2, total: 22),
+            .onboardingShowcase(action: "viewed"),
+            .onboardingPermission(kind: "notifications", status: "granted"),
+            .planGenerated(disciplines: 2),
+            .paywallView(placement: "coach", pricingLive: true),
+            .paywallAction(action: "purchase_attempt", placement: "coach", product: "annual"),
+            .paywallConvert(product: "annual", placement: "coach"),
             .workoutStarted(type: "run"), .setLogged(latencyMs: 42), .restTimerComplete,
             .workoutCompleted(type: "run"), .aiReadViewed(latencyMs: 900, fallback: false),
             .prHit(type: "fastest5k"), .planSessionAdapted, .shareCreated(style: "classic"),
@@ -101,10 +106,11 @@ struct AnalyticsEventTaxonomyTests {
     /// The funnel's denominator and numerator. If either name drifts, `paywall_funnel` in the
     /// migration silently returns zero rows.
     @Test func paywallFunnelEventNamesAreStable() {
-        #expect(AnalyticsEvent.paywallView(placement: "coach").name == "paywall_view")
-        #expect(AnalyticsEvent.paywallConvert(product: "annual").name == "paywall_convert")
-        #expect(AnalyticsEvent.paywallView(placement: "coach").parameters["placement"] == "coach")
-        #expect(AnalyticsEvent.paywallConvert(product: "annual").parameters["product"] == "annual")
+        #expect(AnalyticsEvent.paywallView(placement: "coach", pricingLive: true).name == "paywall_view")
+        #expect(AnalyticsEvent.paywallConvert(product: "annual", placement: "coach").name == "paywall_convert")
+        #expect(AnalyticsEvent.paywallView(placement: "coach", pricingLive: true).parameters["placement"] == "coach")
+        #expect(AnalyticsEvent.paywallConvert(product: "annual", placement: "coach").parameters["product"] == "annual")
+        #expect(AnalyticsEvent.paywallConvert(product: "annual", placement: "coach").parameters["placement"] == "coach")
     }
 
     @Test func northStarEventsExist() {

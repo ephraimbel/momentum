@@ -225,14 +225,14 @@ enum CoachActions {
             }
             let insights = ProgressInsights(workouts: workouts, now: today, calendar: calendar)
             guard insights.recommendation == .increase else {
-                return .declined(reason: "Your completed load hasn't earned a bump yet — adding volume now would outrun your recovery. Keep stacking sessions and I'll offer it the moment it's safe.")
+                return .declined(reason: "Your recent training pattern doesn't support reviewing a bump right now. Keep following the plan and use your recovery and session feedback as the deciding context.")
             }
             guard PlanCoaching.apply(.increase, to: plan, from: today, in: context, calendar: calendar) > 0 else {
                 return .declined(reason: "There's nothing upcoming to raise — your slate is clear.")
             }
             return notify(Receipt(
                 headline: "Load raised",
-                detail: "Upcoming sessions are up about 10%. Your load's been light and well-absorbed, so this is earned, not forced."),
+                detail: "Upcoming sessions are up about 10%. You chose the bounded progression after reviewing a lighter-than-recent week."),
                 today: today, in: context)
 
         case .easePaces:
@@ -384,15 +384,7 @@ enum CoachActions {
     }
 
     private static func label(_ goal: Goal) -> String {
-        switch goal {
-        case .loseFat: "Lose fat / get fit"
-        case .buildMuscle: "Build muscle"
-        case .getStronger: "Get stronger"
-        case .raceDistance: "Run a race"
-        case .endurance: "Improve endurance"
-        case .generalFitness: "General fitness"
-        case .stayConsistent: "Stay consistent"
-        }
+        goal.planLabel
     }
 
     private static func label(_ equipment: Equipment) -> String {

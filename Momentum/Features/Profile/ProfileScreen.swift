@@ -216,6 +216,19 @@ struct ProfileScreen: View {
                 followerCount = counts.followers
             }
         }
+        .onAppear(perform: routeToCommunityIfNeeded)
+        .onChange(of: router.pendingCommunityPostID) { _, _ in routeToCommunityIfNeeded() }
+        .onChange(of: router.pendingCommunityAthleteHandle) { _, _ in routeToCommunityIfNeeded() }
+    }
+
+    private func routeToCommunityIfNeeded() {
+        guard CommunityAccess.enabled,
+              router.pendingCommunityPostID != nil || router.pendingCommunityAthleteHandle != nil
+        else { return }
+        communitySearching = false
+        if face != .community {
+            withAnimation(.easeOut(duration: 0.2)) { face = .community }
+        }
     }
 
     /// First-visit skeleton (ProgressScreen's `warmup` pattern, perf audit 2026-08-13): before the
@@ -372,8 +385,8 @@ struct ProfileScreen: View {
             // to run inside it (perf audit 2026-08-13). Cancellation (data changed mid-sleep,
             // screen left) exits before any engine work.
             do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
-            // Award sync first, every visit: new awards can land without a new workout (a plan
-            // week checked off, a Health import elsewhere). No-ops when nothing changed.
+            // Award sync first, every visit: new awards can land without a new workout when a plan
+            // week is checked off or award criteria change. No-ops when nothing changed.
             AwardsBook.sync(in: context)
             // The @Query array was captured BEFORE the sync above — an award earned by this very
             // visit wouldn't be in `earnedAwards.count` yet, and the shelf would miss it until
@@ -453,16 +466,17 @@ struct ProfileScreen: View {
 
     // MARK: Identity — the shared ProfileHero (twin of AthleteProfileView's)
 
-    /// Trained in the last 24 hours — the ring on the PFP. In the solo view it is your own honest
-    /// presence signal; on other athletes it is the social one, same rule.
-    private var trainedToday: Bool {
-        guard let w = workouts.first else { return false }
-        return Date().timeIntervalSince(w.startedAt.addingTimeInterval(w.durationS)) < 86_400
+    /// Shared inside the last 24 hours — the ring on the PFP. A private workout is training, but it
+    /// is not a post and must never light a social presence indicator.
+    private var postedToday: Bool {
+        guard let w = workouts.first(where: SocialPrivacy.isShared) else { return false }
+        let age = Date().timeIntervalSince(w.startedAt)
+        return age >= 0 && age < 86_400
     }
 
     private var identity: some View {
         ProfileHero(
-            ringed: trainedToday,
+            ringed: postedToday,
             trio: [("\(stats.totalWorkouts)", "Workouts"), (distanceTotalText, distanceUnitLabel), ("\(records.count)", "PRs")],
             name: displayName,
             isPro: paywall.isEntitled(to: .fullPlan),

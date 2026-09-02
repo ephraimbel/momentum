@@ -30,4 +30,37 @@ struct MetricExplainersTests {
         let ids = Set(MetricExplainers.all.map(\.id))
         for r in required { #expect(ids.contains(r), "missing explainer: \(r)") }
     }
+
+    @Test func athleteFacingCopyDoesNotTurnEstimatesIntoClearanceOrDiagnosis() {
+        let copy = MetricExplainers.all.map { explainer in
+            ([explainer.title, explainer.tagline, explainer.formula, explainer.footnote]
+                .compactMap { $0 }
+                + explainer.sections.flatMap { [$0.heading, $0.body] })
+                .joined(separator: " ")
+        }.joined(separator: " ").lowercased()
+
+        let retiredClaims = [
+            "race-ready",
+            "how ready your body is",
+            "ready to absorb training",
+            "injuries hide",
+            "oncoming illness",
+            "fighting a bug",
+            "cleared to train",
+            "safe to push",
+            "sweet spot",
+            "danger zone",
+            "best single number",
+            "lower is fitter",
+            "real aerobic progress",
+            "means you're fresh",
+            "your body asking for ease",
+        ]
+        for claim in retiredClaims {
+            #expect(!copy.contains(claim), "retired claim returned: \(claim)")
+        }
+
+        #expect(MetricExplainers.readiness.footnote?.lowercased().contains("not a diagnosis") == true)
+        #expect(MetricExplainers.readiness.footnote?.lowercased().contains("clearance test") == true)
+    }
 }

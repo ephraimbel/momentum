@@ -130,6 +130,20 @@ struct NotificationPrefsTests {
         #expect(NotificationPrefs.coachingEnabled(d))
     }
 
+    @Test func onboardingChoiceMatchesThePermissionPromise() {
+        let d = freshDefaults()
+        NotificationPrefs.setOnboardingChoice(enabled: true, in: d)
+        #expect(NotificationPrefs.sessionRemindersEnabled(d))
+        #expect(NotificationPrefs.coachingEnabled(d))
+        #expect(!NotificationPrefs.streakEnabled(d))
+        #expect(!NotificationPrefs.weeklyEnabled(d))
+        #expect(!NotificationPrefs.morningReadinessEnabled(d))
+
+        NotificationPrefs.setOnboardingChoice(enabled: false, in: d)
+        #expect(!NotificationPrefs.sessionRemindersEnabled(d))
+        #expect(!NotificationPrefs.coachingEnabled(d))
+    }
+
     @Test func customTimeRoundTripsAndClears() {
         let d = freshDefaults()
         #expect(NotificationPrefs.customReminderTime(d) == nil)

@@ -159,7 +159,7 @@ final class CoachChatService {
         let memory: [String]
         let preferredSessionMinutes: Int
         let topDiscipline: String?
-        let overreachACWR: Double
+        let priorHighStrainLoadRatio: Double
         let paceAtEffortTrendPct: Double
         // v2 — what the coach needs to propose concrete, typed changes.
         let upcoming: [SessionDTO]
@@ -238,7 +238,7 @@ final class CoachChatService {
             memory = c.athlete?.notes ?? []
             preferredSessionMinutes = c.athlete?.preferredSessionMinutes ?? 0
             topDiscipline = c.athlete?.topDiscipline
-            overreachACWR = c.athlete?.overreachACWR ?? 0
+            priorHighStrainLoadRatio = c.athlete?.priorHighStrainLoadRatio ?? 0
             paceAtEffortTrendPct = c.athlete?.paceTrendPct ?? 0
 
             let dayFmt = DateFormatter()

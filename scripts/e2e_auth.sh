@@ -25,13 +25,17 @@ CMD="${1:?usage: e2e_auth.sh <signup|flows|all|clean> [sim-udid]}"
 UDID="${2:-}"
 PROJECT_REF="hhhlrqngutmyccfpgdoq"
 SCHEME="Momentum"
-DERIVED="build/dd"
+# Reuse an already-built test bundle when the caller provides one. Keeping the historical local
+# default preserves direct usage while CI/release hardening can avoid a second multi-gigabyte build.
+DERIVED="${DERIVED_DATA_PATH:-build/dd}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # A password that satisfies the app's own 8-character floor at both ends of the reset.
 E2E_PASS="e2e-first-pass-1"
 E2E_NEWPASS="e2e-second-pass-2"
+ACTIVE_E2E_EMAIL=""
+ACTIVE_RECOVERY_PID=""
 
 # ── credentials ──────────────────────────────────────────────────────────────────────────────
 token() {
@@ -111,11 +115,34 @@ for runtime, devices in sorted(d.items(), reverse=True):
 run_test() {  # run_test <Suite/method> [extra TEST_RUNNER_ env assignments...]
   local target="$1"; shift
   echo "── $target"
+  # Keep the compact console view, but return xcodebuild's status rather than grep's. The old
+  # trailing `|| true` made a red UI walk look green to both CI and this orchestrator.
+  set +e
   env "$@" xcodebuild test-without-building \
     -scheme "$SCHEME" -destination "platform=iOS Simulator,id=$UDID" \
     -derivedDataPath "$DERIVED" -only-testing:"$target" \
-    ENABLE_DEBUG_DYLIB=NO 2>&1 | grep -E "Test Case.*(passed|failed)|error:" || true
+    ENABLE_DEBUG_DYLIB=NO 2>&1 | grep -E "Test Case.*(passed|failed)|error:"
+  local xcode_status=${PIPESTATUS[0]}
+  set -e
+  return "$xcode_status"
 }
+
+# Failed live-auth walks must not strand test accounts or a delayed recovery-link process. This
+# trap is deliberately narrow: it knows only about the one user minted by `run_flows`.
+cleanup_active_flow() {
+  if [ -n "$ACTIVE_RECOVERY_PID" ]; then
+    kill "$ACTIVE_RECOVERY_PID" 2>/dev/null || true
+    wait "$ACTIVE_RECOVERY_PID" 2>/dev/null || true
+    ACTIVE_RECOVERY_PID=""
+  fi
+  if [ -n "$ACTIVE_E2E_EMAIL" ]; then
+    local id
+    id=$(user_id "$ACTIVE_E2E_EMAIL" 2>/dev/null || true)
+    [ -n "$id" ] && delete_user "$id"
+    ACTIVE_E2E_EMAIL=""
+  fi
+}
+trap cleanup_active_flow EXIT INT TERM
 
 # ── flows: AuthFlowsUITests 1–4 ──────────────────────────────────────────────────────────────
 # Each test wants the account in a DIFFERENT state, and test2 deliberately changes the password
@@ -123,6 +150,7 @@ run_test() {  # run_test <Suite/method> [extra TEST_RUNNER_ env assignments...]
 run_flows() {
   local email id
   email=$(mint_email)
+  ACTIVE_E2E_EMAIL="$email"
   echo "e2e user: $email"
 
   # 1 — unconfirmed, so the "confirm your email first" nudge is the honest answer.
@@ -135,10 +163,12 @@ run_flows() {
   update_user "$id" '{"email_confirm":true}'
   ( sleep 20; open_link recovery "$email" ) &
   local recovery_pid=$!
+  ACTIVE_RECOVERY_PID="$recovery_pid"
   run_test "MomentumUITests/AuthFlowsUITests/test2_passwordResetSignOutSignIn" \
     "TEST_RUNNER_E2E_EMAIL=$email" "TEST_RUNNER_E2E_PASS=$E2E_PASS" \
     "TEST_RUNNER_E2E_NEWPASS=$E2E_NEWPASS"
   wait $recovery_pid 2>/dev/null || true
+  ACTIVE_RECOVERY_PID=""
 
   # 3 — guest upgrade signs in with the password test2 just set.
   run_test "MomentumUITests/AuthFlowsUITests/test3_guestUpgradeViaEmail" \
@@ -153,6 +183,7 @@ run_flows() {
 
   # test4 deletes the account itself; this is the belt-and-braces for a run that fell over first.
   id=$(user_id "$email"); [ -n "$id" ] && delete_user "$id"
+  ACTIVE_E2E_EMAIL=""
   echo "flows done"
 }
 

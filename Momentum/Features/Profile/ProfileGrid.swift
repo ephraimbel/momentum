@@ -451,6 +451,7 @@ private struct WorkoutTile: View {
         .buttonStyle(TilePressStyle())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(workout.type.title), \(metric)\(isPR ? ", personal record" : "")")
+        .accessibilityHint("Opens the activity full screen. Swipe up or down for more.")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -515,4 +516,3 @@ private struct TilePressStyle: ButtonStyle {
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
-

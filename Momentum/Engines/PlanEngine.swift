@@ -99,9 +99,9 @@ enum PlanEngine {
         var loadingRun = 0
         // The chosen intensity sets how fast volume ramps and how often we cut back. Aggressive ramps
         // harder and stacks a little more before easing; gentle ramps softly and rests more often.
-        // Injury history delivers the onboarding promise ("a safer ramp where you've been hurt"):
-        // the ramp and deload cadence are capped at balanced, so an aggressive pick can't stack
-        // volume onto a body that's been hurt before. Gentle stays gentle.
+        // A reported prior injury is a conservative planning modifier, not a prediction: cap the
+        // ramp and deload cadence at balanced so an aggressive choice cannot erase recovery margin.
+        // Gentle stays gentle; current symptoms still belong in the gated injury flow.
         let injuryAreas = Set(profile.injuryHistory)
         var ramp = injuryAreas.isEmpty
             ? profile.intensity.weeklyRamp
@@ -113,16 +113,16 @@ enum PlanEngine {
         // athletes favors more frequent absorption weeks over softer work. Deload every 3rd week.
         if (profile.age ?? 0) >= 50 { buildWeeks = min(buildWeeks, 2) }
         let downEvery = buildWeeks + 1   // deload on the Nth week
-        // Quality density follows the same injury cap as the ramp: a body that's been hurt before
-        // never gets the second weekly quality session, whatever the intensity dial says.
+        // Quality density follows the same history modifier: a reported prior injury suppresses the
+        // second weekly quality session. This is a bounded product policy, not a medical clearance.
         let qualityBias = injuryAreas.isEmpty
             ? profile.intensity.qualityBias
             : min(profile.intensity.qualityBias, PlanIntensity.balanced.qualityBias)
 
         // Podium activation: the top tier's structural upgrades (higher volume ceiling, longer
         // long-run cap, the two-hard-days week as standard, rest-day shakeouts) switch on only
-        // when the week can hold them (5+ run days) and the body has no injury history — the same
-        // protective cap as the ramp. Podium on a 3-day week or a hurt body trains like Aggressive.
+        // when the week can hold them (5+ run days) and no prior injury was reported — the same
+        // conservative modifier as the ramp. Otherwise Podium uses the Aggressive structure.
         let podiumActive = profile.intensity == .podium && runDays >= 5 && injuryAreas.isEmpty
 
         // The tune-up time trial (2026-07-24, pro-practice pass): every real build for a long race
@@ -206,10 +206,9 @@ enum PlanEngine {
         // Runway-fitted ramp (2026-08-28, owner call): the race has a date and the goal is the
         // goal, so a short runway changes the RAMP, not the destination. If the tier's weekly
         // ramp can't reach the peak inside the build weeks available, steepen it to the rate
-        // that does, up to a 15%/week ceiling. Evidence: injury risk climbs with sudden jumps
-        // above ~30% (Nielsen 2014, Damsted 2018) and the ACWR governor below still holds every
-        // week to 1.3× its trailing average; the folk "10% rule" has no such support. Injury
-        // history keeps its Balanced cap — a hurt body is not asked to rush.
+        // that does, up to a 15%/week operational ceiling. The workload governor below still holds
+        // every week to 1.3× its trailing average; neither value is presented as an injury or safety
+        // threshold. A reported injury keeps the Balanced cap so the goal cannot force a faster ramp.
         if raceInWindow, multCeiling > 1.0 {
             let buildSlots = totalWeeks - meso.taperWeeks - meso.peakWeeks - leadIn
             let buildable = max(1, buildSlots - buildSlots / downEvery)
@@ -348,8 +347,8 @@ enum PlanEngine {
             }
         }
 
-        // Safety governor (ENDURANCE-FOCUS §6.2): no generated week may exceed 1.3× its trailing
-        // 4-week average running volume. Dormant on sane ramps; catches the dangerous edges. An
+        // Progression governor (ENDURANCE-FOCUS §6.2): no generated week may exceed 1.3× its trailing
+        // 4-week average running volume. Dormant on ordinary ramps; catches abrupt engine output. An
         // athlete who never stated a volume is anchored on the plan's own opening week — passing 0
         // made the first ratio degenerate and read the opening week as a spike (2026-08-29).
         let factors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.trainingVolumeM),
@@ -375,7 +374,7 @@ enum PlanEngine {
         // could not guarantee it: a cutback is computed from the build multiplier while the week
         // before it may have been trimmed by the ACWR governor or pinned at a long-run cap, so a
         // "recovery" week could land larger than the week it was meant to absorb. The rule is
-        // simple enough to state and now simple enough to trust: an eased week is at most 85% of
+        // simple enough to state and now simple enough to trust: an eased week is at most 95% of
         // the last loading week.
         var lastLoadingVolumeFinal: Double?
         for w in weeks.indices {
@@ -465,11 +464,10 @@ enum PlanEngine {
         }
 
         // Clean prescriptions (RunRounding): snap every running target — distance AND pace — to the
-        // round value a coach would write in the athlete's unit, as the LAST step, so it's what's
-        // stored and shown. The race session snaps to the exact race distance; easy-family paces
-        // snap to :15 and quality/race paces to :05 (8:30/mi, never 8:24/mi). Perturbs weekly
-        // volume by <2% and paces by ≤7.5 s/unit (inside SessionPaceReview's tolerance band), so
-        // both the ACWR ramp and the pace-review verdicts hold.
+        // round value a coach would write in the athlete's unit. The race session snaps to the exact
+        // race distance; easy-family paces snap to :15 and quality/race paces to :05 (8:30/mi,
+        // never 8:24/mi). The reduction-only load/down-week reconciliation below may leave a
+        // non-race distance just under this grid rather than round it back up through a hard cap.
         for w in weeks.indices {
             for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
                 let runType = weeks[w].sessions[s].runType
@@ -487,10 +485,9 @@ enum PlanEngine {
             }
         }
 
-        // The governor has the LAST word — after the ordering pass moved volumes and after clean-
-        // distance rounding snapped them. On a beginner's small sessions a snap is a large
-        // relative change, and the plan the athlete gets is the rounded one, so that is the shape
-        // the 1.3x cap has to hold for. Every pass only ever reduces, so this converges.
+        // Re-run the governor after the ordering pass moved volumes and clean-distance rounding
+        // snapped them. On a beginner's small sessions a snap is a large relative change, and the
+        // plan the athlete gets is the rounded one, so that is the shape the 1.3x cap has to hold.
         let finalFactors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.trainingVolumeM),
                                                    currentWeeklyM: profile.currentWeeklyVolumeM ?? 0)
         for (w, factor) in finalFactors.enumerated() where factor < 0.999 {
@@ -501,6 +498,38 @@ enum PlanEngine {
                 }
                 if let dur = weeks[w].sessions[i].targetDurationS {
                     weeks[w].sessions[i].targetDurationS = (dur * factor).rounded()
+                }
+            }
+        }
+
+        // Reconcile the other reduction-only invariant after that final cap: a labeled deload or
+        // taper must still be lower than the most recent loading week. The governor can reduce that
+        // earlier loading week after the first down-week pass; unit snapping can also round a small
+        // down week back to the same displayed dose. Scaling the eased week here cannot introduce a
+        // load spike, add intensity, or alter the schedule. Keep the five-percent margin in raw SI
+        // values rather than snapping upward through either constraint.
+        var lastLoadingVolumeAfterCaps: Double?
+        for w in weeks.indices {
+            let eased = weeks[w].isDeload || weeks[w].isTaper
+            guard !weeks[w].sessions.contains(where: { $0.runType == .race }) else { continue }
+            guard eased else {
+                if weeks[w].trainingVolumeM > 0 {
+                    lastLoadingVolumeAfterCaps = weeks[w].trainingVolumeM
+                }
+                continue
+            }
+            guard let ceiling = lastLoadingVolumeAfterCaps, ceiling > 0,
+                  weeks[w].trainingVolumeM >= ceiling else { continue }
+            let current = weeks[w].trainingVolumeM
+            guard current > 0 else { continue }
+            let factor = ceiling * 0.95 / current
+            for i in weeks[w].sessions.indices
+            where weeks[w].sessions[i].discipline != .strength && weeks[w].sessions[i].runType != .race {
+                if let distance = weeks[w].sessions[i].targetDistanceM {
+                    weeks[w].sessions[i].targetDistanceM = (distance * factor).rounded()
+                }
+                if let duration = weeks[w].sessions[i].targetDurationS {
+                    weeks[w].sessions[i].targetDurationS = (duration * factor).rounded()
                 }
             }
         }
@@ -521,17 +550,17 @@ enum PlanEngine {
     /// Run days are derived FIRST so a rounding tie goes to running, not to the gym. `.rounded()`
     /// is half-away-from-zero, so computing lift days first silently handed every .5 to lifting:
     /// "Balanced" came out 1 run / 2 lift on a three-day week, which is not balanced, and at three
-    /// and five days it was bit-identical to "Lifting comes first" — one of the three choices did
-    /// nothing. Running is the headline of this app; the tie belongs to it.
+    /// and five days it was bit-identical to the strength-heavy choice — one of the three choices
+    /// did nothing. Running is the headline of this app; the tie belongs to it.
     static func hybridSplit(days: Int, priority: HybridPriority?, goal: Goal,
                             raceDistanceM: Double? = nil) -> (runDays: Int, liftDays: Int) {
         let days = max(1, min(7, days))
         // The athlete's stated emphasis wins; otherwise infer from the goal. With no stated
-        // emphasis a strength goal earns a 50/50 week and everything else stays a running plan
-        // with lifting in support (2026-08-29 — 0.4 gave an unchosen hybrid athlete 3 runs and
-        // 2 lifts on five days, which is not what they came here for).
+        // emphasis a strength goal gets as close to 50/50 as the week allows, but the odd day stays
+        // with running. Everything else remains more clearly running-led. A goal changes why the
+        // strength is there; it never turns Momentum into a lift-dominant programme.
         let liftFraction = priority?.liftFraction
-            ?? ((goal == .buildMuscle || goal == .getStronger) ? 0.55 : 0.30)
+            ?? ((goal == .buildMuscle || goal == .getStronger) ? 0.50 : 0.30)
         var runDays = max(1, Int((Double(days) * (1 - liftFraction)).rounded()))
         runDays = min(runDays, max(1, days - 1))
         // **The race sets a floor on the running** (owner call 2026-08-30: "we want to make it
@@ -543,9 +572,8 @@ enum PlanEngine {
         // five days was enough.
         //
         // Lifting is not deleted to do it: it keeps a day always, and two on a four-plus-day week
-        // when the athlete said lifting comes first — so all three emphases still visibly change
-        // the week, which is the lesson `hybridSplitTableIsPinned` exists to hold (a choice that
-        // does nothing is a bug, not a preference).
+        // when the athlete asks for more strength support. Small odd schedules can quantize two
+        // adjacent preferences to the same split; the runner-first tie is the honest tradeoff.
         if let raceM = raceDistanceM, raceM > 0 {
             let liftFloor = (priority == .lifting && days >= 4) ? 2 : 1
             let need = PlanFeasibility.minimumEffectiveDays(forDistanceM: raceM)
@@ -1702,7 +1730,7 @@ enum PlanEngine {
 }
 
 /// The inputs `PlanEngine` reads — a value mirror of `UserProfile` so generation stays pure.
-struct PlanInputs: Sendable {
+struct PlanInputs: Equatable, Sendable {
     var disciplines: [Discipline]
     var goal: Goal
     var daysPerWeek: Int
@@ -1736,8 +1764,9 @@ struct PlanInputs: Sendable {
     var avoidDayOffsets: [Int] = []
     /// How hard to push — sets the weekly volume ramp + down-week cadence. Defaults to balanced.
     var intensity: PlanIntensity = .balanced
-    /// Past injury areas from onboarding — caps the ramp at balanced and steers quality selection
-    /// away from each area's aggravating stimulus (the "safer ramp where you've been hurt" promise).
+    /// Past injury areas from onboarding — a conservative history modifier that caps the ramp at
+    /// balanced and steers quality selection away from previously aggravating stimulus. It does not
+    /// diagnose current capacity or guarantee that a session will be symptom-free.
     var injuryHistory: [InjuryArea] = []
     /// Age in years (from onboarding's birth year) — 50+ gets masters recovery: deload every 3rd
     /// week instead of the intensity default. Intensity itself is never reduced by age.

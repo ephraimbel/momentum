@@ -1,5 +1,9 @@
 # Runna competitive teardown → Momentum running roadmap
 
+> **Historical roadmap (2026-07-06; superseded for implementation on 2026-09-01).** Current work is
+> governed by [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md). Do not treat older ACWR injury/
+> safety language or any Health workout-ingestion assumption below as an active requirement.
+
 > Research date: 2026-07-06. Runna facts are from Runna's own support docs, Strava's press release,
 > and real user reviews (Trustpilot / App Store / Reddit), adversarially fact-checked. Momentum's
 > current state is from a codebase audit. Companion to [`RUNNING-EXCELLENCE.md`](RUNNING-EXCELLENCE.md)

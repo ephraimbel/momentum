@@ -41,7 +41,7 @@ struct OnboardingDraftTests {
         vm.paceFeel = .regular
         vm.benchmark = .half
         vm.recentRunSeconds = 5_400
-        vm.importedRestingHR = 48
+        vm.healthRestingHR = 48
         vm.plannedRaceName = "Chicago Marathon"
         vm.step = .days
         return vm
@@ -82,7 +82,7 @@ struct OnboardingDraftTests {
         #expect(restored.paceFeel == .regular)
         #expect(restored.benchmark == .half)
         #expect(restored.recentRunSeconds == 5_400)
-        #expect(restored.importedRestingHR == 48)
+        #expect(restored.healthRestingHR == 48)
         #expect(restored.plannedRaceName == "Chicago Marathon")
         #expect(restored.step == .days)                      // resumes on the exact screen
     }
@@ -129,6 +129,27 @@ struct OnboardingDraftTests {
     @Test func stepIsStoredByNameNotOrdinal() {
         // The whole point of name-based step IDs: insertion/reordering can't corrupt a resume.
         #expect(fullyAnswered().draft().savedStep == "days")
+    }
+
+    @Test func permissionBeatsBeforeGenerationCanResume() {
+        // Step.allCases keeps historical raw values and does NOT match the live screen order.
+        // Notifications + primers are before Building in computeSteps and must not be rejected
+        // merely because their enum cases have larger raw values.
+        for step in [OnboardingViewModel.Step.notifications, .primers] {
+            var draft = fullyAnswered().draft()
+            draft.savedStep = String(describing: step)
+            let restored = OnboardingViewModel()
+            #expect(restored.restore(from: draft))
+            #expect(restored.step == step)
+        }
+    }
+
+    @Test func outputBeatsCannotResumeWithoutAProfile() {
+        for step in [OnboardingViewModel.Step.building, .reveal, .account] {
+            var draft = fullyAnswered().draft()
+            draft.savedStep = String(describing: step)
+            #expect(OnboardingViewModel().restore(from: draft) == false)
+        }
     }
 
     @Test func storeSaveLoadClearRoundTrips() {

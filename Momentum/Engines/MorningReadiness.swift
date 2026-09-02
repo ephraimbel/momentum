@@ -1,6 +1,6 @@
 import Foundation
 
-/// The morning headline number (Recovery Hub plan §4.2) — one honest 0–100 readiness score that
+/// The morning headline number (Recovery Hub plan §4.2) — a 0–100 recovery-context index that
 /// blends the load-derived `RecoveryModel.score` with the body's overnight signals (HRV, sleep,
 /// resting HR) and the athlete's own check-in. Each input is a **pillar** with a fixed raw weight,
 /// renormalized over whichever pillars are actually present — that renormalization IS the
@@ -8,14 +8,15 @@ import Foundation
 /// confidence, never a fake one. Sparse Apple-only vitals (respiratory rate, wrist temperature)
 /// never earn pillar status; they land as bounded post-blend **modifiers**. Banding and guidance
 /// reuse `RecoveryModel` — one banding function app-wide, so Today and the hub can never disagree.
-/// Deterministic and fixture-tested (PRD §9 — rules compute, AI narrates). No medical claims.
+/// Deterministic and fixture-tested (PRD §9 — rules compute, AI narrates). It is not physiological
+/// clearance, an illness detector, or a medical claim.
 @MainActor
 struct MorningReadiness {
 
     // MARK: Output shape
 
     enum PillarKind: String, Sendable, CaseIterable {
-        case load        // RecoveryModel.score — how the last weeks of training sit in the body
+        case load        // RecoveryModel.score — recent load-pattern context
         case hrv         // overnight HRV vs the athlete's own norm
         case sleep       // last night vs need, plus capped 14-day debt
         case restingHR   // overnight resting HR vs norm (inverted — elevated reads worse)
@@ -83,8 +84,9 @@ struct MorningReadiness {
             present.append((kind: .load, score: Double(load.score), rawWeight: RawWeight.load))
         }
 
-        // HRV — higher than your norm = better recovered. The banded z-path maps ±2.5 SD onto the
-        // full 0–100; the coarse ratio fallback matches `hrvTrend`'s cuts.
+        // HRV — this provisional product index treats above-baseline values as more favorable
+        // context. The value is noisy and never clears training; the banded z-path maps ±2.5 SD
+        // onto the full 0–100, while the coarse ratio fallback matches `hrvTrend`'s cuts.
         if let hrv = signals.hrvMs {
             if let b = hrvBaseline, b.isBanded {
                 let z = min(max(b.z(hrv), -2.5), 2.5)
@@ -107,9 +109,9 @@ struct MorningReadiness {
             present.append((kind: .sleep, score: Self.clamped(s), rawWeight: RawWeight.sleep))
         }
 
-        // Resting HR — the z-axis inverts (an elevated overnight resting HR is the classic
-        // under-recovered sign); the Δ fallback matches `restingHRTrend`'s cuts, plus a
-        // genuinely-below-norm reward tier.
+        // Resting HR — the provisional index treats an above-baseline value as less favorable
+        // context. Many non-training factors can move it, so it is never used as diagnosis or
+        // clearance; the Δ fallback matches `restingHRTrend`'s cuts.
         if let rhr = signals.restingHR {
             if let b = restingHRBaseline, b.isBanded {
                 let z = min(max(b.z(Double(rhr)), -2.5), 2.5)

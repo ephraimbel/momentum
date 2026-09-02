@@ -83,7 +83,7 @@ New models, registered in `PersistenceController.models`
     var weeklyVolumeTrendPct: Double = 0
     // Load / recovery
     var currentACWR: Double = 0
-    var overreachThresholdACWR: Double = 1.5   // learned: ACWR where this user historically struggles
+    var overreachThresholdACWR: Double = 1.5   // legacy persisted name; low-confidence high-strain context, never a safety threshold
     var typicalRecoveryDays: Double = 1        // days after a hard session before quality returns
     // Achievement
     var prCountByMonth: [String: Int] = [:]    // "2026-06" -> count
@@ -153,7 +153,7 @@ Precise definitions (so there is no ambiguity to get wrong):
 | `disciplineShare` / `disciplineTrend` | fraction of workouts by `type` (trailing 56d) and delta vs the prior 56d (reuses `ProfileStats.countsByType` logic) | 10 |
 | `paceAtEffortTrendPct` | among **easy** runs (`runType==.easy`/`.recovery` or `perceivedEffort≤4`), linear trend of `avgPaceSPerKm` over 8wk. Negative = getting fitter. The single most motivating signal. | 6 comparable runs |
 | `e1rmTrendByExercise` | per exercise, % change of best `StrengthMath.e1RM` over 8wk (reuses `StrengthPRs`/`StrengthMath`) | 4 sessions w/ that lift |
-| `currentACWR` / `overreachThresholdACWR` | ACWR from `ProgressInsights`; the threshold is the lowest ACWR after which this user historically logged a high-RPE easy session or a missed next session | 6 weeks |
+| `currentACWR` / `overreachThresholdACWR` | Recent-to-usual load ratio plus a legacy-named, low-confidence observation from ratios preceding ≥3 high-RPE easy sessions. Descriptive context only; never injury prediction, clearance, or a personal limit. | 6 weeks |
 | `typicalRecoveryDays` | mean days from a hard session (top-tertile load) until easy-pace-at-effort returns to baseline | 8 weeks |
 | `frequencyTrend28d` | sessions/week slope over trailing 28d; **negative is the churn early-warning** | 4 weeks |
 
@@ -269,7 +269,7 @@ and the LLM can't use 2,000 lat/lons) — send a compact `WorkoutDigest`.
       "adherence28d": 0.86,
       "disciplineMix": "running 0.7 / strength 0.3, strength rising",
       "fitness": "easy pace −6% at same effort over 8wk; bench e1RM +4%",
-      "load": { "acwr": 1.12, "overreachThreshold": 1.5 }
+      "load": { "recentToUsualRatio": 1.12, "priorHighStrainRatio": 1.5 }
     },
     "notes": [ {"id":"...","category":"motivation","text":"...","confidence":"confident","pinned":false} ],
     "recentNarratives": ["...","..."]   // last 2, so it won't repeat itself

@@ -11,6 +11,9 @@ actor RemoteImageCache {
     private let directory: URL
     private let byteLimit: Int
     private var inflight: [String: Task<Data?, Never>] = [:]
+    /// Directory enumeration is O(number of cached files). Doing it after every downloaded avatar
+    /// made a 20-row page scan the same directory repeatedly; batch it while keeping overshoot small.
+    private var writesSincePrune = 0
 
     init(byteLimit: Int = 200 * 1024 * 1024) {
         self.byteLimit = byteLimit
@@ -23,18 +26,19 @@ actor RemoteImageCache {
     /// failed — the caller renders without the image (route/glyph media fallback).
     func data(for path: String, fetch: @escaping @Sendable () async -> Data?) async -> Data? {
         let file = fileURL(for: path)
-        if let cached = try? Data(contentsOf: file) {
-            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
-            return cached
-        }
+        if let cached = await Self.readAndTouch(file) { return cached }
         if let running = inflight[path] { return await running.value }
         let task = Task<Data?, Never> { await fetch() }
         inflight[path] = task
         let fetched = await task.value
         inflight[path] = nil
         if let fetched {
-            try? fetched.write(to: file)
-            prune()
+            await Self.write(fetched, to: file)
+            writesSincePrune += 1
+            if writesSincePrune >= 12 || fetched.count >= byteLimit / 10 {
+                writesSincePrune = 0
+                await Self.prune(directory: directory, byteLimit: byteLimit)
+            }
         }
         return fetched
     }
@@ -45,23 +49,41 @@ actor RemoteImageCache {
     }
 
     /// Oldest-touched files go first once the cache exceeds the byte limit.
-    private func prune() {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
-        else { return }
-        var entries: [(url: URL, size: Int, touched: Date)] = files.compactMap { url in
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-            else { return nil }
-            return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
-        }
-        var total = entries.reduce(0) { $0 + $1.size }
-        guard total > byteLimit else { return }
-        entries.sort { $0.touched < $1.touched }
-        for entry in entries {
-            guard total > byteLimit else { break }
-            try? fm.removeItem(at: entry.url)
-            total -= entry.size
-        }
+    nonisolated private static func readAndTouch(_ file: URL) async -> Data? {
+        await Task.detached(priority: .utility) {
+            guard let cached = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
+            try? FileManager.default.setAttributes(
+                [.modificationDate: Date()], ofItemAtPath: file.path)
+            return cached
+        }.value
+    }
+
+    nonisolated private static func write(_ data: Data, to file: URL) async {
+        await Task.detached(priority: .utility) {
+            try? data.write(to: file, options: .atomic)
+        }.value
+    }
+
+    nonisolated private static func prune(directory: URL, byteLimit: Int) async {
+        await Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            guard let files = try? fm.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])
+            else { return }
+            var entries: [(url: URL, size: Int, touched: Date)] = files.compactMap { url in
+                guard let values = try? url.resourceValues(
+                    forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+                return (url, values.fileSize ?? 0,
+                        values.contentModificationDate ?? .distantPast)
+            }
+            var total = entries.reduce(0) { $0 + $1.size }
+            guard total > byteLimit else { return }
+            entries.sort { $0.touched < $1.touched }
+            for entry in entries {
+                guard total > byteLimit else { break }
+                try? fm.removeItem(at: entry.url)
+                total -= entry.size
+            }
+        }.value
     }
 }

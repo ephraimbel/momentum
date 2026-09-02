@@ -12,10 +12,15 @@ enum DataManager {
 
     struct Snapshot: Codable {
         var app = "momentum"
-        var schemaVersion = 1
+        var schemaVersion = 2
         var exportedAt: Date
         var profile: ProfileDTO?
         var workouts: [WorkoutDTO]
+        var runningSeasons: [RunningSeasonDTO]
+        var runningEvents: [RunningEventDTO]
+        var planMetadata: [PlanMetadataDTO]
+        var plannedSessionIntents: [PlannedSessionIntentDTO]
+        var planDecisions: [PlanDecisionDTO]
     }
 
     struct ProfileDTO: Codable {
@@ -41,6 +46,222 @@ enum DataManager {
         let totalSets: Int?
     }
 
+    struct RunningSeasonDTO: Codable {
+        let id: UUID
+        let profileID: UUID
+        let activePlanID: UUID?
+        let name: String
+        let createdAt: Date
+        let updatedAt: Date
+        let statusRaw: String
+        let primaryOutcomeRaw: String
+        let motivationRaws: [String]
+        let version: Int
+        let backfillVersion: Int
+
+        init(_ value: RunningSeasonRecord) {
+            id = value.id
+            profileID = value.profileID
+            activePlanID = value.activePlanID
+            name = value.name
+            createdAt = value.createdAt
+            updatedAt = value.updatedAt
+            statusRaw = value.statusRaw
+            primaryOutcomeRaw = value.primaryOutcomeRaw
+            motivationRaws = value.motivationRaws
+            version = value.version
+            backfillVersion = value.backfillVersion
+        }
+    }
+
+    struct RunningEventDTO: Codable {
+        let id: UUID
+        let seasonID: UUID
+        let name: String
+        let date: Date
+        let distanceM: Double?
+        let durationS: Double?
+        let priorityRaw: String
+        let surfaceRaw: String
+        let ascentM: Double?
+        let descentM: Double?
+        let altitudeRaw: String
+        let technicalityRaw: String
+        let climateRaw: String
+        let statusRaw: String
+        let version: Int
+
+        init(_ value: RunningEventRecord) {
+            id = value.id
+            seasonID = value.seasonID
+            name = value.name
+            date = value.date
+            distanceM = value.distanceM
+            durationS = value.durationS
+            priorityRaw = value.priorityRaw
+            surfaceRaw = value.surfaceRaw
+            ascentM = value.ascentM
+            descentM = value.descentM
+            altitudeRaw = value.altitudeRaw
+            technicalityRaw = value.technicalityRaw
+            climateRaw = value.climateRaw
+            statusRaw = value.statusRaw
+            version = value.version
+        }
+    }
+
+    struct PlanMetadataDTO: Codable {
+        let id: UUID
+        let planID: UUID
+        let seasonID: UUID
+        let requestID: UUID?
+        let plannerVersion: String
+        let rulesetID: String
+        let policyIDRaw: String?
+        let semanticDigest: String
+        let createdAt: Date
+        let version: Int
+        let isLegacyBackfill: Bool
+
+        init(_ value: PlanMetadataRecord) {
+            id = value.id
+            planID = value.planID
+            seasonID = value.seasonID
+            requestID = value.requestID
+            plannerVersion = value.plannerVersion
+            rulesetID = value.rulesetID
+            policyIDRaw = value.policyIDRaw
+            semanticDigest = value.semanticDigest
+            createdAt = value.createdAt
+            version = value.version
+            isLegacyBackfill = value.isLegacyBackfill
+        }
+    }
+
+    struct PlannedSessionIntentDTO: Codable {
+        let id: String
+        let plannedSessionID: UUID
+        let planID: UUID
+        let seasonID: UUID
+        let intentVersion: Int
+        let weekIndex: Int
+        let dayOffset: Int
+        let stimulusRaw: String
+        let sessionClassRaw: String
+        let progressionLevel: Int
+        let hardClassRaw: String
+        let primaryTargetRaw: String
+        let fallbackTargetRaws: [String]
+        let workDistanceM: Double?
+        let workDurationS: Double?
+        let workPaceSPerKm: Double?
+        let intervalPrescription: String?
+        let strengthTargetsJSON: Data
+        let recoveryDistanceM: Double?
+        let recoveryDurationS: Double?
+        let recoveryModeRaw: String?
+        let successLower: Double?
+        let successUpper: Double?
+        let recoveryCostRaw: String
+        let validSubstitutionIDs: [String]
+        let minimumCompletedExposures: Int
+        let minimumConfidenceRaw: String
+        let purpose: String
+        let ruleIDRaws: [String]
+        let limitationRaws: [String]
+        let createdAt: Date
+
+        init(_ value: PlannedSessionIntentRecord) {
+            id = value.id
+            plannedSessionID = value.plannedSessionID
+            planID = value.planID
+            seasonID = value.seasonID
+            intentVersion = value.intentVersion
+            weekIndex = value.weekIndex
+            dayOffset = value.dayOffset
+            stimulusRaw = value.stimulusRaw
+            sessionClassRaw = value.sessionClassRaw
+            progressionLevel = value.progressionLevel
+            hardClassRaw = value.hardClassRaw
+            primaryTargetRaw = value.primaryTargetRaw
+            fallbackTargetRaws = value.fallbackTargetRaws
+            workDistanceM = value.workDistanceM
+            workDurationS = value.workDurationS
+            workPaceSPerKm = value.workPaceSPerKm
+            intervalPrescription = value.intervalPrescription
+            strengthTargetsJSON = value.strengthTargetsJSON
+            recoveryDistanceM = value.recoveryDistanceM
+            recoveryDurationS = value.recoveryDurationS
+            recoveryModeRaw = value.recoveryModeRaw
+            successLower = value.successLower
+            successUpper = value.successUpper
+            recoveryCostRaw = value.recoveryCostRaw
+            validSubstitutionIDs = value.validSubstitutionIDs
+            minimumCompletedExposures = value.minimumCompletedExposures
+            minimumConfidenceRaw = value.minimumConfidenceRaw
+            purpose = value.purpose
+            ruleIDRaws = value.ruleIDRaws
+            limitationRaws = value.limitationRaws
+            createdAt = value.createdAt
+        }
+    }
+
+    struct PlanDecisionDTO: Codable {
+        let id: UUID
+        let requestID: UUID
+        let profileID: UUID
+        let planID: UUID?
+        let seasonID: UUID
+        let decidedAt: Date
+        let triggerRaw: String
+        let statusRaw: String
+        let plannerVersion: String
+        let rulesetID: String
+        let policyIDRaw: String?
+        let oldPlanDigest: String?
+        let newPlanDigest: String?
+        let diffJSON: Data
+        let appliedRuleIDRaws: [String]
+        let hardConstraintRaws: [String]
+        let relaxedPreferenceRaws: [String]
+        let evidenceConfidenceRaws: [String]
+        let limitationRaws: [String]
+        let headline: String
+        let detail: String
+        let athleteResponseRaw: String
+        let normalizedInputVersion: Int
+        let normalizedInputJSON: Data
+        let version: Int
+
+        init(_ value: PlanDecisionRecord) {
+            id = value.id
+            requestID = value.requestID
+            profileID = value.profileID
+            planID = value.planID
+            seasonID = value.seasonID
+            decidedAt = value.decidedAt
+            triggerRaw = value.triggerRaw
+            statusRaw = value.statusRaw
+            plannerVersion = value.plannerVersion
+            rulesetID = value.rulesetID
+            policyIDRaw = value.policyIDRaw
+            oldPlanDigest = value.oldPlanDigest
+            newPlanDigest = value.newPlanDigest
+            diffJSON = value.diffJSON
+            appliedRuleIDRaws = value.appliedRuleIDRaws
+            hardConstraintRaws = value.hardConstraintRaws
+            relaxedPreferenceRaws = value.relaxedPreferenceRaws
+            evidenceConfidenceRaws = value.evidenceConfidenceRaws
+            limitationRaws = value.limitationRaws
+            headline = value.headline
+            detail = value.detail
+            athleteResponseRaw = value.athleteResponseRaw
+            normalizedInputVersion = value.normalizedInputVersion
+            normalizedInputJSON = value.normalizedInputJSON
+            version = value.version
+        }
+    }
+
     /// Background variant for the Settings row: the fetch faults every workout's gps/strength
     /// detail rows and the encode pretty-prints the lot — a perceptible hitch on the main thread
     /// at real history sizes. Runs on a fresh background context; the caller shows a busy row.
@@ -50,11 +271,23 @@ enum DataManager {
         }.value
     }
 
-    /// A pretty, ISO-8601 JSON snapshot of the athlete's profile + every workout.
+    /// A pretty, ISO-8601 JSON snapshot of the athlete's profile, workouts, and complete local
+    /// running-planner audit trail. The latter intentionally contains only normalized aggregates—
+    /// never raw Health samples, GPS points, exact locations, or unrestricted medical notes.
     nonisolated static func exportJSON(in context: ModelContext, now: Date = Date()) -> Data {
         let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first
         let workouts = (try? context.fetch(
             FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)]))) ?? []
+        let seasons = ((try? context.fetch(FetchDescriptor<RunningSeasonRecord>())) ?? [])
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        let events = ((try? context.fetch(FetchDescriptor<RunningEventRecord>())) ?? [])
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        let metadata = ((try? context.fetch(FetchDescriptor<PlanMetadataRecord>())) ?? [])
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        let intents = ((try? context.fetch(FetchDescriptor<PlannedSessionIntentRecord>())) ?? [])
+            .sorted { $0.id < $1.id }
+        let decisions = ((try? context.fetch(FetchDescriptor<PlanDecisionRecord>())) ?? [])
+            .sorted { $0.id.uuidString < $1.id.uuidString }
 
         let snapshot = Snapshot(
             exportedAt: now,
@@ -68,7 +301,13 @@ enum DataManager {
                            distanceM: w.gps?.distanceM, avgPaceSPerKm: w.gps?.avgPaceSPerKm,
                            elevationGainM: w.gps?.elevationGainM,
                            totalVolumeKg: w.strength?.totalVolumeKg, totalSets: w.strength?.totalSets)
-            })
+            },
+            runningSeasons: seasons.map(RunningSeasonDTO.init),
+            runningEvents: events.map(RunningEventDTO.init),
+            planMetadata: metadata.map(PlanMetadataDTO.init),
+            plannedSessionIntents: intents.map(PlannedSessionIntentDTO.init),
+            planDecisions: decisions.map(PlanDecisionDTO.init)
+        )
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -99,6 +338,11 @@ enum DataManager {
         wipe(EarnedAward.self)
         wipe(AthleteModel.self)    // cascades its MemoryNote + FitnessSnapshot children
         wipe(ChatMessage.self)
+        wipe(PlannedSessionIntentRecord.self)
+        wipe(PlanMetadataRecord.self)
+        wipe(RunningEventRecord.self)
+        wipe(RunningSeasonRecord.self)
+        wipe(PlanDecisionRecord.self)
         // Standalone records (no parent relationship to cascade through) — must be wiped explicitly
         // or a reset leaves stale coaching history, inbox notifications, and check-ins behind.
         wipe(CoachingEvent.self)
@@ -147,6 +391,11 @@ enum DataManager {
             wipe(EarnedAward.self)
             wipe(AthleteModel.self)
             wipe(ChatMessage.self)
+            wipe(PlannedSessionIntentRecord.self)
+            wipe(PlanMetadataRecord.self)
+            wipe(RunningEventRecord.self)
+            wipe(RunningSeasonRecord.self)
+            wipe(PlanDecisionRecord.self)
             wipe(CoachingEvent.self)
             wipe(AppNotification.self)
             wipe(DailyCheckin.self)

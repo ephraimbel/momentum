@@ -179,7 +179,7 @@ struct ProfileHero<Chrome: View, Avatar: View, Pills: View>: View {
         // an animated iridescent sweep once they have posted. Shared with the community home's
         // face row so a person's ring looks identical wherever you meet them.
         PresenceRing(active: ringed) { avatar() }
-            .accessibilityLabel(ringed ? "\(name), trained today" : name)
+            .accessibilityLabel(ringed ? "\(name), posted today" : name)
     }
 
     /// The ledger, on its own full-width row: three equal cells split by hairlines, the way the

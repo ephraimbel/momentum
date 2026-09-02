@@ -42,8 +42,25 @@ final class CommunityWallUITests: XCTestCase {
     func testTileAndThePageItOpensTellTheSameStory() {
         let app = launch(["--feed-global", "--reset-social"])
 
-        let tile = app.buttons.matching(NSPredicate(format: "label CONTAINS ' mi · '")).firstMatch
-        XCTAssertTrue(tile.waitForExistence(timeout: 30), "No routed tile on the community wall.")
+        let query = app.buttons.matching(NSPredicate(format: "label CONTAINS ' mi · '"))
+        let deadline = Date().addingTimeInterval(30)
+        var visibleTile: XCUIElement?
+        while Date() < deadline, visibleTile == nil {
+            // `isHittable` remains true when only a tile's last few pixels peek out from behind
+            // the pinned Community header. Tapping that stale sliver lands on the header, so the
+            // pager never opens and the test misreports a wrong-post routing bug. Exercise the
+            // gesture a person can actually make: a whole tile inside the unobscured wall, clear
+            // of both the header and the floating tab bar.
+            let safeTop = app.frame.minY + 120
+            let safeBottom = app.frame.maxY - 120
+            visibleTile = query.allElementsBoundByIndex.first {
+                $0.isHittable && $0.frame.minY >= safeTop && $0.frame.maxY <= safeBottom
+            }
+            if visibleTile == nil { usleep(100_000) }
+        }
+        guard let tile = visibleTile else {
+            return XCTFail("No visible routed tile on the community wall.")
+        }
         let label = tile.label
         let author = String(label.split(separator: ",").first ?? "")
         guard let distance = Self.distanceToken(in: label) else {

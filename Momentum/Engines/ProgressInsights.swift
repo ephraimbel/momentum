@@ -1,16 +1,17 @@
 import Foundation
 
-/// Deterministic training-progress analytics (PRD §4.8, §9 — rules compute, AI narrates). Uses the
-/// sports-science **acute:chronic workload ratio (ACWR)**: 7-day load vs the 28-day weekly average.
-/// The ratio drives a training status and a plan recommendation (increase / hold / ease / rest).
+/// Deterministic training-progress analytics (PRD §4.8, §9 — rules compute, AI narrates). Uses a
+/// 7-day load versus recent-28-day weekly-average ratio. The ratio is exposure context, not an
+/// injury predictor or physiological clearance. Existing operational bands drive conservative plan
+/// suggestions; athlete feedback and plan context still decide whether a change is appropriate.
 @MainActor
 struct ProgressInsights {
     enum Status: String, Sendable {
         case starting = "Getting started"
-        case underloaded = "Recovered"
-        case building = "Building"
-        case pushing = "Pushing"
-        case overreaching = "Ease off"
+        case underloaded = "Lighter week"
+        case building = "Near recent norm"
+        case pushing = "Above recent norm"
+        case overreaching = "Much above recent"
     }
     enum Recommendation: Sendable { case start, increase, hold, ease, rest }
 

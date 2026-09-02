@@ -172,8 +172,8 @@ extension RouteMatch {
     /// while leaving the other raw would move one footprint relative to the other for reasons that
     /// have nothing to do with where the athlete went. Raw on both sides is the honest comparison.
     ///
-    /// A run with no stored fixes (an Apple Health import, which carries a summary and no trace)
-    /// therefore has no footprint and never matches. That is correct: no geometry, no claim.
+    /// A legacy or manually summarized run with no stored fixes has no footprint and never matches.
+    /// That is correct: no geometry, no claim.
     ///
     /// **Sorted by timestamp, and that is not cosmetic.** SwiftData hands a to-many relationship
     /// back in no particular order on a refetch. The cell *set* does not care, but `isLoop` reads

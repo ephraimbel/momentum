@@ -30,6 +30,9 @@ protocol SocialBackending: AnyObject {
     func publish(_ post: SocialSyncEngine.PostDTO, photos: [Data]) async -> Bool
     func unpublish(postID: UUID) async -> Bool
     func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage?
+    /// Resolve one RLS-visible post directly. Notification deep links must not depend on the post
+    /// still being inside the first reverse-chronological feed page.
+    func feedPost(id: UUID) async -> SocialSyncEngine.FeedRow?
     func athletePage(handle: String) async -> AthletePage?
     /// Find discoverable athletes by name or @handle. nil = unavailable (guest/offline/dark);
     /// only `discoverable = true` profiles surface (privacy is opt-in).
@@ -76,6 +79,9 @@ protocol SocialBackending: AnyObject {
     func pushComment(_ comment: Comment) async -> Bool
     func deleteComment(id: UUID) async
     func pullComments(postID: UUID) async -> [Comment]?
+    /// Genuine respects/comments/follows directed at the signed-in athlete. Repeatable and bounded;
+    /// clients dedupe by event id so every device receives the same inbox history.
+    func pullSocialActivity(limit: Int) async -> [SocialActivityHit]?
 
     // Safety
     func setBlock(handle: String, blocked: Bool) async
@@ -160,8 +166,10 @@ extension SocialBackending {
         guard await isAvailable, let profile else { return }
         let actions = SocialSyncEngine.publishActions(workouts)
         guard !actions.publish.isEmpty || !actions.unpublish.isEmpty else { return }
+        let contexts = FeedEarnedContext.resolve(workouts: workouts, records: profile.prs)
         for workout in actions.publish {
-            guard let dto = SocialSyncEngine.postDTO(for: workout, profile: profile) else { continue }
+            guard let dto = SocialSyncEngine.postDTO(for: workout, profile: profile,
+                                                     earnedContext: contexts[workout.id]) else { continue }
             if await publish(dto, photos: workout.orderedPhotosData) {
                 workout.postPublishedAt = Date()
             }
@@ -188,6 +196,7 @@ class StubSocialBackend: SocialBackending {
     func publish(_ post: SocialSyncEngine.PostDTO, photos: [Data]) async -> Bool { false }
     func unpublish(postID: UUID) async -> Bool { false }
     func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? { nil }
+    func feedPost(id: UUID) async -> SocialSyncEngine.FeedRow? { nil }
     func athletePage(handle: String) async -> AthletePage? { nil }
     func searchAthletes(query: String, limit: Int) async -> [AthleteHit]? { nil }
     func signedPhotoURLs(paths: [String]) async -> [String: URL] { [:] }
@@ -204,6 +213,7 @@ class StubSocialBackend: SocialBackending {
     func pushComment(_ comment: Comment) async -> Bool { false }
     func deleteComment(id: UUID) async {}
     func pullComments(postID: UUID) async -> [Comment]? { nil }
+    func pullSocialActivity(limit: Int) async -> [SocialActivityHit]? { nil }
     func setBlock(handle: String, blocked: Bool) async {}
     func report(postID: UUID?, commentID: UUID?, handle: String?, reason: ReportReason, details: String?) async {}
 }
@@ -314,7 +324,7 @@ final class SupabaseSocialBackend: SocialBackending {
             let distance_m: Double?, duration_s: Double?, total_volume_kg: Double?
             let total_sets: Int?, avg_pace_s_per_km: Double?, pr_badge: String?
             let muscles: [String: Double]?, route: [[Double]]?, map_style: String
-            let ai_read: String?, photo_paths: [String]
+            let ai_read: String?, earned_context: String?, cover_is_photo: Bool, photo_paths: [String]
         }
         let row = Row(id: dto.id, author_id: session.user.id, visibility: dto.visibility,
                       workout_type: dto.workoutType, started_at: dto.startedAt, title: dto.title,
@@ -322,7 +332,9 @@ final class SupabaseSocialBackend: SocialBackending {
                       duration_s: dto.durationS, total_volume_kg: dto.totalVolumeKg,
                       total_sets: dto.totalSets, avg_pace_s_per_km: dto.avgPaceSPerKm,
                       pr_badge: dto.prBadge, muscles: dto.muscles, route: dto.route,
-                      map_style: dto.mapStyle, ai_read: dto.aiRead, photo_paths: dto.photoPaths)
+                      map_style: dto.mapStyle, ai_read: dto.aiRead,
+                      earned_context: dto.earnedContext,
+                      cover_is_photo: dto.coverIsPhoto, photo_paths: dto.photoPaths)
         do {
             try await client.from("posts").upsert(row).execute()
         } catch { return false }
@@ -382,6 +394,17 @@ final class SupabaseSocialBackend: SocialBackending {
                 ? rows.last.map { FeedCursor(created: $0.createdAt, id: $0.id) }
                 : nil
             return FeedPage(rows: rows, next: next)
+        } catch { return nil }
+    }
+
+    func feedPost(id: UUID) async -> SocialSyncEngine.FeedRow? {
+        guard let client, await isAvailable else { return nil }
+        struct Params: Encodable { let p_post_id: UUID }
+        do {
+            let rows: [SocialSyncEngine.FeedRow] = try await client
+                .rpc("feed_post", params: Params(p_post_id: id))
+                .execute().value
+            return rows.first
         } catch { return nil }
     }
 
@@ -658,6 +681,35 @@ final class SupabaseSocialBackend: SocialBackending {
                         authorName: $0.profiles.display_name.isEmpty ? "Athlete" : $0.profiles.display_name,
                         authorHandle: $0.profiles.handle.isEmpty ? nil : $0.profiles.handle,
                         isCommunity: false, text: $0.body, date: $0.created_at)
+            }
+        } catch { return nil }
+    }
+
+    func pullSocialActivity(limit: Int) async -> [SocialActivityHit]? {
+        guard let client, await session() != nil else { return nil }
+        struct Row: Decodable {
+            let id: UUID
+            let kind: String
+            let actor_handle: String
+            let actor_name: String
+            let post_id: UUID?
+            let post_title: String?
+            let comment_body: String?
+            let created_at: Date
+        }
+        struct Params: Encodable { let p_limit: Int }
+        do {
+            let rows: [Row] = try await client.rpc(
+                "pull_social_activity", params: Params(p_limit: min(max(limit, 1), 100)))
+                .execute().value
+            return rows.compactMap { row in
+                guard let kind = SocialActivityHit.Kind(rawValue: row.kind) else { return nil }
+                return SocialActivityHit(id: row.id, kind: kind,
+                                         actorHandle: row.actor_handle,
+                                         actorName: row.actor_name,
+                                         postID: row.post_id, postTitle: row.post_title,
+                                         commentBody: row.comment_body,
+                                         createdAt: row.created_at)
             }
         } catch { return nil }
     }

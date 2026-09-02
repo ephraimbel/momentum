@@ -498,7 +498,7 @@ struct TodayView: View {
         if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Everything below is observational (notifications, widget snapshot, inbox posts, proactive
-        // coach, cloud sync, Health import, recovery adaptation) — nothing on screen waits for it,
+        // coach, cloud sync, Health signal refresh, recovery adaptation) — nothing on screen waits for it,
         // and running it inline made the first Today frame pay a full ProfileStats history walk plus
         // three notification-scheduling passes while Mapbox was loading (perf audit 2026-08-13).
         Task { @MainActor in
@@ -560,9 +560,10 @@ struct TodayView: View {
             // heart rate — not a source of workouts: connecting it never backfills a journal, and
             // nothing recorded elsewhere becomes a Momentum workout. The journal is what the athlete
             // logs here, and the recovery picture builds up day by day from the moment they connect.
-            // Recovery-driven adaptation (§8.1). The overtraining tripwire outranks the daily ease:
-            // load in the danger zone + the body agreeing forces a real cutback week (throttled to
-            // one/week); otherwise two warning signs just ease *today's* quality session.
+            // Recovery-driven adaptation (§8.1). The multi-signal load guardrail outranks the daily
+            // ease: a much-higher-than-recent load plus an out-of-norm recovery signal can force a
+            // real cutback week (throttled to one/week); otherwise two warning signs just ease
+            // *today's* quality session. This is conservative coaching, not a diagnosis.
             Task {
                 let signals = await services.health.recoverySignals()
                 let acwr = ProgressInsights(workouts: workouts).acwr
@@ -966,7 +967,7 @@ struct TodayView: View {
             }
         }
         .mapStyle(activeMapboxStyle)
-        .ornamentOptions(MapChrome.hidden)
+        .ornamentOptions(MapChrome.minimal)
         // Enabling the puck activates Mapbox's location provider, which prompts for permission — so we
         // only turn it on once the athlete has actually granted location (never up front on arrival).
         .onStyleLoaded { _ in

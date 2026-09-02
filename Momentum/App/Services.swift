@@ -89,7 +89,9 @@ protocol LocationServing: AnyObject {
     /// share the SAME service: onboarding's location grant has to reach Today's map, and it can't
     /// if each screen owns a private `LocationService` whose `lastLocation` nobody else sees.
     var lastLocation: CLLocationCoordinate2D? { get }
-    func requestAuthorization()
+    /// Request the real system permission. Completion runs on the main actor only after iOS has
+    /// resolved the prompt (or immediately when the choice was already made).
+    func requestAuthorization(completion: ((Bool) -> Void)?)
     /// Ask for a single fresh fix — used to open/recenter the home map on the athlete.
     func refreshLocation()
     /// The most-recent coordinate the system knows, however stale — for framing non-critical UI
@@ -98,6 +100,10 @@ protocol LocationServing: AnyObject {
     /// Live stream of raw fixes; the engine's `GPSProcessor` applies the accept gate.
     func fixes() -> AsyncStream<GPSProcessor.Fix>
     func stop()
+}
+
+extension LocationServing {
+    func requestAuthorization() { requestAuthorization(completion: nil) }
 }
 
 @MainActor
@@ -119,11 +125,11 @@ protocol HealthServing: AnyObject {
     /// `includeEnergy: false` skips the active-energy sample — for a workout whose calorie number
     /// was READ from Health in the first place (writing it back would double-count the Move ring).
     func save(_ workout: Workout, includeEnergy: Bool) async
-    /// The wearable's own active-energy total (kcal) inside one window — what the Watch measured
-    /// during exactly the minutes the athlete was playing. nil = no samples (absent, never zero).
+    /// The wearable's own active-energy total (kcal) inside one already-known Momentum workout
+    /// window. nil = no samples (absent, never zero); this never discovers a workout.
     func measuredActiveEnergy(start: Date, end: Date) async -> Double?
-    /// Read the athlete's latest body mass + resting HR (for personalizing estimates). nils if N/A.
-    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
+    /// Read the athlete's latest body mass + resting HR signals. nils if unavailable.
+    func currentBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?)
     /// Read recovery signals wearables mirror into Health — HRV, resting HR, and last night's sleep,
     /// each with a personal baseline (for the readiness card). `.empty` if unavailable/unauthorized.
     func recoverySignals() async -> RecoverySignals
@@ -132,7 +138,8 @@ protocol HealthServing: AnyObject {
     // No workout import. Health is read for signals only — sleep, HRV, resting heart rate, body
     // mass — never for workouts. Connecting it must not backfill a journal, so there is deliberately
     // no API here that turns a HealthKit sample into a `Workout`.
-    /// The full heart-rate series for a workout window (Watch/Garmin runs carry one) — time-in-zones.
+    /// Heart rate inside one already-known Momentum workout window — used for time-in-zones when a
+    /// wearable wrote the signal but Momentum did not capture it locally. Never discovers a workout.
     func heartRateSeries(start: Date, end: Date) async -> [(date: Date, bpm: Double)]
     /// Daily step totals for the trailing window (oldest → newest, one point per day, zeros kept so
     /// gaps read honestly). Empty when Health is unavailable/unauthorized — the Trends steps card
@@ -173,7 +180,7 @@ protocol NotificationServing: AnyObject {
     /// Ask for local-notification permission (once; no-op if already determined). `completion` runs
     /// on the main thread once the system prompt is RESOLVED (or immediately if already determined),
     /// so a flow can advance only after the prompt is dismissed — never stacking another prompt on it.
-    func requestAuthorization(completion: (() -> Void)?)
+    func requestAuthorization(completion: ((Bool) -> Void)?)
     /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
     func schedulePlannedReminders(_ plan: TrainingPlan?)
     /// The repeating Sunday week-in-review nudge (PRD §24).
@@ -232,7 +239,7 @@ extension VoiceCoachServing {
 enum Feature: String, CaseIterable, Sendable, Identifiable {
     case aiCoach, fullPlan, programs, aiRead, advancedAnalytics, fullHistory
     case allTemplates, allShareTemplates, cadenceMetronome, voiceCoach, watchPremium
-    case mapStyles, fuel
+    case mapStyles, routeReplay, fuel
 
     var id: String { rawValue }
 
@@ -248,6 +255,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .advancedAnalytics: "analytics_locked"
         case .fullHistory: "history_locked"
         case .mapStyles: "map_styles"
+        case .routeReplay: "route_replay"
         case .fuel: "fuel_locked"
         case .aiCoach, .fullPlan, .programs, .allTemplates,
              .allShareTemplates, .cadenceMetronome, .voiceCoach, .watchPremium: "full_plan"
@@ -269,6 +277,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "the voice coach"
         case .watchPremium: "Watch premium"
         case .mapStyles: "all map styles"
+        case .routeReplay: "route replay"
         case .fuel: "the fuel journal"
         }
     }
@@ -288,6 +297,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "Voice coach"
         case .watchPremium: "Watch premium"
         case .mapStyles: "All map styles"
+        case .routeReplay: "Route replay"
         case .fuel: "Fuel your training"
         }
     }
@@ -307,6 +317,7 @@ enum Feature: String, CaseIterable, Sendable, Identifiable {
         case .voiceCoach: "Live cues while you run"
         case .watchPremium: "The full experience on your wrist"
         case .mapStyles: "Every map style"
+        case .routeReplay: "Relive every turn of your route"
         case .fuel: "AI meal logging, keyed to your plan"
         }
     }

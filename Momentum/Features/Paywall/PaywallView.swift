@@ -4,14 +4,16 @@ import SwiftUI
 /// BRIGHT, light page. One display headline, then an endless slow-scrolling list of what Pro
 /// unlocks (glass icon tiles, a claim, one plain line each — it loops forever, fading at both
 /// edges), two plan cards with the yearly staged to win, and the checkout. Every feature line is
-/// ours and true. Trial-less since 2026-08-20; every trial branch stays data-driven off the
-/// store's intro offer. **Trust stays a feature:** both plans one tap apart, plain renewal terms,
+/// ours and true. The annual's seven-day offer returned 2026-09-01; every trial branch stays
+/// data-driven off the store's intro offer. **Trust stays a feature:** both plans one tap apart, plain renewal terms,
 /// one-tap restore. Hosted as-is by `OnboardingPaywallFlow`; assembled from `PaywallComponents`.
 struct PaywallView: View {
     /// The locked feature that brought the user here — logged, and frames nothing visually.
     var feature: Feature = .aiCoach
     /// Hard placement: no close affordance, no swipe-away.
     var hard: Bool = false
+    /// Set by onboarding so checkout keeps the plan's just-earned promise in view.
+    var personalizedOutcome: String? = nil
     /// Called INSTEAD of dismissing when the athlete becomes entitled — see PaywallCheckout.
     var onEntitled: (() -> Void)?
 
@@ -61,9 +63,7 @@ struct PaywallView: View {
                 }
                 .reveal(revealed, delay: 0.03, reduceMotion: reduceMotion)
 
-            Text("A plan that adapts to you, every week.")
-                .font(.rounded(15, weight: .medium))
-                .foregroundStyle(Theme.inkSecondary)
+            goalPromise
                 .padding(.top, 9)
                 .reveal(revealed, delay: 0.06, reduceMotion: reduceMotion)
 
@@ -74,19 +74,25 @@ struct PaywallView: View {
                 // Real air under the subtitle: at sm the half-faded top row crowded it and the
                 // two blocks read as one run-on column.
                 .padding(.top, 18)
-                .reveal(revealed, delay: 0.08, reduceMotion: reduceMotion)
+                // `soft: false` — a blur over a live ScrollView of rasterised tiles is the one
+                // place the materialise costs real frames; it rises and fades like the rest.
+                .reveal(revealed, delay: 0.08, reduceMotion: reduceMotion, soft: false)
 
             planCards(s)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, 14)   // room for the badge's overhang
-                .reveal(revealed, delay: 0.14, reduceMotion: reduceMotion)
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .safeAreaInset(edge: .bottom) {
-            PaywallCheckout(product: product, hard: hard, onEntitled: onEntitled ?? { dismiss() })
+            PaywallCheckout(
+                product: product,
+                placement: feature.placement,
+                ctaLead: personalizedOutcome == nil ? nil : "Unlock my plan",
+                hard: hard,
+                onEntitled: onEntitled ?? { dismiss() })
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
-                .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
+                .reveal(revealed, delay: 0.26, reduceMotion: reduceMotion, soft: false)
         }
         .background {
             // The bright canvas with one soft aurora bloom behind the marquee — the Bevel wash,
@@ -99,13 +105,42 @@ struct PaywallView: View {
         // `.preferredColorScheme` — the latter leaks the forced scheme to the presenter.
         .environment(\.colorScheme, .light)
         .onAppear {
-            services.analytics.log(.paywallView(placement: feature.placement))
+            services.analytics.log(.paywallView(
+                placement: feature.placement, pricingLive: paywall.pricingIsLive))
             SKANConversion.record(.paywallSeen)
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.5)) { revealed = true }
         }
     }
 
     // MARK: The headline
+
+    /// Onboarding arrives with the exact outcome the athlete just chose. Give it a named seat rather
+    /// than demoting it to generic subtitle copy: the subscription is the adaptive route to THEIR
+    /// goal, not a bag of disconnected features.
+    @ViewBuilder
+    private var goalPromise: some View {
+        if let personalizedOutcome {
+            VStack(spacing: 3) {
+                Text("YOUR GOAL")
+                    .font(.rounded(10, weight: .bold)).tracking(1.3)
+                    .foregroundStyle(Theme.inkTertiary)
+                Text(personalizedOutcome)
+                    .font(.rounded(16, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2).minimumScaleFactor(0.82)
+                Text("Built from your current fitness, availability, and recovery.")
+                    .font(.rounded(12, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, Theme.Space.md)
+        } else {
+            Text("A plan that adapts to you, every week.")
+                .font(.rounded(15, weight: .medium))
+                .foregroundStyle(Theme.inkSecondary)
+        }
+    }
 
     /// Two beats of display type, the second carrying the only colour in the type on this page.
     /// Every stop stays in the saturated mid band: an earlier ramp ended on a pale sky stop, so
@@ -130,16 +165,24 @@ struct PaywallView: View {
         let g = LinearGradient(
             colors: [Theme.purple, Color(hex: "9A7BF3"), Color(hex: "7C97EC"), Color(hex: "4E93D4")],
             startPoint: UnitPoint(x: -0.35 + x, y: 0), endPoint: UnitPoint(x: 1.15 + x, y: 0.9))
+        if personalizedOutcome != nil {
+            return Text("Your goal.\n").font(f).tracking(-1.2).foregroundStyle(Theme.ink)
+                + Text("Built into every week.").font(f).tracking(-1.2).foregroundStyle(g)
+        }
         return Text("Run smarter.\n").font(f).tracking(-1.2).foregroundStyle(Theme.ink)
             + Text("Race faster.").font(f).tracking(-1.2).foregroundStyle(g)
     }
 
     // MARK: Plan cards — the yearly staged to win
 
+    /// The two cards arrive a beat apart (yearly first — it is the one staged to win), so the
+    /// pair reads as dealt rather than stamped on together.
     private func planCards(_ s: CGFloat) -> some View {
         HStack(spacing: 12) {
             planCard(offering.annual, s: s)
+                .reveal(revealed, delay: 0.14, reduceMotion: reduceMotion)
             planCard(offering.weekly, s: s)
+                .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
         }
     }
 
@@ -149,6 +192,9 @@ struct PaywallView: View {
         return Button {
             guard !isSelected else { return }
             Haptics.medium()   // a real press, not a tick
+            services.analytics.log(.paywallAction(
+                action: "plan_selected", placement: feature.placement,
+                product: p.isAnnual ? "annual" : "weekly"))
             if reduceMotion { selected = p.period }
             else { withAnimation(.spring(response: 0.36, dampingFraction: 0.72)) { selected = p.period } }
         } label: {
@@ -214,7 +260,12 @@ struct PaywallView: View {
     }
 
     private var closeButton: some View {
-        GlassCircleButton(systemName: "xmark", label: "Close") { dismiss() }
+        GlassCircleButton(systemName: "xmark", label: "Close") {
+            services.analytics.log(.paywallAction(
+                action: "closed", placement: feature.placement,
+                product: product.isAnnual ? "annual" : "weekly"))
+            dismiss()
+        }
             .padding(.leading, Theme.Space.md)
             .padding(.top, Theme.Space.xs)
     }
@@ -235,8 +286,8 @@ struct FeatureMarquee: View {
     enum Art { case plan, coach, race, recovery, fuel, analytics, watch }
     struct Item { let art: Art; let tint: Color; let title: String; let line: String }
     static let items: [Item] = [
-        .init(art: .plan, tint: Theme.purple, title: "Your adaptive plan",
-              line: "Rebuilt around your recovery, every week."),
+        .init(art: .plan, tint: Theme.purple, title: "A plan built for your goal",
+              line: "Every session earns its place in the build."),
         .init(art: .coach, tint: Theme.Health.vitalsInk, title: "Coach chat & post-run reads",
               line: "Pace insights and honest verdicts."),
         .init(art: .race, tint: Theme.Health.temperatureInk, title: "Race predictions",
@@ -256,6 +307,10 @@ struct FeatureMarquee: View {
     @State private var listHeight: CGFloat = 0
     @State private var phase: ScrollPhase = .idle
     @State private var lastTick: Date?
+    /// When the current drift began — nil whenever the list is at rest in the athlete's hands.
+    /// The drift eases up from a standstill over a second and a bit (a belt starting, not a
+    /// cut to full speed), both on arrival and every time a finger lets go.
+    @State private var driftSince: Date?
     // 30Hz, not 60: at 24pt/s a tick moves 0.8pt, invisible on a drift this slow, and every
     // tick invalidates the whole ScrollView — this one line was a third of the page's idle CPU.
     private let ticker = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
@@ -278,15 +333,20 @@ struct FeatureMarquee: View {
             // The endless part (owner call): whenever the scroll comes to rest — after the
             // athlete's own swipe too — snap back by whole list-heights into the middle band.
             // Same pixels either side of the jump, so it reads as simply continuing.
-            if new == .idle { recentre() }
+            if new == .idle { recentre() } else { driftSince = nil }
         }
         .onReceive(ticker) { now in
             guard !reduceMotion, listHeight > 0 else { return }
             defer { lastTick = now }
             // Only drift while the athlete isn't touching or flinging it.
             guard phase == .idle, let last = lastTick else { return }
+            let began = driftSince ?? now
+            if driftSince == nil { driftSince = now }
+            // Ease-in on the belt: 0 → full speed over 1.4s, smoothstep so it never kicks.
+            let u = min(1, now.timeIntervalSince(began) / 1.4)
+            let ramp = u * u * (3 - 2 * u)
             let dt = min(0.05, now.timeIntervalSince(last))
-            let y = wrapped(offsetY + CGFloat(speed * dt))
+            let y = wrapped(offsetY + CGFloat(speed * ramp * dt))
             position.scrollTo(y: y)
         }
         .onAppear {
@@ -481,6 +541,19 @@ private struct TileArt: View {
     /// Ease in-out on a 0…1 ramp.
     private func ease(_ x: Double) -> Double { x * x * (3 - 2 * x) }
 
+    /// A gauge's settle on a 0…1 ramp: leaves the start gently, overshoots its mark by a few
+    /// percent and comes to rest on it — a damped spring in closed form (ζ 0.7, so the overshoot
+    /// is ~4.6% and there is exactly one rebound). Real needles, rings and things that land never
+    /// stop dead on their number; the smoothstep the arts used before did, and that stop was the
+    /// tell that these were drawings.
+    private func settle(_ x: Double) -> Double {
+        let x = min(1, max(0, x))
+        let z = 0.7, w = 9.0
+        let wd = w * (1 - z * z).squareRoot()
+        let e = exp(-z * w * x)
+        return 1 - e * (cos(wd * x) + (z * w / wd) * sin(wd * x))
+    }
+
     // Each art gets its own function. Inlining them all in one `switch` is what pushed this file
     // into type-checker timeouts before; it also keeps every loop readable on its own.
     @ViewBuilder
@@ -509,7 +582,9 @@ private struct TileArt: View {
         // The sweep starts from a FLOOR, not from nothing: a readiness ring that opens each loop
         // on an empty track reading "0" is the worst frame it can show, and the loop guarantees
         // you'll see it. It climbs 40 → 80 with the arc already a third of the way round.
-        let climb: Double = ease(min(1, phase / 0.36))
+        // `settle`, not `ease`: the arc runs a hair past 80, and the number reads 82 for a
+        // frame or two before it rests on 80 — the way a real readiness dial lands.
+        let climb: Double = settle(phase / 0.36)
         let sweep: Double = 0.38 + climb * 0.38
         let fade: Double = phase > 0.92 ? max(0, 1 - (phase - 0.92) / 0.08) : 1
         let score: Int = Int((40 + climb * 40).rounded())
@@ -610,6 +685,9 @@ private struct TileArt: View {
                 .background(Circle().fill(Theme.purple))
                 .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 1.1))
                 .shadow(color: Theme.purple.opacity(0.5), radius: 3)
+                // Grows in with its light rather than fading in at full size — a badge that
+                // only changes opacity reads as a layer; one that swells reads as a press.
+                .scaleEffect(0.7 + 0.3 * show)
                 .opacity(show)
                 .offset(x: 3, y: -3)
         }
@@ -622,11 +700,17 @@ private struct TileArt: View {
     /// Each bar rides its own phase offset so the wave rolls left to right, like real speech.
     private func coachArt(_ phase: Double) -> some View {
         let t: Double = phase * .pi * 2
+        // Speech has SHAPE: it swells into a phrase and drops to a breath between them. One slow
+        // envelope over the fast bars gives the voice that rise-and-pause; without it the wave
+        // buzzed at one level, which is what a level meter does and a person doesn't.
+        let env: Double = 0.42 + 0.58 * pow(0.5 + 0.5 * sin(t - 0.6), 1.4)
         let heights: [CGFloat] = (0..<5).map { i in
             let a: Double = 0.5 + 0.5 * sin(t * 3 + Double(i) * 1.25)
             let b: Double = 0.5 + 0.5 * sin(t * 5 + Double(i) * 0.7 + 1.3)
-            return 2.6 + 7.4 * CGFloat(0.55 * a + 0.45 * b)
+            return 2.6 + 7.4 * CGFloat((0.55 * a + 0.45 * b) * env)
         }
+        // The bubble breathes with the phrase — 1.5% at the loudest, anchored at its tail.
+        let breath: CGFloat = 1 + 0.015 * CGFloat(env)
         // Bubble and tail are ONE path filled once. Two stacked shapes always betrayed the
         // seam: the glyph gradient is semi-transparent at the bottom, so a tail behind the
         // bubble showed through it, and a tail in front sat on it as a diamond.
@@ -649,6 +733,7 @@ private struct TileArt: View {
             }
             .offset(y: -2)
         }
+        .scaleEffect(breath, anchor: UnitPoint(x: 0.15, y: 0.95))
         .frame(width: 30, height: 30)
     }
 
@@ -740,6 +825,12 @@ private struct TileArt: View {
         let f: CGFloat = (x - CGFloat(seg) * 7) / 7
         let y: CGFloat = pts[seg].y + (pts[seg + 1].y - pts[seg].y) * f
         let show: Double = min(1, max(0, (phase - 0.05) / 0.06)) * min(1, max(0, (0.92 - phase) / 0.06))
+        // The TAP that starts the scrub: a ring spreads from the first point and dies, and the
+        // dot swells under the finger for the same beat. That is what tap-to-inspect looks
+        // like on the real chart; before, the cursor simply appeared, which is a slide, not a touch.
+        let touch: Double = min(1, max(0, (phase - 0.05) / 0.2))
+        let ripple: Double = ease(touch)
+        let press: CGFloat = 1 + 0.35 * CGFloat(max(0, sin(touch * .pi)))
         let trace = Path { p in p.move(to: pts[0]); for q in pts.dropFirst() { p.addLine(to: q) } }
         return ZStack {
             Path { p in
@@ -759,11 +850,16 @@ private struct TileArt: View {
             Rectangle().fill(tint.opacity(0.35)).frame(width: 0.8, height: max(1, 24 - y))
                 .position(x: x, y: y + (24 - y) / 2)
                 .opacity(show)
+            Circle().stroke(tint.opacity((1 - ripple) * 0.6), lineWidth: 1)
+                .frame(width: 5 + 13 * ripple, height: 5 + 13 * ripple)
+                .position(x: x, y: y)
+                .opacity(touch > 0 && touch < 1 ? 1 : 0)
             ZStack {
                 Circle().fill(.white).frame(width: 6.5, height: 6.5)
                 Circle().fill(tint).frame(width: 3.6, height: 3.6)
             }
             .shadow(color: .black.opacity(0.18), radius: 1.5, y: 0.5)
+            .scaleEffect(press)
             .position(x: x, y: y)
             .opacity(show)
         }
@@ -777,7 +873,9 @@ private struct TileArt: View {
     /// ring closes on the display with a bead on its leading edge, and cue arcs bloom off the
     /// crown side and fade — the cue leaving the wrist for the ear.
     private func watchArt(_ phase: Double) -> some View {
-        let ring: Double = ease(min(1, phase / 0.42)) * 0.78
+        // The ring closes with a settle — it runs a hair past its mark and rests, the way the
+        // real rings do when a goal lands. The bead rides the same curve, so it rebounds too.
+        let ring: Double = settle(phase / 0.42) * 0.78
         let bead: Double = -90 + ring * 360
         let caseFill = LinearGradient(colors: [Color(hex: "56565E"), Color(hex: "2A2A30")],
                                       startPoint: .top, endPoint: .bottom)
@@ -859,25 +957,32 @@ private struct TileArt: View {
     }
 }
 
-/// Staggered entrance for the paywall's sections — opacity + a small rise, never layout. Inert
-/// under Reduce Motion (content simply appears).
+/// Staggered entrance for the paywall's sections — opacity + a small rise, never layout. `soft`
+/// adds the materialise: the block also sharpens out of a few points of blur and grows the last
+/// 1.5% into place, so type and cards come into focus rather than sliding in flat. It is off for
+/// the marquee and the checkout (a blur over a live ScrollView costs real frames, and the CTA
+/// should simply arrive). Inert under Reduce Motion (content simply appears).
 struct PaywallReveal: ViewModifier {
     let shown: Bool
     let delay: Double
     let reduceMotion: Bool
+    var soft = true
 
     func body(content: Content) -> some View {
+        let settled = shown || reduceMotion
         content
-            .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 10)
-            .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.9).delay(delay),
+            .opacity(settled ? 1 : 0)
+            .offset(y: settled ? 0 : 10)
+            .blur(radius: settled || !soft ? 0 : 5)
+            .scaleEffect(settled || !soft ? 1 : 0.985)
+            .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.9).delay(delay),
                        value: shown)
     }
 }
 
 extension View {
-    func reveal(_ shown: Bool, delay: Double, reduceMotion: Bool) -> some View {
-        modifier(PaywallReveal(shown: shown, delay: delay, reduceMotion: reduceMotion))
+    func reveal(_ shown: Bool, delay: Double, reduceMotion: Bool, soft: Bool = true) -> some View {
+        modifier(PaywallReveal(shown: shown, delay: delay, reduceMotion: reduceMotion, soft: soft))
     }
 }
 

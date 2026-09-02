@@ -8,7 +8,12 @@ import XCTest
 /// app survived the round trip. Run it alongside `simctl io recordVideo` for motion review.
 final class LiveActivityProbeUITests: XCTestCase {
 
-    override func setUp() { super.setUp(); continueAfterFailure = true }
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        continueAfterFailure = true
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["LIVE_ACTIVITY_UI_AUDIT"] == "1",
+                          "Live Activity visual probe; set TEST_RUNNER_LIVE_ACTIVITY_UI_AUDIT=1 to run")
+    }
 
     func testLockScreenSurfacesDuringARun() {
         let app = XCUIApplication()

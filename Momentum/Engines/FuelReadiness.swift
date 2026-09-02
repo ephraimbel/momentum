@@ -2,8 +2,8 @@ import Foundation
 
 /// Fueling readiness (FUEL pillar, 2026-07-16) — the deterministic judge over logged meals: is this
 /// athlete fueled for the training in front of them? Pure and unit-testable like every engine; the
-/// AI only *estimates a meal's numbers* upstream (data entry, like HealthKit importing heart rate) —
-/// every target and verdict here is rules-based sports-science consensus, in plain words.
+/// AI only *estimates a meal's numbers* upstream as data entry. Every target and verdict here is
+/// deterministic and expressed in plain words.
 ///
 /// Framing rules (non-negotiable, ENDURANCE-FOCUS §11 + no-shame):
 ///  - Every target is a FLOOR — "enough to fund the work" — never a ceiling. Under-fueling gets the

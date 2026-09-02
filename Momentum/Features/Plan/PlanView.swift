@@ -465,6 +465,7 @@ struct PlanView: View {
         if plan?.isSelfCoached == true { return "Self-coached · your plan, your call" }
         if let raceM = profile.raceDistanceM, raceM > 0, let raceDate = profile.raceDate, raceDate > Date() {
             let label = RaceDistance.nearest(toMeters: raceM).label
+            let goalLabel = profile.goalFinishTimeS.map { "\(PlanFeasibility.hms($0)) \(label)" } ?? label
             let cal = Calendar.current
             // Count actual days-to-race (not `.weekOfYear`, which crosses week boundaries and mislabels
             // a race 8–13 days out as "race week"). ≤7 days = race week; otherwise weeks, rounded up.
@@ -474,15 +475,16 @@ struct PlanView: View {
             // One countdown grammar everywhere (Formatters.raceCountdown) — this header and the
             // race-projection card lower on the SAME page must never disagree about the distance
             // to the race ("2 weeks" vs "9 days").
-            return "\(label) · \(day) · \(Formatters.raceCountdown(days: days))"
+            return "\(goalLabel) · \(day) · \(Formatters.raceCountdown(days: days))"
         }
         // The strip and this counter read the same array by construction — `rebuildDerived` starts
         // the strip at the block, so carried history can't inflate "of N" or offset a chip.
-        guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return nil }
+        let goalLabel = profile.goal.planLabel
+        guard let idx = planWeekIndex(of: currentWeekStart), planWeekStarts.count > 1 else { return goalLabel }
         // Open-ended (no race): a rolling block that renews when it wraps — say so, so "Week 6 of 6"
         // reads as a checkpoint, not a plan running out.
         if plan?.raceDate == nil {
-            return "Rolling block \((plan?.blockIndex ?? 0) + 1) · Week \(idx + 1) of \(planWeekStarts.count)"
+            return "\(goalLabel) · Week \(idx + 1) of \(planWeekStarts.count)"
         }
         let prefix = (plan?.name.isEmpty ?? true) ? "Training plan · " : ""
         return "\(prefix)Week \(idx + 1) of \(planWeekStarts.count)"

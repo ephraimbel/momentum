@@ -75,7 +75,8 @@ enum CoachPlanExplainer {
         let insights = ProgressInsights(workouts: workouts, now: today, calendar: calendar)
         if insights.hasData, insights.acwr > 0 {
             out.append(Section(icon: "waveform.path.ecg", title: "Your load right now",
-                               detail: "Load balance \(String(format: "%.2f", insights.acwr)) (sweet spot 0.8–1.3), computed from what you actually completed. Drift too high and the plan eases itself before you break — at most one structural change a week."))
+                               detail: TrainingLoadContext.summary(ratio: insights.acwr)
+                                   + " Momentum may propose a bounded ease when load and your response agree — at most one normal structural change a week."))
         }
 
         // 6. The long run — capped progression toward the race.

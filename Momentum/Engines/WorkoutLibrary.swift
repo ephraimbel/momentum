@@ -119,7 +119,7 @@ enum WorkoutLibrary {
                           "Jog the recoveries — walking resets too much, standing resets nothing.",
                           "Same pace every rep. Even is the win, not fast.",
                           "If your form breaks — shoulders up, stride shortening — end the session. That rep was the last useful one."],
-              rationale: "Short VO₂ repeats build top-end aerobic power with low injury risk — the classic entry to speed work."),
+              rationale: "Short VO₂ repeats build top-end aerobic power while keeping each fast effort brief — a controlled entry to speed work."),
 
         Entry(id: "reps-800", name: "800m repeats", category: .speed, tier: .intermediate,
               structure: .distanceReps(repM: 800, note: "@ 5K"),
@@ -136,7 +136,7 @@ enum WorkoutLibrary {
               structure: .distanceReps(repM: 1000, note: "@ VO2"),
               dial: .reps([3, 4, 5, 6], defaultReps: 4),
               what: "Kilometer repeats at interval effort with three minutes of jogging between.",
-              why: "Three-to-four-minute repeats sit in the sweet spot for VO₂max: your oxygen system runs at full output for most of each rep. This is the highest-value speed session in distance running — and the one that most demands you respect the recoveries.",
+              why: "Three-to-four-minute repeats keep oxygen demand high through much of each rep. They are a potent distance-running session, so the recoveries and total dose matter.",
               feels: "The first minute feels comfortable, the second honest, the third like the point of the session. You should finish each rep certain you could run one more lap — barely.",
               execution: ["Even pace within each rep — no first-200 heroics.",
                           "Use the full recovery. Jog it slow; the next rep is the workout, not the rest.",

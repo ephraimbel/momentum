@@ -107,7 +107,10 @@ struct SelfCoachedPlanTests {
                                 equipment: .bodyweight, sessionMinutes: 45, raceDate: nil,
                                 runningExperience: .some, liftingExperience: .new),
             catalog: [], startDate: Date())
-        let rebuilt = PlanService.persist(generated, for: profile, startDate: Date(), in: ctx)
+        ctx.autosaveEnabled = false
+        let rebuilt = try PlanService.stagePersist(generated, for: profile, startDate: Date(), in: ctx)
+        _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: ctx)
+        try ctx.save()
         #expect(!rebuilt.isSelfCoached, "a freshly built coached plan must not inherit self-coached")
         #expect(profile.plan?.isSelfCoached == false)
     }

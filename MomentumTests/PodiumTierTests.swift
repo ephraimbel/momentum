@@ -88,7 +88,7 @@ struct PodiumTierTests {
     }
 
     @Test func injuryHistoryHoldsPodiumToTheProtectiveCaps() {
-        // A hurt body gets NO podium upgrades: no shakeout, ramp/quality capped at balanced —
+        // A reported prior injury suppresses podium upgrades: no shakeout, ramp/quality capped at balanced —
         // the same promise the aggressive tier keeps.
         let plan = PlanEngine.generate(profile: podiumInputs(injuries: [.knee]), catalog: [], startDate: start)
         #expect(!plan.weeks.flatMap(\.sessions).contains { $0.rationale?.contains("shakeout") == true })

@@ -92,6 +92,122 @@ struct PlanRenewalTests {
         #expect(PlanService.recentWeeklyRunVolumeM(endingAt: today, in: ctx) == nil)
     }
 
+    @Test func rebuildingStartsFromCurrentLoggedFitnessNotTheOnboardingNumber() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeRollingProfile(in: ctx)
+        profile.weeklyRunVolumeM = 8_000                 // stale signup answer
+        profile.longestRunM = 4_000
+        // Four settled weeks at 20 km/week. These are Momentum rows; Health never creates them.
+        for week in 0..<4 {
+            logRun(10_000, at: day(-7 * week - 1), in: ctx)
+            logRun(10_000, at: day(-7 * week - 3), in: ctx)
+        }
+        try ctx.save()
+
+        PlanService.rebuild(for: profile, startDate: today, in: ctx)
+
+        let plan = try #require(profile.plan)
+        let weekEnd = try #require(cal.date(byAdding: .day, value: 7, to: today))
+        let firstWeekM = plan.sessions
+            .filter { $0.discipline == .running && $0.date >= today && $0.date < weekEnd }
+            .compactMap(\.targetDistanceM).reduce(0, +)
+        #expect(firstWeekM > 15_000,
+                "rebuild should start near the logged 20 km week, not the stale 8 km onboarding answer")
+        #expect(profile.weeklyRunVolumeM == 8_000,
+                "observed fitness is evidence for this build, not a rewrite of the athlete's saved answer")
+    }
+
+    @Test func establishedAthleteDoesNotRestartFromMonthsOldOnboardingPeak() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeRollingProfile(in: ctx)
+        profile.createdAt = day(-180)
+        profile.weeklyRunVolumeM = 70_000
+        profile.longestRunM = 32_000
+        try ctx.save()
+
+        let current = PlanService.observedFitness(for: profile, on: today, in: ctx, calendar: cal)
+        #expect(current.weeklyM == 8_000)
+        #expect(current.longestM == nil)
+    }
+
+    @Test func establishedAthleteUsesRecentLongestRatherThanHistoricalDeclaredMaximum() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = makeRollingProfile(in: ctx)
+        profile.createdAt = day(-180)
+        profile.weeklyRunVolumeM = 70_000
+        profile.longestRunM = 32_000
+        logRun(10_000, at: day(-2), in: ctx)
+        // This large run is outside the bounded evidence window and must not be faulted into the
+        // current fitness decision.
+        logRun(50_000, at: day(-100), in: ctx)
+        try ctx.save()
+
+        let current = PlanService.observedFitness(for: profile, on: today, in: ctx, calendar: cal)
+        #expect(current.weeklyM == 8_000)
+        #expect(current.longestM == 10_000)
+    }
+
+    @Test func invalidLegacyFitnessValuesCannotPoisonARebuild() {
+        let snapshot = PlanFitnessEvidence.snapshot(
+            runs: [
+                PlanRunEvidence(startedAt: day(-2), distanceM: .infinity),
+                PlanRunEvidence(startedAt: day(-3), distanceM: .nan)
+            ],
+            declaredWeeklyM: .infinity,
+            declaredLongestM: -.infinity,
+            profileCreatedAt: day(-180),
+            endingAt: today,
+            calendar: cal
+        )
+
+        #expect(snapshot.weeklyM == 8_000)
+        #expect(snapshot.longestM == nil)
+        #expect(snapshot.usesLoggedRuns == false)
+    }
+
+    @Test func everyRebuiltGoalRemainsARunningPlan() throws {
+        for goal in Goal.allCases {
+            let container = try makeContainer()
+            let ctx = container.mainContext
+            let profile = UserProfile()
+            profile.goal = goal
+            profile.disciplines = [Discipline.strength.rawValue]
+            profile.daysPerWeek = 5
+            ctx.insert(profile)
+
+            PlanService.rebuild(for: profile, startDate: today, in: ctx)
+
+            let sessions = try #require(profile.plan).sessions
+            #expect(profile.disciplines.first == Discipline.running.rawValue,
+                    "\(goal) did not retain running as the plan foundation")
+            #expect(sessions.contains { $0.discipline == .running },
+                    "\(goal) generated a coached plan without a run")
+            #expect(sessions.contains { $0.discipline == .strength },
+                    "\(goal) dropped selected supporting strength")
+        }
+    }
+
+    @Test func legacyCardioBecomesTrackedCrossTrainingAroundTheRuns() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let profile = UserProfile()
+        profile.goal = .stayConsistent
+        profile.disciplines = [Discipline.cycling.rawValue]
+        profile.daysPerWeek = 4
+        ctx.insert(profile)
+
+        PlanService.rebuild(for: profile, startDate: today, in: ctx)
+
+        #expect(profile.disciplines == [Discipline.running.rawValue])
+        #expect(profile.crossTraining.contains(WorkoutType.ride.rawValue))
+        let sessions = try #require(profile.plan).sessions
+        #expect(sessions.contains { $0.discipline == .running })
+        #expect(sessions.contains { $0.workoutType == .ride })
+    }
+
     @Test func datedRacePlanNeverRenews() throws {
         let container = try makeContainer()
         let ctx = container.mainContext

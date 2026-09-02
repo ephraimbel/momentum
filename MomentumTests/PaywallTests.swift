@@ -11,6 +11,7 @@ struct PaywallTests {
         #expect(pw.isPro == false)
         #expect(pw.isEntitled(to: .aiRead) == false)
         #expect(pw.isEntitled(to: .advancedAnalytics) == false)
+        #expect(pw.isEntitled(to: .routeReplay) == false)
     }
 
     @Test func proUnlocksEveryFeature() {
@@ -26,6 +27,19 @@ struct PaywallTests {
         #expect(outcome == .purchased)
         #expect(pw.isPro)
         #expect(pw.isEntitled(to: .fullPlan))
+        pw.resetForTesting()
+    }
+
+    @Test func clientConversionClaimIsIdempotentAcrossPaywallViews() {
+        let pw = PaywallController(isPro: false)
+        let productID = pw.offering.annual.id
+
+        #expect(pw.claimPurchaseConversion(for: productID))
+        #expect(!pw.claimPurchaseConversion(for: productID))
+
+        // A different store product is a distinct purchase signal; RevenueCat still owns the
+        // transaction ledger and decides whether that transition is actually possible.
+        #expect(pw.claimPurchaseConversion(for: pw.offering.weekly.id))
         pw.resetForTesting()
     }
 
@@ -68,17 +82,16 @@ struct PaywallTests {
         #expect(Feature.aiRead.placement == "ai_read")
         #expect(Feature.advancedAnalytics.placement == "analytics_locked")
         #expect(Feature.fullHistory.placement == "history_locked")
+        #expect(Feature.routeReplay.placement == "route_replay")
         #expect(Feature.fullPlan.placement == "full_plan")
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func noPlanCarriesATrial() {
+    @Test func sevenDayTrialIsAnnualOnly() {
         let offering = PaywallOffering.standard
-        // Trial retired entirely (owner call 2026-08-20, supersedes the 07-30 annual-only nudge):
-        // the soft paywall is the trial, and the yearly sells on the savings badge. The store's
-        // intro offers were deleted in every territory; the placeholder must agree so DEBUG and
-        // production tell the same story.
-        #expect(offering.annual.trialDays == 0)
+        // Owner call 2026-09-01: annual earns a full week to experience adaptation; weekly is
+        // already the low-commitment entry plan and charges immediately.
+        #expect(offering.annual.trialDays == 7)
         #expect(offering.weekly.trialDays == 0)
         #expect(offering.annualSavingsPercent == 90)   // 90.37% ($29.99 vs 52 × $5.99), rounded to nearest 5%
     }

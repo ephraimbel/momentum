@@ -33,10 +33,11 @@ struct AthleteNudges {
     static func generate(_ f: AthleteFacts, now: Date = Date(), calendar: Calendar = .current) -> [Nudge] {
         var nudges: [Nudge] = []
 
-        // 1. Caution — past the load this athlete historically struggles with. (Safety first.)
-        if f.currentACWR > 0, f.currentACWR >= f.overreachThresholdACWR {
+        // 1. Caution — a larger-than-usual load near prior high-strain responses. Context first;
+        // this heuristic does not predict injury or overrule what the athlete reports.
+        if f.currentACWR > 0, f.currentACWR >= f.priorHighStrainLoadRatio {
             nudges.append(.init(kind: .caution, title: "Ease up this week",
-                                text: "Your load is at \(fmt(f.currentACWR))× — right around where you tend to overreach. Keep the next one easy."))
+                                text: "Your last 7 days are \(fmt(f.currentACWR))× your recent weekly norm, near the load changes that have previously landed hard. Keep the next one easy and check how you feel."))
         }
 
         // 2. Milestone — measurably fitter at the same effort.

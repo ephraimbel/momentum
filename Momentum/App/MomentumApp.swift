@@ -28,6 +28,10 @@ struct MomentumApp: App {
     // social backend all remain in the repo, dormant; re-wire here when community returns.
 
     init() {
+        // Error-only, privacy-locked diagnostics. Blank DSN = a complete no-op; in Debug an
+        // explicit `--enable-sentry` launch argument is also required, keeping tests and visual
+        // iteration out of the free quota. This starts first so launch crashes are observable.
+        SentryMonitor.configure()
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
         // environment (reactive view gating), so entitlement never diverges (PRD §10).
         let controller = PaywallController()
@@ -123,8 +127,14 @@ struct MomentumApp: App {
         // until the athlete dismisses it themselves.
         if let quarantine = PersistenceController.quarantineRecord, !quarantine.reported {
             services.analytics.log(.storeQuarantined(recovered: quarantine.recovered))
+            SentryMonitor.capture(.storeQuarantined,
+                                  tags: ["recovered": String(quarantine.recovered)])
             PersistenceController.markQuarantineReported()
         }
+        // The legacy plan remains live while its running-domain sidecars are repaired. This starts
+        // after first paint and uses its own SwiftData executor, so even a large old store cannot
+        // hold launch or the UI thread.
+        PersistenceController.shared.scheduleRunningPlanBackfill()
         // No paired watch means this is a no-op.
         PhoneWatchSync.shared.activate()
         // A force-quit mid-workout strands its Live Activity — end leftovers before anything can

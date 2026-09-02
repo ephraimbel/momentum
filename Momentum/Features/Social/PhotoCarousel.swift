@@ -20,6 +20,8 @@ struct PhotoCarousel: View {
     /// `.fit` honors the photo's aspect so the reading view shows the WHOLE image (here `height` is a
     /// max cap, not an exact height).
     var contentMode: ContentMode = .fill
+    /// Optional door into the full-screen viewer. The index is the exact photo the athlete tapped.
+    var onOpen: ((Int) -> Void)? = nil
 
     @State private var page: Int? = 0
 
@@ -28,8 +30,7 @@ struct PhotoCarousel: View {
             if photosData.count > 1 {
                 carousel
             } else if let first = photosData.first {
-                CarouselPhoto(data: first, height: height, contentMode: contentMode, uniform: false)
-                    .accessibilityLabel("Photo")
+                photo(first, index: 0, uniform: false)
             }
         }
         .frame(maxWidth: .infinity)
@@ -40,7 +41,7 @@ struct PhotoCarousel: View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 0) {
                 ForEach(Array(photosData.enumerated()), id: \.offset) { i, data in
-                    CarouselPhoto(data: data, height: height, contentMode: contentMode, uniform: true)
+                    photo(data, index: i, uniform: true)
                         .containerRelativeFrame(.horizontal)
                         .id(i)
                 }
@@ -54,6 +55,28 @@ struct PhotoCarousel: View {
         .accessibilityLabel("Photos, \(photosData.count)")
     }
 
+    /// A photo stays a normal paging-scroll child, but becomes a full-surface button when the
+    /// host has a viewer. Dim-only press feedback preserves the carousel's geometry while making
+    /// touch-down immediate.
+    @ViewBuilder
+    private func photo(_ data: Data, index: Int, uniform: Bool) -> some View {
+        if let onOpen {
+            Button {
+                Haptics.light()
+                onOpen(index)
+            } label: {
+                CarouselPhoto(data: data, height: height, contentMode: contentMode, uniform: uniform)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PhotoOpenPressStyle())
+            .accessibilityLabel(photosData.count == 1 ? "Open photo" : "Open photo \(index + 1) of \(photosData.count)")
+            .accessibilityHint("Shows it full screen")
+        } else {
+            CarouselPhoto(data: data, height: height, contentMode: contentMode, uniform: uniform)
+                .accessibilityLabel(photosData.count == 1 ? "Photo" : "Photo \(index + 1) of \(photosData.count)")
+        }
+    }
+
     private var pageDots: some View {
         HStack(spacing: 6) {
             ForEach(0..<photosData.count, id: \.self) { i in
@@ -65,6 +88,81 @@ struct PhotoCarousel: View {
         .background(Capsule().fill(.black.opacity(0.28)))
         .padding(.bottom, 10)
         .allowsHitTesting(false)
+    }
+}
+
+/// A standalone photo viewer for the summary/history surfaces. The social and profile pagers use
+/// `PagedPhoto` too, so a picture has one crop rule everywhere: the whole image over a blurred fill.
+/// `TabView` is appropriate here because this viewer has no vertical post pager for it to compete
+/// with; the immersive social surfaces keep their nested-scroll-safe `FullBleedMediaPager`.
+struct PhotoLightbox: View {
+    let photosData: [Data]
+    @State private var page: Int
+    @Environment(\.dismiss) private var dismiss
+
+    init(photosData: [Data], initialIndex: Int = 0) {
+        self.photosData = photosData
+        let start = photosData.indices.contains(initialIndex) ? initialIndex : 0
+        _page = State(initialValue: start)
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                TabView(selection: $page) {
+                    ForEach(Array(photosData.enumerated()), id: \.offset) { index, data in
+                        PagedPhoto(data: data)
+                            .ignoresSafeArea()
+                            .tag(index)
+                            .accessibilityLabel("Photo \(index + 1) of \(photosData.count)")
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    HStack {
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.ink)
+                                .frame(width: 40, height: 40)
+                                .momentumGlass(in: Circle())
+                        }
+                        .buttonStyle(PressableScaleStyle(scale: 0.94))
+                        .accessibilityLabel("Close photo")
+
+                        Spacer()
+
+                        if photosData.count > 1 {
+                            Text("\(page + 1)/\(photosData.count)")
+                                .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                                .monospacedDigit()
+                                .foregroundStyle(Theme.ink)
+                                .padding(.horizontal, 11).padding(.vertical, 6)
+                                .momentumGlass()
+                                .accessibilityLabel("Photo \(page + 1) of \(photosData.count)")
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, Theme.Space.md)
+                .padding(.top, geo.safeAreaInsets.top + Theme.Space.sm)
+                .padding(.bottom, geo.safeAreaInsets.bottom)
+            }
+        }
+        .background(Theme.background)
+        .accessibilityIdentifier("photo-lightbox")
+    }
+}
+
+/// No scale: shrinking a full-width carousel page exposes its background and reads as a jump.
+private struct PhotoOpenPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.84 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -103,7 +201,10 @@ private struct CarouselPhoto: View {
                 Theme.surface.frame(height: contentMode == .fill || uniform ? height : height * 0.72)
             }
         }
-        .task(id: data.count) { if image == nil { image = await ImageDownsampler.thumbnail(data, maxPixel: 1400) } }
+        .task(id: MediaFingerprint.value(data)) {
+            image = nil
+            image = await ImageDownsampler.thumbnail(data, maxPixel: 1400)
+        }
     }
 }
 
@@ -119,7 +220,9 @@ enum ImageDownsampler {
     /// least "seamless" thing in the post viewer (owner ask 2026-08-29). `NSCache` is
     /// thread-safe and evicts itself under pressure, so this can never become a leak; the cost
     /// limit is bytes, so ~11 full-page photos live here at most.
-    private static let cache: NSCache<NSString, UIImage> = {
+    // NSCache synchronizes its own reads/writes; the annotation documents that guarantee for the
+    // Swift concurrency checker while decode tasks intentionally access it off the main actor.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
         c.countLimit = 24
         c.totalCostLimit = 64 * 1024 * 1024

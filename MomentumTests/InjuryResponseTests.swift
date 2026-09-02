@@ -97,12 +97,40 @@ struct InjuryResponseTests {
         #expect(!window.isEmpty)
         for s in window {
             #expect(s.discipline == .cycling)                     // no impact left in the window
-            #expect(s.rationale?.contains("pain-free") == true)   // explicitly optional
+            #expect(s.rationale?.contains("optional") == true)    // explicitly optional
+            #expect(s.rationale?.contains("rest instead") == true)
             #expect(s.targetDurationS != nil)
         }
         // Injury events land in the adaptation history + inbox.
         let events = (try? ctx.fetch(FetchDescriptor<CoachingEvent>())) ?? []
         #expect(events.contains { $0.headline.localizedCaseInsensitiveContains("knee") })
+    }
+
+    @Test func athleteFacingOutcomesAvoidTreatmentAndRecoveryPromises() {
+        let retiredClaims = [
+            "most twinges settle",
+            "ice and gentle",
+            "fitness holds",
+            "keeps the engine",
+            "while it heals",
+            "when you're cleared",
+        ]
+
+        for severity in InjurySeverity.allCases {
+            let pc = PersistenceController.inMemory()
+            let context = pc.container.mainContext
+            let profile = makeRunner(context)
+            let outcome = InjuryResponse.report(
+                area: .knee,
+                severity: severity,
+                profile: profile,
+                in: context
+            )
+            let copy = "\(outcome.headline) \(outcome.detail) \(outcome.guidance)".lowercased()
+            for claim in retiredClaims {
+                #expect(!copy.contains(claim), "retired injury claim returned: \(claim)")
+            }
+        }
     }
 
     @Test func resumeRestoresAGentleReturnNotQualityWork() throws {

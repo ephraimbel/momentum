@@ -18,6 +18,7 @@ struct CommunityView: View {
     @Environment(RemoteFeedStore.self) private var remoteFeed
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
+    @Environment(AppRouter.self) private var router
     @Environment(\.modelContext) private var modelContext
     /// Last `is_pro` value published to the backend — lets the entitlement-change hook below
     /// skip the initial appearance (launch's `claimProfile` already stamped it).
@@ -155,6 +156,10 @@ struct CommunityView: View {
     /// see `openAthlete`. Both drive `athleteResolveNote`.
     @State private var resolvingAthlete: String?
     @State private var unresolvedAthlete: String?
+    /// A notification can point to an older own post outside the first remote feed page. Hold the
+    /// directly resolved item for this Community visit so assembly and the pager use the same
+    /// normal FeedItem path; at most one item is retained.
+    @State private var deepLinkedPost: FeedItem?
     /// The revisit refresh, held so it can be cancelled — see the `onAppear` note below.
     @State private var revisitRefresh: Task<Void, Never>?
     /// Refresh ordering. `snapshotSeq` stamps each set of inputs as it is read; `appliedSeq` is the
@@ -167,16 +172,102 @@ struct CommunityView: View {
     @State private var appliedSeq = 0
     @MainActor private static var sessionFeed: [FeedItem] = []
     @MainActor private static var sessionLatest: [String: Date] = [:]
+    /// Presentation continuity is persisted per scope; this instance owns only the live bindings.
+    private let experience = CommunityExperienceStore()
+    @State private var wallAnchor: UUID?
+    @State private var newBoundaryID: UUID?
+    @State private var newPostCount = 0
+    @State private var preparedScope: CommunityScope?
 
-    /// Cheap change signature over every feed input; a change re-runs the assembly task.
+    /// Bounded change signature over every feed input; a change re-runs the assembly task. Counts
+    /// alone are not enough: editing one existing post, swapping one followed handle for another,
+    /// or refreshing a same-sized remote page must still rebuild the wall.
     /// `publicRouteMaps` is a term because own-post route visibility is decided AT assembly
     /// (`FeedAssembler` bakes `routeCoordinates` into the item): a feed assembled before the
     /// profile materialized — or before the routes-on migration ran — cached glyph posts that no
     /// count change would ever refresh.
     private var feedKey: String {
-        "\(scopeRaw)|\(workouts.count)|\(pulsed.count)|\(remoteFeed.items.count)|" +
-        "\(follows.following.count)|\(moderation.blockedHandles.count)|\(moderation.reportedPosts.count)|" +
-        "\(profile?.handle ?? "")|\(wellCap)|\(profile?.publicRouteMaps == true)"
+        "\(scopeRaw)|\(localFeedRevision)|\(pulseRevision)|\(remoteFeed.revision)|" +
+        "\(setRevision(follows.following))|\(setRevision(moderation.blockedHandles))|" +
+        "\(setRevision(moderation.reportedPosts))|\(wellCap)|" +
+        "\(deepLinkedPost?.renderSignature ?? 0)"
+    }
+
+    /// A successful remote refresh changes the key and retries an unresolved offline lookup;
+    /// changing notifications cancels the previous structured task immediately.
+    private var pendingPostLookupKey: String {
+        "\(router.pendingCommunityPostID?.uuidString ?? "none")|\(remoteFeed.revision)"
+    }
+
+    /// Scalars and relationship identities only. Modern photo bytes are intentionally represented
+    /// by child ids/order, so a normal parent body pass never faults every album blob. The lone
+    /// legacy blob uses the bounded media fingerprint (constant work, not a whole-JPEG hash), since
+    /// it has no child identity that can otherwise signal same-sized replacement content.
+    private var localFeedRevision: Int {
+        Self.computeLocalFeedRevision(profile: profile,
+                                      workouts: workouts.prefix(Self.ownWorkoutCap))
+    }
+
+    /// Internal for the regression fixture: map matching is an asynchronous same-row mutation,
+    /// so its content identity must move this signature even when every relationship count stays
+    /// unchanged.
+    static func computeLocalFeedRevision<S: Sequence>(profile: UserProfile?, workouts: S) -> Int
+    where S.Element == Workout {
+        var h = Hasher()
+        if let profile {
+            h.combine(profile.displayName)
+            h.combine(profile.handle)
+            h.combine(profile.city)
+            h.combine(profile.locationGranularity)
+            h.combine(profile.publicRouteMaps)
+            h.combine(profile.showExactNumbers)
+            h.combine(MediaFingerprint.value(profile.avatarData))
+            for record in profile.prs {
+                h.combine(record.type)
+                h.combine(record.value)
+                h.combine(record.workout?.id)
+            }
+        }
+        for workout in workouts {
+            h.combine(workout.id)
+            h.combine(workout.privacy)
+            h.combine(workout.type)
+            h.combine(workout.startedAt)
+            h.combine(workout.durationS)
+            h.combine(workout.title)
+            h.combine(workout.note)
+            h.combine(workout.aiSummary)
+            h.combine(workout.coverIsPhoto)
+            h.combine(MediaFingerprint.value(workout.photoData))
+            for photo in workout.photos.sorted(by: { $0.order < $1.order }) {
+                h.combine(photo.id)
+                h.combine(photo.order)
+            }
+            h.combine(workout.gps?.distanceM)
+            h.combine(workout.gps?.mapStyleRaw)
+            // Map matching lands asynchronously after the workout row already exists. Include a
+            // bounded content identity so same-sized raw inputs can still replace the tile's
+            // route with the matched geometry without waiting for another unrelated feed change.
+            h.combine(MediaFingerprint.value(workout.gps?.matchedRouteData))
+            h.combine(workout.gps?.samples.count)
+            h.combine(workout.strength?.exercises.count)
+        }
+        return h.finalize()
+    }
+
+    private var pulseRevision: Int {
+        var h = Hasher()
+        for item in pulsed {
+            h.combine(item.id)
+            h.combine(item.renderSignature)
+        }
+        return h.finalize()
+    }
+
+    private func setRevision(_ values: Set<String>) -> Int {
+        var h = Hasher()
+        for value in values.sorted() { h.combine(value) }
+        return h.finalize()
     }
 
     /// Everything the assembly reads, as plain `Sendable` values.
@@ -212,10 +303,16 @@ struct CommunityView: View {
     private func feedInputs() -> FeedInputs {
         let shared = workouts.lazy.filter { SocialPrivacy.isShared($0) }.prefix(Self.ownWorkoutCap)
         let isPro = paywall.isEntitled(to: .fullPlan)
+        let contexts = FeedEarnedContext.resolve(workouts: workouts, records: profile?.prs ?? [])
+        var remote = remoteFeed.items
+        if let deepLinkedPost, !remote.contains(where: { $0.id == deepLinkedPost.id }) {
+            remote.append(deepLinkedPost)
+        }
         return FeedInputs(
-            own: shared.map { FeedAssembler.item(from: $0, profile: profile, isPro: isPro) },
+            own: shared.map { FeedAssembler.item(from: $0, profile: profile, isPro: isPro,
+                                                 earnedContext: contexts[$0.id]) },
             pulsed: pulsed,
-            remote: remoteFeed.items,
+            remote: remote,
             following: follows.following,
             blocked: moderation.blockedHandles,
             reported: moderation.reportedPosts,
@@ -318,6 +415,8 @@ struct CommunityView: View {
         lastAssembledKey = key
         Self.sessionFeed = built.items
         Self.sessionLatest = built.latest
+        prepareExperienceIfNeeded()
+        consumePendingSocialDestination()
     }
 
     /// What a tile will actually DRAW, as a comparable string — a bundled city loop two neighbours
@@ -405,7 +504,7 @@ struct CommunityView: View {
     }
 
     static func hasMedia(_ i: FeedItem) -> Bool {
-        (i.routeLatLon?.count ?? 0) > 1 || (i.muscles?.values.contains { $0 > 0 } ?? false) || !i.photosData.isEmpty
+        i.hasRenderableRoute || (i.muscles?.values.contains { $0 > 0 } ?? false) || !i.photosData.isEmpty
     }
 
     /// Two rules over one pass, both about what the wall LOOKS like:
@@ -581,6 +680,8 @@ struct CommunityView: View {
         // disappear, and `refreshFeed`'s sequence stamp is the backstop for the window where a
         // cancelled build has already passed its last suspension point.
         .onAppear {
+            prepareExperienceIfNeeded()
+            consumePendingSocialDestination()
             guard assembledOnce, lastAssembledKey == feedKey else { return }
             revisitRefresh?.cancel()
             revisitRefresh = Task { await refreshFeed() }
@@ -588,10 +689,23 @@ struct CommunityView: View {
         .onDisappear {
             revisitRefresh?.cancel()
             revisitRefresh = nil
+            experience.finishVisit(items: items, scope: scope)
+        }
+        .onChange(of: scopeRaw) { oldRaw, _ in
+            let oldScope = CommunityScope(rawValue: oldRaw) ?? .everyone
+            experience.finishVisit(items: items, scope: oldScope)
+            preparedScope = nil
+            wallAnchor = nil
+            newBoundaryID = nil
+            newPostCount = 0
         }
         .task {
-            // Who follows back + any nudges that landed while the app was away (throttled).
+            // Who follows back + any nudges/activity that landed while the app was away. The
+            // activity bridge is also refreshed by RootView on foreground; its own throttle makes
+            // this second entry point cheap while guaranteeing a long-active Community session
+            // is never dependent on another tab or a relaunch to populate the bell.
             await nudges.refresh(in: modelContext)
+            await SocialActivityInbox.refresh(backend: services.social, in: modelContext)
         }
         .task(id: scopeRaw) {
             // Refetch whenever the scope changes — Following and Everyone are different server
@@ -599,6 +713,21 @@ struct CommunityView: View {
             // leak un-followed athletes into Following. `refresh` guards !isLoading and swaps
             // items per scope; it's a no-op offline/guest/dark.
             await remoteFeed.refresh(scope: remoteScope)
+        }
+        .task(id: pendingPostLookupKey) {
+            guard let id = router.pendingCommunityPostID,
+                  !items.contains(where: { $0.id == id })
+            else {
+                consumePendingSocialDestination()
+                return
+            }
+            guard let item = await remoteFeed.resolve(postID: id),
+                  !Task.isCancelled,
+                  router.pendingCommunityPostID == id
+            else { return } // offline/not visible: keep the mailbox so a later refresh can retry
+            deepLinkedPost = item
+            // Updating this state changes feedKey. Its structured task assembles the post into the
+            // wall, then consumePendingSocialDestination opens and clears the mailbox.
         }
         .task(id: paywall.isEntitled(to: .fullPlan)) {
             // Entitlement flipped mid-session (purchase, restore, reinstall's async restore):
@@ -691,12 +820,12 @@ struct CommunityView: View {
             if args.contains("--seed-saved-route") || args.contains("--saved-routes") {
                 Task { @MainActor in
                     for _ in 0..<20 {
-                        if let post = items.first(where: { $0.routeLatLon != nil }) {
+                        if let post = items.first(where: \.hasRenderableRoute) {
                             if savedRoutes.isEmpty {
                                 modelContext.insert(SavedRoute(
                                     postID: post.id, title: post.title, authorName: post.authorName,
                                     authorHandle: post.authorHandle, city: post.location,
-                                    km: 8.8, pts: post.routeLatLon ?? [], mapStyle: post.mapStyle))
+                                    km: 8.8, pts: post.sanitizedRouteLatLon ?? [], mapStyle: post.mapStyle))
                                 try? modelContext.save()
                             }
                             if args.contains("--saved-routes") {
@@ -725,11 +854,50 @@ struct CommunityView: View {
                     }
                 }
             }
+            // Stable cover-swap fixture. Feed spacing and reverse-chronology are allowed to evolve,
+            // so an index can never be the contract for "the routed post whose photo leads".
+            if args.contains("--open-photo-route-post") {
+                Task { @MainActor in
+                    for _ in 0..<120 {
+                        if let index = items.firstIndex(where: {
+                            $0.coverIsPhoto && !$0.photosData.isEmpty && $0.hasRenderableRoute
+                        }) {
+                            reveal(index + Self.windowStep)
+                            try? await Task.sleep(for: .milliseconds(600))
+                            immersive = PagerStart(id: items[index].id)
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                }
+            }
+            // --open-first-route-post: deterministic replay/route-loading verification. Feed
+            // ordering and authored photo covers can change without silently steering a route
+            // regression onto a routeless post.
+            if args.contains("--open-first-route-post") {
+                Task { @MainActor in
+                    for _ in 0..<120 {
+                        // Prefer a routed post with a neighbour on both sides so UI tests can make
+                        // a deterministic one-page round trip instead of hitting a deck boundary.
+                        let interior = items.indices.dropFirst().dropLast()
+                        let routed = interior.first(where: { items[$0].hasRenderableRoute })
+                            .map { items[$0] }
+                            ?? items.first(where: \.hasRenderableRoute)
+                        if let routed, let index = items.firstIndex(where: { $0.id == routed.id }) {
+                            reveal(index + Self.windowStep)
+                            try? await Task.sleep(for: .milliseconds(600))
+                            immersive = PagerStart(id: routed.id)
+                            return
+                        }
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                }
+            }
             // --open-first-post-dark: first DARK-basemap post — the scrim-over-dark-map case.
             if args.contains("--open-first-post-dark") {
                 Task { @MainActor in
                     for _ in 0..<30 {
-                        if let dark = items.first(where: { $0.mapStyle == .dark && $0.routeLatLon != nil }) {
+                        if let dark = items.first(where: { $0.mapStyle == .dark && $0.hasRenderableRoute }) {
                             try? await Task.sleep(for: .milliseconds(600))
                             immersive = PagerStart(id: dark.id)
                             return
@@ -767,7 +935,7 @@ struct CommunityView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 // The page header ALWAYS renders (2026-08-25): find people → the faces you follow,
-                // ringed when they trained today → Explore. It used to live inside the non-empty
+                // ringed when they posted today → Explore. It used to live inside the non-empty
                 // branch, so opening Friends with nobody followed took the search field, the ring
                 // row and the scope tabs off screen with the wall — the one state where finding
                 // people matters most had no way to find people, and the header jumped.
@@ -795,6 +963,8 @@ struct CommunityView: View {
                 } else {
                     CommunityFeedGrid(items: window,
                                       zoomNamespace: tileZoom,
+                                      newBoundaryID: newBoundaryID,
+                                      newPostCount: newPostCount,
                                       onTileAppear: { index in
                                           // The Instagram trick: the next page is requested when a
                                           // tile TWO ROWS from the end scrolls in, not when the
@@ -820,6 +990,11 @@ struct CommunityView: View {
                         .onAppear { loadNextPage() }   // backstop for a scroll that outruns prefetch
                         .padding(.bottom, Theme.Space.xxl)
                 }
+            }
+            .scrollPosition(id: $wallAnchor, anchor: .top)
+            .onChange(of: wallAnchor) { _, id in
+                guard let id, let item = items.first(where: { $0.id == id }) else { return }
+                experience.saveAnchor(item, scope: scope)
             }
             #if DEBUG
             // --wall-scroll <index>: jump the wall to a tile index for sim verification — content
@@ -849,7 +1024,45 @@ struct CommunityView: View {
         }
         .refreshable {
             pulsed = CommunityPulse.refreshed(pulsed)
-            await remoteFeed.refresh(scope: remoteScope)
+            async let feedRefresh: Void = remoteFeed.refresh(scope: remoteScope)
+            async let inboxRefresh: Void = SocialActivityInbox.refresh(
+                backend: services.social, in: modelContext, force: true)
+            _ = await (feedRefresh, inboxRefresh)
+        }
+    }
+
+    /// Prepare one stable visit snapshot per scope. Restoration grows the lazy window far enough
+    /// for its anchor before assigning the scroll binding; doing those in the opposite order makes
+    /// `scrollPosition` silently drop an id whose tile does not exist yet.
+    private func prepareExperienceIfNeeded() {
+        guard assembledOnce, !items.isEmpty, preparedScope != scope else { return }
+        let visit = experience.visit(items: items, scope: scope)
+        if let restore = visit.restoreID,
+           let index = items.firstIndex(where: { $0.id == restore }) {
+            reveal(index + Self.windowStep)
+        }
+        newBoundaryID = visit.boundaryID
+        newPostCount = visit.newCount
+        preparedScope = scope
+        guard let restore = visit.restoreID else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { wallAnchor = restore }
+    }
+
+    /// The bell inbox leaves a one-shot mailbox on `AppRouter`. Consume only when the target can
+    /// actually open; a cold remote refresh may need to finish first, and dropping the id earlier
+    /// would turn a valid notification into a dead tap.
+    private func consumePendingSocialDestination() {
+        if let id = router.pendingCommunityPostID,
+           items.contains(where: { $0.id == id }) {
+            router.pendingCommunityPostID = nil
+            immersive = PagerStart(id: id)
+            return
+        }
+        if let handle = router.pendingCommunityAthleteHandle, !handle.isEmpty {
+            router.pendingCommunityAthleteHandle = nil
+            openAthlete(handle)
         }
     }
 
@@ -959,10 +1172,12 @@ struct CommunityView: View {
 
     private var ownHandle: String { profile?.handle ?? "" }
 
-    /// Trained in the last 24h — your own ring, the same rule the profile hero uses.
-    private var youTrainedToday: Bool {
-        guard let w = workouts.first else { return false }
-        return Date().timeIntervalSince(w.startedAt.addingTimeInterval(w.durationS)) < 86_400
+    /// Posted in the last 24h — your own ring, the same rule the profile hero uses. Private work
+    /// stays private all the way through the visual language; it cannot light a social ring.
+    private var youPostedToday: Bool {
+        guard let w = workouts.first(where: SocialPrivacy.isShared) else { return false }
+        let age = Date().timeIntervalSince(w.startedAt)
+        return age >= 0 && age < 86_400
     }
 
     /// A followed athlete's posts through the 24h window; falls back to their newest post so a
@@ -1008,7 +1223,7 @@ struct CommunityView: View {
             // "YD" (2026-08-28).
             you: .init(handle: ownHandle, label: "Your day",
                        fullName: FeedAssembler.displayName(profile),
-                       ringed: youTrainedToday, avatarData: profile?.avatarData),
+                       ringed: youPostedToday, avatarData: profile?.avatarData),
             people: followedPeople,
             onFind: { withAnimation(.easeOut(duration: 0.2)) { searching = true } },
             onYou: {

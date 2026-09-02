@@ -133,8 +133,8 @@ extension GPSDetail {
         CardioMetrics.splits(samplePoints(type: type), unitMeters: 1000)
     }
 
-    /// Persisted splits when the row has them, else computed from the samples. Runs recorded before
-    /// splits were persisted — and imported ones, which have no samples at all — still answer.
+    /// Persisted splits when the row has them, else computed from samples. Runs recorded before
+    /// splits were persisted still answer when their stored trace is available.
     func splitResults(type: WorkoutType = .run) -> [CardioMetrics.SplitResult] {
         if !splits.isEmpty {
             return splits.sorted { $0.index < $1.index }

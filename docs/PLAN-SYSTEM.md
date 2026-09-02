@@ -1,8 +1,9 @@
 # The Plan System — operating map
 
-*2026-07-23. The one-page truth about how plans are generated, judged, and adapted. Companion to
-`docs/PLAN-QUALITY-AUDIT.md` (the science pass) and PRD §9. If this file and the code disagree, fix
-one of them the same day.*
+*2026-07-23; doctrine reconciled 2026-09-01. The one-page map of the currently shipped planner.
+`docs/ENDURANCE-FOCUS.md` and `docs/ELITE-RUNNING-SYSTEM.md` govern future work. Apple Health supplies
+signals only and never Momentum workouts. Recent-to-usual load ratios are operational context, not
+injury predictions or universal safe zones. If this file and code disagree, fix one the same day.*
 
 ## 1. Generation (`PlanEngine.generate` — pure, deterministic)
 
@@ -72,20 +73,22 @@ inline note on the days picker, plan settings (live against the buffered days), 
 ## 3. Adaptation (bounded, throttled, explained)
 
 All writes in `PlanCoaching`; only future open sessions; race day never touched. Three independent
-≤1/week budgets: `lastAdaptedAt` (every load reshape — protective ease/rest from ACWR, effort-based
+≤1/week budgets: `lastAdaptedAt` (every load reshape — protective ease/rest from load context, effort-based
 ease, strength deload, rebuild week after ≥3 misses, injury report/return, consented bump),
 `lastRecalibratedAt` (pace sharpening: two qualifying runs within 14 days, ≤3%/update, races bypass
 confirmation), `lastPaceEasedAt` (consented +2% easing; clears banked sharpening evidence).
 Ordering after a save: autoAdapt FIRST, recalibrate only if nothing eased. Daily readiness ease
-(2+ signals) and the overtraining tripwire (ACWR >1.5 + physiology, outranks the daily ease) live
-in `RecoveryAdaptation`; the demanding tiers (`tightLeash`: aggressive + podium) react to milder
+(2+ signals) and the multi-signal load-response guardrail (recent-to-usual ratio > the internal 1.5
+cut plus an out-of-norm recovery signal, outranking the daily ease) live in `RecoveryAdaptation`;
+this is conservative coaching, not an overtraining diagnosis. The demanding tiers
+(`tightLeash`: aggressive + podium) react to milder
 warnings and want 6.5 h sleep. Missed sessions roll forward as `.moved` — no failed state, ever.
 No-race plans renew as 6-week blocks reassessed from actual logged volume (`renewBlock`).
 
 ## 4. Invariants that must never break
 
 `PlanEngineInvariantTests` sweeps the whole input space (all tiers × distances × runways × days ×
-injuries): plan length = runway, taper before every in-window race, ACWR fixed-point, exact day
+injuries): plan length = runway, taper before every in-window race, load-progression fixed-point, exact day
 budget (+1 only for podium's shakeout on training weeks), long runs under the (tier-aware) cap,
 down weeks dip, quality never on deloads, injury steering in every phase, every stored pace
 re-snaps to itself. `PodiumTierTests` pins the tier; `PaceSnappingTests` pins the grids;

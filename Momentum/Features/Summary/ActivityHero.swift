@@ -39,7 +39,8 @@ struct ActivityHero: View {
     @ViewBuilder
     private var media: some View {
         if let gps = workout.gps, workout.type.isGPS {
-            HeroMap(gps: gps, type: workout.type, style: mapStyleOverride ?? gps.mapStyle)
+            HeroMap(workout: workout, gps: gps, type: workout.type,
+                    style: mapStyleOverride ?? gps.mapStyle)
         } else if workout.type.isStrengthStyle, let session = workout.strength {
             HeroMuscleFigure(session: session)
         } else {
@@ -67,47 +68,66 @@ private struct HeroFade: View {
 /// zoom transition into `RunMapFullScreen`, and the same accessibility labels the regression
 /// test pins.
 private struct HeroMap: View {
+    let workout: Workout
     let gps: GPSDetail
     let type: WorkoutType
     let style: MapStyleOption
 
+    @Environment(PaywallController.self) private var paywall
     /// Resolved ONCE off the samples (the full Kalman replay) — never in `body`.
     @State private var smoothedCoords: [CLLocationCoordinate2D] = []
     @State private var routeResolved = false
-    @State private var showFullMap = false
+    @State private var presentation: Presentation?
     @Namespace private var mapZoom
+
+    private enum Presentation: String, Identifiable {
+        case fullMap
+        case replay
+
+        var id: String { rawValue }
+    }
 
     var body: some View {
         Group {
             if smoothedCoords.count > 1 {
-                RouteMapView(coordinates: smoothedCoords, style: style,
-                             insets: ActivityHeroMetrics.routeInsets)
-                    .frame(height: ActivityHeroMetrics.mapHeight)
-                    // Remount ONLY when the map-matched route lands (the line's source holds the
-                    // old coordinates otherwise). A style change deliberately does NOT remount
-                    // (2026-08-14): `RouteMapView` swaps styles in place — `.mapStyle` reloads the
-                    // basemap in the same view and `onStyleLoaded` re-adds the route — so the
-                    // camera and tiles hold instead of flashing through a blank rebuild.
-                    .id(gps.matchedRouteData != nil)
-                    .overlay(HeroFade())
-                    .overlay(alignment: .bottomLeading) {
-                        Image(systemName: "arrow.down.left.and.arrow.up.right")
-                            .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Theme.background.opacity(0.92)))
-                            .overlay(Circle().stroke(Theme.hairline))
-                            .padding(Theme.Space.lg)
+                ZStack(alignment: .bottomLeading) {
+                    RouteMapView(coordinates: smoothedCoords, style: style,
+                                 insets: ActivityHeroMetrics.routeInsets)
+                        // Remount ONLY when the map-matched route lands (the line's source holds
+                        // the old coordinates otherwise). A style swap reloads in place.
+                        .id(gps.matchedRouteData != nil)
+                        .overlay(HeroFade())
+
+                    // The whole scene remains tappable, but this is its OWN accessibility element.
+                    // Putting the tap/label on the outer composite swallowed the Replay button from
+                    // VoiceOver and UI automation — visible controls must stay independently named.
+                    Button { presentation = .fullMap } label: {
+                        Color.clear.contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                    .matchedTransitionSource(id: "runMap", in: mapZoom)
-                    .onTapGesture { showFullMap = true }
-                    .accessibilityAddTraits(.isButton)
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Route map. Opens full screen.")
-                    .fullScreenCover(isPresented: $showFullMap) {
-                        RunMapFullScreen(coordinates: smoothedCoords, style: style,
-                                         onClose: { showFullMap = false })
-                            .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
+                    .zIndex(0)
+
+                    HStack(spacing: Theme.Space.sm) {
+                        replayButton
+                        Button { presentation = .fullMap } label: {
+                            Image(systemName: "arrow.down.left.and.arrow.up.right")
+                                .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.ink)
+                                .frame(width: 30, height: 30)
+                                .background(Circle().fill(Theme.background.opacity(0.94)))
+                                .overlay(Circle().stroke(Theme.hairline))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Open route map full screen")
                     }
+                    .padding(Theme.Space.lg)
+                    // Keep the two explicit controls above the hero's full-surface map button.
+                    // Without an explicit hit-test order, a newly mounted Mapbox view could win
+                    // the first tap while its UIKit hierarchy was still settling.
+                    .zIndex(1)
+                }
+                    .frame(height: ActivityHeroMetrics.mapHeight)
+                    .matchedTransitionSource(id: "runMap", in: mapZoom)
             } else if !routeResolved {
                 // Hold the footprint quietly while the replay resolves — flashing the glyph
                 // band over every real route for one beat read as a missing map.
@@ -125,6 +145,42 @@ private struct HeroMap: View {
             smoothedCoords = coords.count > 1 ? RouteSmoothing.smooth(coords) : []
             routeResolved = true
         }
+        // One presentation host prevents the full-map and replay covers from competing for the
+        // same nested save-screen presenter. This also makes the very first tap deterministic.
+        .fullScreenCover(item: $presentation) { target in
+            switch target {
+            case .fullMap:
+                RunMapFullScreen(coordinates: smoothedCoords, style: style,
+                                 onClose: { presentation = nil })
+                    .navigationTransition(.zoom(sourceID: "runMap", in: mapZoom))
+            case .replay:
+                WorkoutRouteReplayView(workout: workout)
+            }
+        }
+    }
+
+    private var replayButton: some View {
+        let locked = !paywall.isEntitled(to: .routeReplay)
+        return Button {
+            if locked { paywall.present(for: .routeReplay) }
+            else { presentation = .replay; Haptics.light() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: locked ? "lock.fill" : "play.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("Replay")
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold))
+            }
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 11)
+            .frame(height: 30)
+            .background(Capsule().fill(Theme.background.opacity(0.94)))
+            .overlay(Capsule().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("routeReplayButton")
+        .accessibilityLabel(locked ? "Replay route, Pro" : "Replay route")
+        .accessibilityHint(locked ? "Opens the Pro offer" : "Animates this recorded route")
     }
 }
 

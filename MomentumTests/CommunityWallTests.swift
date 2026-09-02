@@ -21,15 +21,37 @@ struct CommunityWallTests {
     /// The finding (2026-08-28, screenshotted at wall depth 42): a full row read yoga · yoga · swim,
     /// and two strength posts drew byte-identical muscle figures next to each other. Every glyph
     /// tile of a sport looks the same as every other, so date order alone WILL clump them.
-    @Test func neverTwoOfTheSamePictureSideBySide() {
-        let items = wall()
-        var repeats: [String] = []
-        for i in items.indices.dropLast() {
-            guard (i + 1) % 3 != 0 else { continue }   // a row break isn't a neighbour
-            let a = CommunityView.mediaSignature(items[i])
-            if a == CommunityView.mediaSignature(items[i + 1]) { repeats.append(a) }
+    ///
+    /// Like the vertical-neighbour check below, this asserts the spacer's actual bounded promise:
+    /// a repeated subject may ship only when no legal alternative remains inside the four-slot
+    /// chronology budget. An absolute-zero assertion was clock-dependent because the live seeded
+    /// wall sometimes produces a genuinely unavoidable run; `spaced` explicitly lets date order
+    /// win in that case.
+    @Test func aSideBySideRepeatOnlyShipsWhenNothingElseWasReachable() {
+        let source = Array(CommunityFeed.seed().sorted { $0.date > $1.date }.prefix(400))
+        let items = CommunityView.spaced(source)
+        let lookahead = 4
+        var sourceIndex: [UUID: Int] = [:]
+        for (i, post) in source.enumerated() { sourceIndex[post.id] = i }
+
+        var unforgiven: [String] = []
+        for i in items.indices where i > 0 && i % 3 != 0 {
+            let sig = CommunityView.mediaSignature(items[i])
+            guard sig == CommunityView.mediaSignature(items[i - 1]) else { continue }
+            if i - (sourceIndex[items[i].id] ?? i) >= 4 { continue }
+            let left = sig
+            let above = i >= 3 ? CommunityView.mediaSignature(items[i - 3]) : nil
+            let candidates = items[i...].filter { (sourceIndex[$0.id] ?? .max) <= i + lookahead }
+            let usable = candidates.filter {
+                let candidate = CommunityView.mediaSignature($0)
+                return candidate != left && candidate != above
+            }
+            if let alternative = usable.first {
+                unforgiven.append("slot \(i) drew '\(sig)' beside an identical tile while "
+                                  + "'\(CommunityView.mediaSignature(alternative))' was reachable")
+            }
         }
-        #expect(repeats.isEmpty, "\(repeats.count) side-by-side tile pairs draw the same picture: \(Set(repeats).prefix(4))")
+        #expect(unforgiven.isEmpty, "\(unforgiven.count) avoidable side-by-side repeats: \(unforgiven.prefix(3))")
     }
 
     /// The wall is a 3-across mosaic, so the tile directly ABOVE is as much a neighbour as the one

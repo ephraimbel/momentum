@@ -57,8 +57,8 @@ enum AppReview {
     private static let ratedKey = "com.momentum.review.rated.v2"
 
     /// Count one genuine save. Call this only when a workout is KEPT — never on discard (a review ask
-    /// right after throwing a run away is a sour moment) and never on a HealthKit import (that isn't
-    /// engagement with the app's own recording).
+    /// right after throwing a run away is a sour moment). Apple Health never creates Momentum
+    /// workouts, so every call must originate in an intentional in-app save flow.
     static func recordWorkoutSaved(defaults: UserDefaults = .standard) {
         defaults.set(defaults.integer(forKey: savesKey) + 1, forKey: savesKey)
     }

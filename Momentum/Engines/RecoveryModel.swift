@@ -3,19 +3,20 @@ import Foundation
 /// Deterministic recovery / readiness (PRD §4.8, §16 "recovery-model depth" — shipped rules-only).
 /// Builds on the ACWR (`ProgressInsights`) with two more sports-science signals from Foster's work:
 /// **monotony** (mean daily load ÷ its standard deviation — how *samey* the week is) and **strain**
-/// (weekly load × monotony). A readiness score (0–100) combines acute:chronic spikes, monotony, and
-/// lack of rest into a glanceable band. The AI narrates it; this only computes — no medical claims.
+/// (weekly load × monotony). A readiness score (0–100) combines recent-to-usual load change,
+/// monotony, and lack of rest into a glanceable training-context band. It is not an injury model or
+/// a physiological diagnosis. The AI narrates it; this type only computes.
 @MainActor
 struct RecoveryModel {
     enum Readiness: String, Sendable {
-        case primed = "Primed"
-        case ready = "Ready"
+        case primed = "Low strain"
+        case ready = "Steady"
         case moderate = "Moderate"
-        case strained = "Strained"
-        case depleted = "Depleted"
+        case strained = "High strain"
+        case depleted = "Very high"
     }
 
-    let score: Int            // 0–100; higher = more recovered / ready to push
+    let score: Int            // 0–100 context index; higher = fewer load-pattern cautions
     let readiness: Readiness
     let monotony: Double      // 7-day mean daily load ÷ SD; >2 is a grind
     let strain: Double        // weekly load × monotony
@@ -52,14 +53,14 @@ struct RecoveryModel {
         guard hasData else { score = 0; readiness = .moderate; return }
 
         var s = 100.0
-        // Acute spike vs chronic baseline — the dominant overreaching signal.
+        // Recent-to-usual change — a conservative load-pattern input, not an injury predictor.
         switch acwr {
-        case ..<1.3:    break               // in/below the sweet spot → well absorbed
+        case ..<1.3:    break
         case 1.3..<1.5: s -= 15
         case 1.5..<1.8: s -= 35
         default:        s -= 55
         }
-        // Monotony — same load every day raises strain risk even at moderate volume.
+        // Monotony — repeated similar daily load increases this model's accumulated-strain signal.
         switch monotony {
         case ..<1.5:    break
         case 1.5..<2.0: s -= 10
@@ -89,11 +90,11 @@ struct RecoveryModel {
     /// (`RecoverySignals.blendedReadiness`) so the copy matches the blended, not the load-only, level.
     static func guidance(_ band: Readiness) -> String {
         switch band {
-        case .primed:   "Well recovered — a good day to push."
-        case .ready:    "Recovered and ready for quality work."
-        case .moderate: "Moderate load — keep today honest, not heroic."
-        case .strained: "Strain is building — favor easy or technique work."
-        case .depleted: "Time to back off — an easy day or rest will pay off."
+        case .primed:   "Your recent pattern leaves recovery margin. Follow the plan, and let how you feel lead."
+        case .ready:    "Your recent pattern is steady. Follow the plan and keep the effort honest."
+        case .moderate: "The context is mixed — keep today honest, not heroic."
+        case .strained: "Recent strain is elevated. Favor easy or technique work and check how you feel."
+        case .depleted: "Recent strain is much higher. Consider easy running or rest, especially with fatigue, pain, or illness."
         }
     }
 }

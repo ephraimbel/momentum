@@ -54,11 +54,12 @@ struct PlanEngineInvariantTests {
             }
         }
 
-        // The load-safety invariant: the finished plan stays a near-fixed-point of its own ACWR
+        // The progression invariant: the finished plan stays a near-fixed-point of its own legacy-
+        // named recent-to-usual load governor
         // governor. Clean-distance snapping (RunRounding) is the very last step and perturbs weekly
         // volume by <2%, so re-running the governor may want a hair off a capped week — but never a
         // meaningful cut. Assert no week exceeds the 1.3× cap by more than one rounding increment's
-        // worth (factor ≥ 0.95 ⇒ ≤ ~1.37× chronic, still safely inside the ACWR range).
+        // worth (factor ≥ 0.95 ⇒ ≤ ~1.37× recent norm, inside the rounding tolerance).
         if hasRunning {
             let factors = ACWRGovernor.capFactors(weeklyMeters: plan.weeks.map(\.runVolumeM),
                                                   currentWeeklyM: inputs.currentWeeklyVolumeM ?? 0)
@@ -92,7 +93,7 @@ struct PlanEngineInvariantTests {
                     "\(label) w\(week.index): hard run the day after a heavy lower lift")
 
             // Down weeks (deload/taper) always dip below the last build week — a "recovery" week
-            // that grows is a lie. (Week-over-week ramp safety is the ACWR fixed-point check above.)
+            // that grows is a lie. (Week-over-week progression is the fixed-point check above.)
             if week.isDeload || week.isTaper {
                 if let prev = lastBuildVol, hasRunning, prev > 0 {
                     #expect(week.runVolumeM < prev, "\(label) w\(week.index): down week didn't dip")

@@ -40,10 +40,14 @@ enum SocialSyncEngine {
         let totalSets: Int?
         let avgPaceSPerKm: Double?
         let prBadge: String?
+        let earnedContext: String?
         let muscles: [String: Double]?
         let route: [[Double]]?                 // TRIMMED [[lat,lon]] | nil
         let mapStyle: String
         let aiRead: String?
+        /// The author's selected first frame. Photos and the workout visual remain swappable in
+        /// either case; this decides only what another athlete sees first.
+        let coverIsPhoto: Bool
         var photoPaths: [String] = []
     }
 
@@ -75,6 +79,11 @@ enum SocialSyncEngine {
         /// Trailing column (2026-07-30): the post's real comment count, blocked-filtered. Optional
         /// for the same back-compat reason as `authorPro`.
         var commentCount: Int? = nil
+        /// Optional until the cover-choice server migration lands; old rows correctly default to
+        /// the route/body-first behavior the model has always used.
+        var coverIsPhoto: Bool? = nil
+        /// Optional until the feed-polish migration lands.
+        var earnedContext: String? = nil
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -97,6 +106,8 @@ enum SocialSyncEngine {
             case createdAt = "created_at"
             case authorPro = "author_pro"
             case commentCount = "comment_count"
+            case coverIsPhoto = "cover_is_photo"
+            case earnedContext = "earned_context"
         }
     }
 
@@ -118,15 +129,19 @@ enum SocialSyncEngine {
             caption: row.caption,
             statLine: row.statLine,
             prBadge: row.prBadge,
+            earnedContext: row.earnedContext,
             muscles: row.muscles.map { dict in
                 Dictionary(uniqueKeysWithValues: dict.compactMap { key, value in
                     MuscleGroup(rawValue: key).map { ($0, value) }
                 })
             },
-            routeLatLon: (row.route?.count ?? 0) > 1 ? row.route : nil,
+            // Server JSON is untrusted. Normalize it before a post reaches any grid/pager/map
+            // surface; the FeedItem accessor repeats this defensively for locally-created values.
+            routeLatLon: FeedItem.sanitizedRouteLatLon(row.route),
             mapStyle: MapStyleOption(rawValue: row.mapStyle) ?? .standard,
             baseReactions: max(0, row.reactionCount - (row.viewerReacted ? 1 : 0)),
             photosData: photos,
+            coverIsPhoto: row.coverIsPhoto ?? false,
             avatarData: avatar,
             aiRead: row.aiRead,
             remoteCommentCount: row.commentCount)
@@ -178,7 +193,8 @@ enum SocialSyncEngine {
     /// Build the publishable post for a workout — nil when the workout isn't shared. The stat
     /// line is pre-formatted in the author's units (same as the feed renders today); with
     /// "show exact numbers" off it's omitted entirely (honest: no numbers rather than fake ones).
-    static func postDTO(for w: Workout, profile: UserProfile) -> PostDTO? {
+    static func postDTO(for w: Workout, profile: UserProfile,
+                        earnedContext: String? = nil) -> PostDTO? {
         guard SocialPrivacy.isShared(w), w.privacy != .private else { return nil }
         let weightUnit = WeightUnit(rawValue: profile.weightUnit) ?? .kg
         let distanceUnit = DistanceUnit(rawValue: profile.distanceUnit) ?? .auto
@@ -202,10 +218,12 @@ enum SocialSyncEngine {
             totalSets: w.strength?.totalSets,
             avgPaceSPerKm: SocialPrivacy.showsExactNumbers(profile) ? w.gps?.avgPaceSPerKm : nil,
             prBadge: nil,
+            earnedContext: earnedContext,
             muscles: FeedAssembler.muscleMap(w).map { Dictionary(uniqueKeysWithValues: $0.map { ($0.key.rawValue, $0.value) }) },
             route: route,
             mapStyle: (w.gps?.mapStyle ?? .standard).rawValue,
-            aiRead: w.aiSummary)
+            aiRead: w.aiSummary,
+            coverIsPhoto: w.coverIsPhoto)
     }
 }
 

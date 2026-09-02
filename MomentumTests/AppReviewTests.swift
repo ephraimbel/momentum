@@ -23,8 +23,8 @@ struct AppReviewTests {
         #expect(!AppReview.shouldRequestReview(defaults: d, now: day(0)))
     }
 
-    /// Discards and imports simply don't call `recordWorkoutSaved`, so a user who records and throws
-    /// away workouts never crosses the bar. Modelled here by never counting.
+    /// Discards do not call `recordWorkoutSaved`, so a user who records and throws away workouts
+    /// never crosses the bar. Modelled here by never counting.
     @Test func withoutRecordedActivityTheGateStaysClosed() {
         let d = suite()
         for i in 0..<20 { _ = AppReview.shouldRequestReview(defaults: d, now: day(i * 10)) }

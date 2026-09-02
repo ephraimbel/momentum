@@ -32,14 +32,14 @@ struct CoachKnowledgeTests {
     @Test func coreTopicsResolve() throws {
         let cases: [(q: String, marker: String)] = [
             ("Should I taper before my race?", "fitness stays sharp"),
-            ("What cadence should I aim for?", "180"),
-            ("Do treadmill runs count?", "1%"),
-            ("When should I replace my shoes?", "500"),
+            ("What cadence should I aim for?", "no magic 180"),
+            ("Do treadmill runs count?", "no universal incline correction"),
+            ("When should I replace my shoes?", "Lifespan varies"),
             ("Why are my easy runs so slow?", "conversation"),
             ("Is coffee before a run ok? Thinking about caffeine.", "caffeine"),
             ("How much sleep do I need?", "7 to 9"),
             ("What is VDOT?", "Daniels"),
-            ("How do I avoid injury?", "too much, too soon"),
+            ("How do I avoid injury?", "No plan can promise injury prevention"),
         ]
         for c in cases {
             let answer = try #require(CoachKnowledge.answer(for: c.q, facts: facts), "no topic matched: \(c.q)")

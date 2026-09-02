@@ -19,7 +19,7 @@ struct RecoveryModelTests {
     }
 
     @Test func steadyVariedLoadIsWellRecovered() {
-        // Every 3 days for 4 weeks → sweet-spot ACWR, low monotony, rest days present.
+        // Every 3 days for 4 weeks → near the recent weekly norm, low monotony, rest days present.
         let ws = stride(from: 0, through: 27, by: 3).map { run(daysAgo: $0, minutes: 40) }
         let r = RecoveryModel(workouts: ws)
         #expect(r.hasData)
@@ -73,6 +73,16 @@ struct RecoveryModelTests {
         #expect(RecoveryModel.band(64) == .moderate)
         #expect(RecoveryModel.band(44) == .strained)
         #expect(RecoveryModel.band(24) == .depleted)
+    }
+
+    @Test func guidanceDescribesContextWithoutClearance() {
+        for band in [RecoveryModel.Readiness.primed, .ready, .moderate, .strained, .depleted] {
+            let copy = RecoveryModel.guidance(band).lowercased()
+            #expect(!copy.contains("cleared"))
+            #expect(!copy.contains("safe to"))
+            #expect(!copy.contains("ready for quality"))
+            #expect(!copy.contains("well recovered"))
+        }
     }
 }
 

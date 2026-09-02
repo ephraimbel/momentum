@@ -1,5 +1,9 @@
 # Competitive roadmap — 2026-07-28 (rev. 3)
 
+> **Historical plan, superseded for implementation on 2026-09-01.** The active program is
+> [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md). In particular, every Health workout-import
+> proposal below is retired by the 2026-08-15 signals-only owner decision and must not be implemented.
+
 > **Status: PLAN ONLY. Nothing here is built.** Supersedes
 > [`RUNNA-COMPETITIVE-ROADMAP.md`](RUNNA-COMPETITIVE-ROADMAP.md) (2026-07-06), whose entire P0 —
 > structured workout model → guided in-run runner → Watch guided run (`:95-108`) — has since shipped.

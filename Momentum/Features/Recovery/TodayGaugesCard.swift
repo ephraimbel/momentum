@@ -8,8 +8,8 @@ import SwiftUI
 struct TodayGaugesCard: View {
     /// Today's DayStrain score, 0–100.
     let strain: Double?
-    /// Training load — the 7:28 ACWR. The arc reads against the 1.5 ceiling, so the sweet spot
-    /// (0.8–1.3) sits mid-ring and "pushing" runs toward full.
+    /// Training load — the 7:28 recent-to-usual ratio. The arc normalizes at 1.5× for legibility;
+    /// a full arc is not a safety or injury threshold.
     let acwr: Double?
     /// Last night asleep ÷ need, 0…1+ (clamped for the arc; the label shows hours).
     let sleepFraction: Double?

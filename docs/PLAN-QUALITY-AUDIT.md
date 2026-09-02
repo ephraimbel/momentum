@@ -1,5 +1,12 @@
 # Plan Quality Audit — are our plans real, or bull crap?
 
+> **Historical audit (2026-07-10; superseded for implementation on 2026-09-01).** Do not use this
+> document to restore Apple Health workout ingestion, ACWR injury prediction, a universal 0.8–1.3
+> "safe" band, or automatic escalation from one metric. Current doctrine and work sequencing live in
+> [`ENDURANCE-FOCUS.md`](ENDURANCE-FOCUS.md) and
+> [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md). The statements below are preserved as an
+> audit snapshot, including claims later retired.
+
 *2026-07-10. Benchmarks the shipped plan pipeline (onboarding → PlanEngine → adaptation) against established training science (Daniels/VDOT, Pfitzinger, Hansons, Higdon, Seiler 80/20, Lydiard, Norwegian method) and the current app field (Runna, TrainAsONE, Garmin DSW, TrainerRoad). Supersedes the plan-methodology parts of COACHING-LOOP-AUDIT.md (whose P1 adaptation items have since shipped).*
 
 ## Verdict

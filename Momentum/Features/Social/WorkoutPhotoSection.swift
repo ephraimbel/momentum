@@ -15,6 +15,12 @@ struct WorkoutPhotoSection: View {
     @State private var choosingSource = false
     @State private var showingLibrary = false
     @State private var showingCamera = false
+    @State private var preview: PhotoPreview?
+
+    private struct PhotoPreview: Identifiable {
+        let index: Int
+        var id: Int { index }
+    }
 
     private var photosData: [Data] { workout.orderedPhotosData }
     /// Whether this workout has a visual of its own that a photo would displace.
@@ -27,7 +33,9 @@ struct WorkoutPhotoSection: View {
     var body: some View {
         VStack(spacing: Theme.Space.sm) {
             if !photosData.isEmpty {
-                PhotoCarousel(photosData: photosData, height: 240)
+                PhotoCarousel(photosData: photosData, height: 240) { index in
+                    preview = PhotoPreview(index: index)
+                }
             }
             if canEdit {
                 if photosData.isEmpty {
@@ -42,21 +50,20 @@ struct WorkoutPhotoSection: View {
                         .foregroundStyle(Theme.inkTertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                // What this switch means changed on 2026-08-29. It used to decide which media led
-                // the POST — and the loser was hidden behind a swipe. Now the photo always leads
-                // the post and the session's visual always rides above the byline, so the only
-                // thing left to choose is which image represents this activity in the GRID. The
-                // copy has to say that, or the toggle describes behaviour that no longer exists.
+                // This establishes the post's FIRST frame and its grid tile. It never hides the
+                // other media: in the post, route/body and photos exchange the hero + alternate
+                // positions with one tap.
                 if !photosData.isEmpty, hasOwnVisual {
                     Toggle(isOn: $workout.coverIsPhoto) {
                         VStack(alignment: .leading, spacing: 1) {
-                            Text("Photo as grid cover")
+                            Text("Photo as cover")
                                 .font(.rounded(Theme.FontSize.body, weight: .semibold))
                                 .foregroundStyle(Theme.ink)
                             Text(workout.coverIsPhoto
-                                 ? "Your photo represents this activity in the grid."
-                                 : (workout.type.isGPS ? "Your route map represents it in the grid."
-                                                       : "Your session visual represents it in the grid."))
+                                 ? "Your photo leads the post; the workout visual stays one tap away."
+                                 : (workout.type.isGPS
+                                    ? "Your route leads the post; photos stay one tap away."
+                                    : "Your session visual leads the post; photos stay one tap away."))
                                 .font(.rounded(Theme.FontSize.label, weight: .medium))
                                 .foregroundStyle(Theme.inkTertiary)
                         }
@@ -82,6 +89,9 @@ struct WorkoutPhotoSection: View {
         .fullScreenCover(isPresented: $showingCamera) {
             CameraPicker { image in append(image) }
                 .ignoresSafeArea()
+        }
+        .fullScreenCover(item: $preview) { start in
+            PhotoLightbox(photosData: photosData, initialIndex: start.index)
         }
     }
 
@@ -142,15 +152,19 @@ struct WorkoutPhotoSection: View {
 
     private func thumbnail(_ data: Data, index: Int) -> some View {
         ZStack(alignment: .topTrailing) {
-            Group {
-                if let ui = UIImage(data: data) {
-                    Image(uiImage: ui).resizable().scaledToFill()
-                } else {
-                    Theme.surface
-                }
+            Button {
+                Haptics.light()
+                preview = PhotoPreview(index: index)
+            } label: {
+                WorkoutPhotoThumbnail(data: data)
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
+                    .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
             }
-            .frame(width: 56, height: 56).clipped()
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.chip))
+            .buttonStyle(PhotoThumbnailPressStyle())
+            .accessibilityLabel("Open photo \(index + 1)")
+            .accessibilityHint("Shows it full screen")
+
             Button { remove(at: index) } label: {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
                     .frame(width: 18, height: 18).background(Circle().fill(.black.opacity(0.55)))
@@ -230,5 +244,37 @@ struct WorkoutPhotoSection: View {
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let resized = renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         return resized.jpegData(compressionQuality: quality) ?? data
+    }
+}
+
+/// The 56pt management strip used to call `UIImage(data:)` directly from `body`, decoding the
+/// persisted image again on every edit-state invalidation. Use the same off-main, session-cached
+/// downsampler as the grid so tapping, deleting, and adding photos never stalls the summary.
+private struct WorkoutPhotoThumbnail: View {
+    let data: Data
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Theme.surface
+            }
+        }
+        .clipped()
+        .animation(.easeOut(duration: 0.18), value: image == nil)
+        .task(id: MediaFingerprint.value(data)) {
+            image = nil
+            image = await ImageDownsampler.thumbnail(data, maxPixel: 160)
+        }
+    }
+}
+
+private struct PhotoThumbnailPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.78 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }

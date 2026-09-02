@@ -1,8 +1,9 @@
 # Momentum — Endurance Focus (Repositioning + PRD)
 
-> **Status:** Strategy locked, execution pending. This document supersedes the "hybrid athlete"
-> positioning in `PRD.md` §1 for everything going forward. The engines, design system, and data model
-> in `PRD.md` still stand — this is a **refocus, not a rebuild**.
+> **Status:** Living positioning source; execution active. This document supersedes the "hybrid
+> athlete" positioning in `PRD.md` §1. Part II of `PRD.md` remains authoritative for architecture.
+> The Apple Health doctrine below reflects the 2026-08-15 owner decision: signals only, never workout
+> import. This is a **refocus, not a rebuild**.
 
 One-liner: **keep moving.**
 Positioning: **the running app that grows with you — from your first 5K to your first ultra.**
@@ -22,7 +23,7 @@ first**, because:
   recovering or you get hurt.* That is exactly our north-star (an app that **learns** each user) and
   the #1 gap in `RUNNA-COMPETITIVE-ROADMAP.md`. Reading a runner's Oura/Garmin/Watch recovery and
   reshaping the week — done safely and beautifully — is a **data + trust moat** that's hard to copy.
-- Strength stays as a **supporting pillar** (strength-for-runners: economy + injury prevention), never
+- Strength stays as a **supporting pillar** (strength-for-runners: economy + durable force), never
   the headline. Every serious runner lifts; this differentiates us from Runna without diluting focus.
 
 **Non-negotiable guardrails (the risks, named):**
@@ -70,7 +71,8 @@ the core is proven.
 - Engines: `GPSTrackingEngine`, VDOT/Riegel (`VO2maxEstimator`), `PlanEngine`, adaptation scaffolding
   (`RecoverySignals`, `RecoveryModel`, `PlanCoaching`), `StructuredWorkout`, `RouteDrawMap`.
 - Design system (monochrome + iridescent-on-progress), name, wordmark, "keep moving."
-- Progress metrics already present: VO2max + age/sex rating, CTL/ATL/TSB, ACWR band.
+- Progress metrics already present: VO2max + age/sex rating, CTL/ATL/TSB, and recent-to-usual load
+  context.
 
 ---
 
@@ -78,27 +80,29 @@ the core is proven.
 
 **A plan is only as good as its starting estimate.** This is the first thing we get right. We resolve a
 **baseline** = current fitness (→ VDOT + target paces) + safe starting load (weekly volume, longest run)
-+ constraints. Sources, best → fallback:
++ constraints. Sources, best available → fallback:
 
-1. **Import from Apple Health (preferred, zero effort).** Read the last ~8–12 weeks of runs → estimate
-   VDOT from best sustained efforts, current weekly volume, longest recent run, typical easy pace, run
-   frequency. If they have history, we already know a lot — this is the "wow, it gets me" moment.
+1. **Existing Momentum history.** Use only workouts the athlete recorded/saved in Momentum or restored
+   through their Momentum account sync. Estimate current weekly volume, longest recent run, frequency,
+   and pace-at-effort from that intentional history. **Apple Health never supplies or backfills workout
+   history.**
 2. **Recent race result.** Distance + time → VDOT/Riegel → current fitness + race predictions.
-3. **Guided benchmark (no history).** Prescribed by experience:
+3. **Guided benchmark (no useful history).** Prescribed by experience:
    - Beginner → a **talk-test walk/run assessment** (how long can you run easy continuously), never a
      hard TT.
    - Improver+ → a short time trial (1 mile or 5-min hard, or Cooper 12-min) with a clear warmup/cooldown.
 4. **Self-report (combine / fallback).** Experience, typical weekly mileage, longest run, comfortable
    pace, days available.
 
-**Baseline confidence.** We store how sure we are (high = imported data or recent race; low =
-self-report). **Low confidence → start conservative and let the first 1–2 weeks calibrate** from actual
-runs (paces, RPE, HR). This *is* the "learns you" promise — the plan self-corrects instead of pretending
-to know.
+**Baseline confidence.** We store how sure we are (high = enough recent Momentum history or a recent
+race; low = self-report). **Low confidence → start conservative and let the first 1–2 weeks calibrate**
+from workouts recorded in Momentum (pace, RPE, HR, completion, and check-ins). This *is* the "learns
+you" promise — the plan self-corrects instead of pretending to know.
 
 **Also captured (drives the engine):** height, weight, sex, DOB (→ VDOT, HR zones, VO2max norms we
 already use), injury history, days/week + minutes available, long-run day, terrain (treadmill/road/
-trail), gym access, resting HR & max HR (from Health or estimated).
+trail), gym access, resting HR (from Health or entered), and max HR (entered, field-tested, or
+estimated).
 
 **Safety gate:** beginners and anyone flagging a health condition see a non-blocking "check with your
 doctor before starting a new program" note.
@@ -112,10 +116,10 @@ Goal: understand the athlete fully, fast, and make it feel like a coach intervie
 1. **Goal** — race (distance + date + optional goal time) OR "get fitter, no race." Branches everything.
 2. **Discipline** — run (default) / ride / walk / hike / trail. Run-first; others map-based.
 3. **Experience & history** — new / returning / consistent; injury history.
-4. **Baseline** — §4 (import Health · recent race · benchmark · self-report).
+4. **Baseline** — §4 (Momentum history · recent race · benchmark · self-report).
 5. **Body** — height, weight, sex, DOB.
 6. **Availability** — days/week, long-run day, minutes/session, terrain, gym access.
-7. **Connect Apple Health** — §7 (the recovery + wearables step, with the friendly copy).
+7. **Connect Apple Health** — §7 (recovery signals from today forward; never workout import).
 8. **Plan intensity** — Take your time / Balanced / Aggressive (§6), with the honest time-to-goal check.
 9. **Reveal** — "your plan is ready" with the **map route animation** (§13).
 10. **Notifications** — the Runna-style reminder primer (already built).
@@ -129,27 +133,32 @@ Keep the welcome aesthetic (Space Grotesk + serif + the photo background) throug
 ### 6.1 Real periodization
 Not a list of runs — mesocycles: **Base → Build → Peak → Taper → Race → Recover**, with:
 - **Down weeks every 3–4 weeks** (cutback in volume/intensity).
-- **80/20** easy/hard intensity distribution (polarized).
+- A **mostly-easy** intensity distribution with quality scaled to event, phase, experience, and
+  frequency. The familiar 80/20 split is a reference, not a universal rule.
 - Long-run progression caps; weekly volume ramp caps.
 - Workout library: easy, long, recovery, tempo/threshold, intervals/VO2, strides, hills, race-pace,
   time trials, plus **strength-for-runners** and **cross-training** days.
 
-### 6.2 The safety governor (ACWR)
-We already compute **acute:chronic workload ratio**. Wire it into *generation*: the plan physically
-cannot ramp load into the injury-risk zone (ACWR > ~1.5). This is a hard constraint on every week the
-engine produces and on every adaptation it makes.
+### 6.2 The workload progression governor
+`ACWRGovernor` (legacy type name) compares a planned week with its trailing four-week average and
+reduces abrupt volume increases beyond the app's conservative 1.3× planning limit. That limit is a
+deterministic **product guardrail**, not an injury threshold, a universal safe zone, or permission to
+add work below it. The ratio describes exposure change only. Athlete-reported pain, illness, session
+response, recovery signals, experience, and schedule still govern the decision. Structural recovery
+changes require corroborating inputs and remain bounded and throttled.
 
 ### 6.3 Intensity tiers — Take your time / Balanced / Aggressive
 After baseline + goal, the athlete chooses how hard to push. Same destination, different ramp + risk:
 
 | Tier | Volume ramp | Down weeks | Hard sessions/wk | Best for | We tell them |
 |---|---|---|---|---|---|
-| **Take your time** | ~5–8%/wk | more frequent | fewer | injury-prone, beginners, busy | "Lower injury risk, most sustainable." |
+| **Take your time** | ~5–8%/wk | more frequent | fewer | beginners, returning runners, busy | "Lowest build pressure, most recovery margin." |
 | **Balanced** *(default)* | ~8–10%/wk | every 3–4 | standard | most runners | "The recommended path." |
-| **Aggressive** | faster, higher peak | fewer | more | experienced, low-risk, motivated | "Max fitness — **higher injury/burnout risk**; we'll watch your recovery harder and pull back sooner." |
+| **Aggressive** | faster, higher peak | fewer | more | experienced runners with a current base | "Fastest feasible build, least recovery margin; we'll pull back sooner when your response calls for it." |
 
-Aggressive plans are held to a **tighter adaptive leash**: the recovery + injury governors watch load/
-HRV more closely and deload earlier. Pushing hard is allowed; pushing hard *blindly* is not.
+Aggressive plans are held to a **tighter adaptive leash**: the recovery and athlete-feedback
+guardrails watch load response more closely and deload earlier. It is never offered as a shortcut
+around an infeasible goal.
 
 ### 6.4 Honesty engine (be truthful about time)
 Compute **weeks available** vs **weeks needed** for a safe build to the goal from current fitness. If the
@@ -159,7 +168,8 @@ race is too soon:
   > 1. **Target a realistic finish for this race** (~predicted time), or
   > 2. **Move the race** (suggest a date), or
   > 3. **Run the half now, marathon later.**
-  > "An aggressive plan gets you closer but raises injury risk — here's the tradeoff."
+  > "An aggressive plan adds training pressure and leaves less recovery margin. It does not make an
+  > infeasible goal safe or realistic."
 - This honesty is a **feature and a trust differentiator**, not a limitation.
 
 ### 6.5 No-goal mode
@@ -173,21 +183,29 @@ Loads/paces/volumes are rules-based and testable. The LLM authors rationale and 
 
 ## 7. HealthKit + wearables (recovery input)
 
-**The connect step copy (friendly, read-only, benefit-first):**
+**The connect step copy (friendly, precise, benefit-first):**
 
 > **Train with your whole picture**
-> Connect Apple Health and Momentum learns how you're *actually* recovering — your recent runs, heart
-> rate, sleep, and resting heart rate — so each week adapts to you instead of following a generic
-> template.
-> Wear an **Oura, Garmin, Whoop, or Apple Watch**? They already sync to Apple Health, so connecting
-> once brings all of it in — no separate logins.
-> It's **read-only**, it stays **on your device and in your control**, and you can disconnect anytime.
+> Connect Apple Health and Momentum starts learning your recovery signals — sleep, HRV, resting heart
+> rate, and more — from today forward, so your coaching can respond as your personal baseline forms.
+> Wear an **Oura, Garmin, Whoop, or Apple Watch**? Supported signals they write to Apple Health can
+> contribute too; availability depends on the device and its Apple Health permissions.
+> Your workout journal stays intentional: connecting Health never imports history or creates a
+> Momentum workout. You control each permission and can disconnect anytime.
 > **[Connect Apple Health]** · *Maybe later*
 
-**Read (read-only):** workouts, distance/pace, heart rate, resting HR, HRV (SDNN), sleep, active energy,
-VO2max (if present), body mass, DOB, sex. Apple Health is the single integration — Garmin/Oura/Whoop/
-Watch all sync into it, so we cover them with one connection and no fragile third-party APIs (matches
-the "connect to Garmin = Apple Health import" decision).
+**Read as signals:** sleep, HRV, resting and walking heart rate, respiratory rate, wrist temperature,
+VO2max, body mass, and steps. `HealthService.workoutSpans(from:to:)` may read workout **time windows
+only** so a known session is not double-counted as incidental movement; it never returns workout
+content and never creates a `Workout` row.
+
+**Write:** after the athlete completes and saves a Momentum workout, the app may write that completed
+workout outward to Apple Health with permission. This does not make Apple Health a source of Momentum
+workouts. There is no history scan, workout backfill, or import action anywhere in the product.
+
+Apple Health is the one wearable-signal bridge. Momentum does not promise that every third-party
+device writes every supported signal, and it does not present connection as a Garmin/Oura/Whoop
+workout import.
 
 ---
 
@@ -197,11 +215,13 @@ Two inputs feed one adaptive coach: **data-driven** (HRV/sleep/RHR/load) and **a
 (check-ins + injuries). Both produce **bounded, deterministic, explainable** plan changes. Never shame.
 
 ### 8.1 Recovery / readiness engine
-- Signals: HRV trend, resting HR trend, sleep (duration + consistency), training load (CTL/ATL/TSB),
-  ACWR. Build the real readiness score on top of `RecoverySignals`/`RecoveryModel`.
-- Output → bounded weekly adjustments: keep / ease intensity / insert recovery / recommend a down week —
-  each with a plain reason ("Easy week — your HRV's been low and sleep short for 4 days").
-- Overtraining tripwire: ACWR too high + HRV suppressed + RHR elevated → force a cutback.
+- Signals: HRV trend, resting HR trend, sleep (duration + consistency), athlete check-in, and
+  recent-to-usual training-load context. `MorningReadiness` is a low-confidence context index with
+  visible signal coverage, not a physiological clearance score.
+- Output → bounded daily or weekly reductions only when independent inputs agree, each with a plain
+  reason. Positive-looking data never adds work or overrides what the athlete reports.
+- Multi-signal load-response guardrail: much-higher-than-recent load plus an out-of-norm recovery
+  signal may force a bounded cutback. It does not diagnose overtraining or predict injury.
 - Missed sessions: no-shame reschedule (already `reconcileMissed`), never "failed."
 
 ### 8.2 Injury loop (athlete-reported)  ⭐
@@ -215,24 +235,29 @@ Two inputs feed one adaptive coach: **data-driven** (HRV/sleep/RHR/load) and **a
   3. **Severe** — can't run / sharp pain.
 
 **Classification → plan response (rules-based, non-medical):**
-| Severity | Running | Fitness preservation | Guidance (general only) |
-|---|---|---|---|
-| Twinge | keep easy, cut intensity, add mobility | full | monitor; ice/mobility |
-| Moderate | rest the impact; cross-train (bike/pool) | maintain via cross-training | RICE; if not improving in ~3–5 days, see a physio |
-| Severe | stop running | non-impact cross-train only if pain-free | **strongly recommend seeing a professional**; return-to-run gated |
+
+- **Mild/no movement change:** remove intensity, reduce aggravating work, and ask the athlete to
+  monitor during and after. No diagnosis or home-treatment prescription.
+- **Pain changes gait or function:** stop impact work; offer non-impact activity only when the athlete
+  reports it is comfortable; recommend qualified assessment when it persists, worsens, or concerns
+  them.
+- **Severe or red-flag report:** stop generated running guidance and strongly recommend appropriate
+  professional/urgent assessment. The app does not decide that cross-training is suitable.
 
 - **Never diagnose.** Describe management + red flags ("sharp pain, swelling, or can't bear weight → stop
   and see a professional"). No "this is shin splints."
-- **Cross-training preserves CTL** so a pause doesn't crater fitness.
-- **Honest re-timing:** "This 5-day pause costs ~X of fitness; your goal is still realistic / here's the
-  adjusted target."
+- Comfortable cross-training can maintain routine and some aerobic stimulus, but it is not counted as
+  proof that running tolerance or fitness was preserved.
+- **Honest re-timing:** re-check feasibility after the interruption and widen uncertainty; never claim
+  an exact amount of fitness was lost.
 
-**Return-to-run progression:** when the athlete reports feeling better, a **walk/run ramp gated by
-pain-free checkpoints** (e.g., 20-min walk pain-free → 1-min run / 2-min walk × 8 → …). Advance only if
-pain stays ≤ twinge; back off automatically if it flares.
+**Return-to-run progression:** when the athlete reports improvement and any advised professional
+guidance allows it, use a conservative walk/run progression gated by symptom/function checkpoints.
+Advance only when the athlete reports the current step remains acceptable during and after; hold or
+back off when symptoms recur, and do not overrule professional guidance.
 
-**Narration + record:** "Injuries happen to every runner — we're protecting your season. Here's the smart
-way back." Logged in adaptation history + the bell inbox.
+**Narration + record:** "We're reducing the aggravating work and protecting the continuity we can.
+Here's the next conservative step." Logged in adaptation history + the bell inbox.
 
 Together, §8.1 + §8.2 are the **"actually adapts"** moat.
 
@@ -265,7 +290,7 @@ earned progress. Beautiful, legible, honest charts.
 - **Weekly volume** + **intensity distribution** (80/20 check).
 - **HR & pace zones** distribution.
 - **Race predictions** (Riegel/VDOT) with confidence.
-- **Recovery & sleep** trends; **ACWR / injury-risk** band.
+- **Recovery & sleep** trends; **recent-to-usual load-change** context with no universal target band.
 
 **Plan:**
 - Structured **week view** with the periodization phase label (Base/Build/Peak/Taper) and current
@@ -305,7 +330,9 @@ Running-first motion language throughout (route draws, pace, distance) over stre
 - No medical claims. Injury guidance = general management + "see a professional." No diagnosis.
 - "Check with your doctor before starting" for beginners / flagged conditions.
 - Fueling is general and evidence-based, never personalized nutrition/medical.
-- HealthKit read-only, on-device, disconnect anytime; owner-only sync.
+- Apple Health supplies recovery signals and workout time windows only; it never supplies Momentum
+  workouts. Completed Momentum workouts may be written outward with permission. Disconnect anytime;
+  owner-only sync applies to Momentum's own cloud data.
 
 ## 15. Monetization
 Pro = the adaptive engine + wearable-driven recovery/injury adaptation + live guidance + pro data +
@@ -324,10 +351,11 @@ a headline (trackable, not marketed).
 ## 17. Phased execution
 
 - **Phase 0 — Positioning & IA** (small): running-first reframe; demote strength to supporting; copy.
-- **Phase 1 — Deep onboarding + baseline** (medium): endurance profiler, **baseline fitness** (§4) incl.
-  Health import + goal-feasibility guardrails, body metrics, **Apple Health connect** (§7).
+- **Phase 1 — Deep onboarding + baseline** (medium): endurance profiler, **baseline fitness** (§4)
+  from Momentum history/race/benchmark/self-report, goal-feasibility guardrails, body metrics, and
+  **Apple Health signal connection** (§7) with no workout import.
 - **Phase 2 — Adaptive engine** (large, the moat): recovery/readiness (§8.1) + **injury loop** (§8.2) +
-  ACWR safety governor (§6.2) + intensity tiers + honesty engine (§6.3–6.4).
+  workload progression governor (§6.2) + intensity tiers + honesty engine (§6.3–6.4).
 - **Phase 3 — Pro data & plan UI** (large): Progress + Plan redesign (§12), **HR zones** (§10), **live
   run guidance** (§9).
 - **Phase 4 — Fueling** (medium): §11.

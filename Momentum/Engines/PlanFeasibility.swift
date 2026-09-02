@@ -1,7 +1,7 @@
 import Foundation
 
-/// How hard the athlete chooses to push toward the goal — same destination, three ramps and three risk
-/// profiles. This is a lever generic plan apps don't give you: you decide the aggression, and the
+/// How hard the athlete chooses to push toward the goal — same destination, different progression
+/// pressure and recovery margin. This is a lever generic plan apps don't give you, and the
 /// adaptive engine holds an aggressive plan to a tighter recovery leash (see ENDURANCE-FOCUS §6.3).
 enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     case gentle       // "Take your time"
@@ -11,8 +11,8 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
     /// the race, not the finish line. Higher volume ceiling, the two-hard-days week as standard,
     /// recovery jogs where full rest would sit. Never *recommended* by the feasibility engine —
     /// it's a commitment the athlete makes, not advice we give. Requires a 5+ day week (`floorDays`);
-    /// every safety layer (ACWR governor, recovery tripwires, the injury hold-to-balanced cap)
-    /// still applies — that's what makes it a coach and not a dare.
+    /// every planning guardrail (progression governor, recovery checks, the prior-injury history
+    /// modifier) still applies — the tier never overrides the athlete's response.
     case podium
 
     var id: String { rawValue }
@@ -66,13 +66,14 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         switch self { case .gentle: 0.85; case .balanced: 1.0; case .aggressive: 1.2; case .podium: 1.4 }
     }
 
-    /// An honest one-liner about the tradeoff (nil when there's nothing to warn about).
+    /// An honest one-liner about training pressure and recovery margin (nil at the default).
+    /// The property name remains for source compatibility; copy must not claim injury probability.
     var riskNote: String? {
         switch self {
-        case .gentle:     "Lower injury risk. Best if you're new, coming back, or injury-prone."
+        case .gentle:     "Lowest build pressure and the most recovery margin. Best if you're new, returning, or managing a busy season."
         case .balanced:   nil
-        case .aggressive: "Higher injury and burnout risk. We'll watch your recovery closely and pull back sooner."
-        case .podium:     "Five-plus days, two hard sessions a week, jogs where rest days sat. For athletes chasing the front of the race. We watch recovery closely and pull back the moment your body says so."
+        case .aggressive: "Faster progression with less recovery margin. We'll watch your response closely and pull back sooner."
+        case .podium:     "Five-plus days, two quality sessions a week, and the least recovery margin. For experienced athletes chasing the front of the race; we pull back when your response calls for it."
         }
     }
 
@@ -88,8 +89,8 @@ enum PlanIntensity: String, Codable, Sendable, CaseIterable, Identifiable {
         self == .aggressive || self == .podium
     }
 
-    /// How much the tier scales the honest pace-improvement ceiling. Pushing harder buys faster gains
-    /// for more risk — the steeper `weeklyRamp` and the tighter recovery leash are the other side of
+    /// How much the tier scales the honest pace-improvement ceiling. More training pressure carries
+    /// more recovery demand — the steeper `weeklyRamp` and tighter recovery leash are the other side of
     /// this deal. Both the feasibility verdict AND the Podium outlook read improvement through this,
     /// so choosing a harder push genuinely opens up a tighter goal (12 weeks IS enough for a real
     /// jump if the athlete commits to ramping faster) — while the copy stays honest about the cost.

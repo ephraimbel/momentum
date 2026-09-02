@@ -11,11 +11,16 @@ struct AthleteNudgesTests {
         #expect(AthleteNudges.generate(AthleteFacts(), now: now).isEmpty)
     }
 
-    @Test func cautionWhenPastOverreachThreshold() {
-        var f = AthleteFacts(); f.currentACWR = 1.6; f.overreachThresholdACWR = 1.5
+    @Test func cautionNearPriorHighStrainObservation() {
+        var f = AthleteFacts(); f.currentACWR = 1.6; f.priorHighStrainLoadRatio = 1.5
         let nudges = AthleteNudges.generate(f, now: now)
         #expect(nudges.contains { $0.kind == .caution })
-        #expect(nudges.first?.kind == .caution)   // caution leads (safety first)
+        #expect(nudges.first?.kind == .caution)   // conservative context leads
+        let copy = nudges.first?.text.lowercased() ?? ""
+        #expect(copy.contains("recent weekly norm"))
+        #expect(copy.contains("check how you feel"))
+        #expect(!copy.contains("overreach"))
+        #expect(!copy.contains("injury"))
     }
 
     @Test func fitnessMilestoneWhenFaster() {
@@ -38,7 +43,7 @@ struct AthleteNudgesTests {
 
     @Test func cappedAtMax() {
         var f = AthleteFacts()
-        f.currentACWR = 1.7; f.overreachThresholdACWR = 1.4   // caution
+        f.currentACWR = 1.7; f.priorHighStrainLoadRatio = 1.4 // caution
         f.paceAtEffortTrendPct = -6                            // milestone
         f.lastPRAt = now.addingTimeInterval(-86_400)           // milestone
         f.frequencyTrend28d = 1.0                              // encouragement

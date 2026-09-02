@@ -14,9 +14,9 @@ enum ProgressNarrator {
         case .start:
             return "Early days, so consistency first. Hit your planned days this week and I'll start reading your trend."
         case .increase:
-            return "You've got room to grow. Your training is below your usual load, so let's add about 10% next week.\(streakLine(streak))"
+            return "This week is lighter than your recent pattern. If that was intentional and the sessions are landing well, review a small increase for next week; a light ratio alone is not a reason to add.\(streakLine(streak))"
         case .hold:
-            return "You're building well. Load is \(trendWord(insights.loadTrendPct)) and well-absorbed, so hold here, then we'll nudge it up.\(streakLine(streak))"
+            return "Your recent load is \(trendWord(insights.loadTrendPct)). Hold the plan and keep pairing the numbers with how the sessions feel.\(streakLine(streak))"
         case .ease:
             return "You're pushing hard. This week is \(acwr)× your normal load, so keep the next couple of sessions easy to absorb the work."
         case .rest:
@@ -28,7 +28,7 @@ enum ProgressNarrator {
     static func action(_ r: ProgressInsights.Recommendation) -> String {
         switch r {
         case .start: "Build consistency"
-        case .increase: "Add ~10% next week"
+        case .increase: "Review next week"
         case .hold: "Hold steady"
         case .ease: "Keep it easy"
         case .rest: "Take a rest day"

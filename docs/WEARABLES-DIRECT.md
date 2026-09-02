@@ -1,5 +1,11 @@
 # Direct wearable connections — Garmin first (2026-07-15)
 
+> **Superseded proposal; direct activity ingestion is not authorized.** As of the 2026-08-15 owner
+> decision, Apple Health is a signal bridge only and no external source may create Momentum `Workout`
+> rows through this document. Structured-workout export to a vendor would require its own future scope,
+> privacy review, and owner approval. Follow [`ENDURANCE-FOCUS.md`](ENDURANCE-FOCUS.md) and
+> [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md); do not implement the import pipeline below.
+
 > Positioning note: this **extends**, not replaces, the 2026-07 decision that HealthKit is the
 > single wearable integration. HealthKit stays the universal *read* baseline (Garmin/COROS/Fitbit
 > phone apps all write to Apple Health). Direct APIs add what HealthKit can't do:

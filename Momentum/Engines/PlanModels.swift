@@ -73,8 +73,8 @@ struct GeneratedWeek: Sendable, Equatable {
     var phase: PlanPhase = .build
     var sessions: [GeneratedSession]
 
-    /// Total prescribed running TRAINING distance for the week (meters) — for the ≤10%/wk and ACWR
-    /// invariants. The race session is deliberately excluded: the race is the objective the ramp
+    /// Total prescribed running TRAINING distance for the week (meters) — for progression and
+    /// recent-to-usual-load invariants. The race session is deliberately excluded: it is the objective the ramp
     /// delivers you to, not ramp load to govern (nothing trains after it — race week is cleared).
     var runVolumeM: Double {
         sessions.filter { ($0.discipline == .running || $0.discipline == .walking) && $0.runType != .race }
@@ -82,9 +82,9 @@ struct GeneratedWeek: Sendable, Equatable {
     }
 
     /// The same number for whichever endurance sport the plan is built on — running, walking or
-    /// cycling. The ACWR governor and the cutback passes run on THIS (2026-08-30): a cyclist's
+    /// cycling. The legacy-named load governor and the cutback passes run on THIS (2026-08-30): a cyclist's
     /// plan is a plan too, and reading it through `runVolumeM` reported zero for every week, so
-    /// the safety governor and the "a down week goes down" rule both quietly did nothing. A plan
+    /// the progression governor and the "a down week goes down" rule both quietly did nothing. A plan
     /// only ever carries one cardio discipline, so this never mixes sports.
     var trainingVolumeM: Double {
         sessions.filter { $0.discipline != .strength && $0.runType != .race }

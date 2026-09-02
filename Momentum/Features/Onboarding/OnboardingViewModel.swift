@@ -13,10 +13,11 @@ final class OnboardingViewModel {
     var handle: String = ""
     /// Optional onboarding avatar (identity step) — already downscaled to ≤512px.
     var avatarData: Data?
-    /// Everything the athlete chose to do (source of truth for the picker).
-    var activities: Set<ActivityChoice> = []
+    /// Everything the athlete chose to do (source of truth for the picker). Running is the fixed
+    /// foundation; the question is what else belongs around it.
+    var activities: Set<ActivityChoice> = [.run]
     /// Engine-facing disciplines — the programmable subset of the chosen activities.
-    var disciplines: Set<Discipline> { Set(activities.compactMap(\.discipline)) }
+    var disciplines: Set<Discipline> { Set(activities.compactMap(\.discipline)).union([.running]) }
     /// Chosen activities the engine can't program yet — added to the plan as tracked sessions.
     var extraActivities: [ActivityChoice] {
         ActivityChoice.allCases.filter { activities.contains($0) && $0.discipline == nil }
@@ -130,7 +131,7 @@ final class OnboardingViewModel {
     var recentRunSeconds: Double = 1800     // time for the chosen benchmark
     /// Resting HR read from Apple Health at the `health` step's consent moment — persisted at finish
     /// so HR zones use Karvonen from the very first plan instead of the much cruder %-of-max fallback.
-    var importedRestingHR: Int?
+    var healthRestingHR: Int?
 
     /// A catalog race picked on the race step ("Chicago Marathon") — becomes the plan's name at
     /// finish, so the season is branded with its occasion from day one.
@@ -158,9 +159,9 @@ final class OnboardingViewModel {
     var bioForGoal: String {
         switch goal {
         case .raceDistance: return raceDistance.map { "Training for a \($0.label)" } ?? "Chasing a finish line"
-        case .buildMuscle: return "Building muscle"
-        case .getStronger: return "Getting stronger"
-        case .loseFat: return "Getting lean"
+        case .buildMuscle: return "Building muscle for stronger running"
+        case .getStronger: return "Becoming a stronger runner"
+        case .loseFat: return "Running fitter, one week at a time"
         case .endurance: return "Building endurance"
         case .generalFitness, .stayConsistent: return "Keep moving."
         }
@@ -174,7 +175,7 @@ final class OnboardingViewModel {
         // everywhere it appears (focus step, building beat, reveal).
         // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
         // first question. Order flows broad→specific: who → goal → what you do → running-level+pace →
-        // about you → race specifics → schedule → equipment/focus → motivation → build → reveal → opt-ins.
+        // about you → race specifics → schedule → equipment/focus → motivation → opt-ins → build → reveal.
         // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
         // right body everywhere it appears.
         // `identity` (the @handle claim — back since the community launch, 2026-07-29 — plus the
@@ -190,11 +191,6 @@ final class OnboardingViewModel {
         // logged meal (`AppReview.shouldRequestReview` + `RatingPromptView`). Do not re-add a
         // rating STEP here.
         //
-        // What onboarding does carry, from 2026-08-28 (owner call, made with the 5.6.3 history
-        // spelled out): one quiet line above the plan reveal's CTA — "Leave a review to help more
-        // runners join momentum" — in `PlanRevealView.reviewLine`. It is a link the athlete may
-        // tap, not a prompt raised over them, and it never fires `requestReview()`; see the note
-        // there for why that distinction is the whole of the risk.
         // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
         // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
         // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
@@ -248,7 +244,16 @@ final class OnboardingViewModel {
     var steps: [Step] { cachedStepLists.steps }
 
     private func computeSteps() -> [Step] {
-        Step.allCases.filter { step in
+        // Keep raw values stable for historical analytics while putting the two permission beats
+        // before generation. The athlete sees the finished plan, then the showcase, then checkout;
+        // no permission prompt interrupts that conversion hand-off.
+        let ordered: [Step] = [
+            .name, .identity, .goal, .disciplines, .units, .experience, .injuries, .metrics,
+            .race, .raceGoalTime, .muscleFocus, .runVolume, .days, .preferredDays, .session,
+            .equipment, .strengthSplit, .hybridFocus, .why, .health, .intensity,
+            .notifications, .primers, .building, .reveal, .account,
+        ]
+        return ordered.filter { step in
             switch step {
             case .race:        return goal == .raceDistance && running
             case .raceGoalTime: return goal == .raceDistance && running
@@ -264,7 +269,7 @@ final class OnboardingViewModel {
             // How to split the lifting week — only meaningful to athletes who lift (2026-08-20).
             case .strengthSplit: return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
-            // Anything to train around — endurance athletes only (drives the protective ramp).
+            // Anything to train around — a conservative history modifier, never a diagnosis.
             case .injuries:    return running
             // The recovery-tracking consent beat (HealthKit) — shown to everyone; wearables sync there.
             case .health:      return true
@@ -297,11 +302,8 @@ final class OnboardingViewModel {
         // Handle, photo and avatar look are all optional here — the handle is seeded from the name,
         // and the database's unique index is the real arbiter at claim time, not this gate.
         case .identity: return true
-        // Require at least one PROGRAMMABLE discipline (run/strength/…), not just any activity: extras
-        // like yoga/swim/row map to `discipline == nil`, and advancing on those alone made finish()
-        // silently inject a running plan the user never asked for. A training plan needs something the
-        // engine actually programs; the extras still ride along as cross-training.
-        case .disciplines: return !disciplines.isEmpty
+        // Running is the non-optional foundation; this step only asks what belongs around it.
+        case .disciplines: return true
         case .race: return raceDistance != nil
         // The goal shapes everything after it, and `.generalFitness` has NO card on the goal
         // screen: it is the untouched default, so advancing on it meant a plan built for a goal
@@ -340,25 +342,20 @@ final class OnboardingViewModel {
     /// the analysis feels bespoke (research: the loader should mirror the user's own inputs).
     func buildingLines() -> [String] {
         var lines = ["Balancing your \(daysPerWeek)-day week"]
-        if disciplines.contains(.running) && disciplines.contains(.strength) {
+        if disciplines.contains(.strength) {
             lines.append("Spacing your runs and lifts")
-        } else if disciplines.contains(.strength) {
-            lines.append("Sequencing your strength work")
-        } else if disciplines.contains(.running) {
-            lines.append("Building your running base")
         } else {
-            lines.append("Spacing your efforts")
+            lines.append("Building your running base")
         }
         switch goal {
-        case .buildMuscle:   lines.append("Tuning volume for muscle")
-        case .getStronger:   lines.append("Loading for strength")
-        case .loseFat:       lines.append("Shaping it for fat loss")
+        case .buildMuscle:   lines.append("Building muscle around your miles")
+        case .getStronger:   lines.append("Loading strength for running durability")
+        case .loseFat:       lines.append("Supporting body composition")
         case .raceDistance:  lines.append("Pointing it at your distance")
         case .endurance:     lines.append("Stretching your endurance")
         default:             lines.append("Making it easy to keep")
         }
-        lines.append(disciplines.contains(.strength) && !disciplines.contains(.running)
-                     ? "Setting your starting loads" : "Setting your starting paces")
+        lines.append("Setting your starting paces")
         lines.append("Finalizing your plan")
         return lines
     }
@@ -368,7 +365,9 @@ final class OnboardingViewModel {
         var chips = ["\(daysPerWeek) days / week"]
         if goal == .raceDistance, let r = raceDistance { chips.append(r.label) } else { chips.append(goalLabel) }
         if let g = goalTimeLabel { chips.append("Goal \(g)") }
-        if hybrid, hybridPriority != .balanced { chips.append(hybridPriority == .running ? "Run-focused" : "Lift-focused") }
+        if hybrid, hybridPriority != .balanced {
+            chips.append(hybridPriority == .running ? "Run-focused" : "More strength support")
+        }
         if goal == .buildMuscle, !muscleFocus.isEmpty { chips.append("Focus: \(muscleFocus.count) area\(muscleFocus.count == 1 ? "" : "s")") }
         if disciplines.contains(.strength) {
             chips.append(equipmentLabel)
@@ -387,10 +386,7 @@ final class OnboardingViewModel {
     }
 
     private var goalLabel: String {
-        switch goal {
-        case .loseFat: "Fat loss"; case .buildMuscle: "Build muscle"; case .getStronger: "Get stronger"
-        case .raceDistance: "Race ready"; case .endurance: "Endurance"; default: "Consistency"
-        }
+        goal.planLabel
     }
 
     private var equipmentLabel: String {
@@ -401,27 +397,30 @@ final class OnboardingViewModel {
 
     /// Projected outcome copy for the reveal (PRD §4.1).
     func projectedOutcome() -> String {
-        // Race goals lead with the race itself — the clearest promise, with the goal time when set.
+        // Race goals lead with the athlete's exact target, framed as a pursuit rather than a
+        // guaranteed outcome. The feasibility verdict owns what the current runway supports.
         if goal == .raceDistance, let r = raceDistance {
-            let subject = goalTimeLabel.map { "\($0) \(r.label.lowercased())" } ?? "\(r.label)-ready"
-            if hasRace { return "\(subject) by \(raceDate.formatted(.dateTime.month().day()))" }
-            return goalTimeLabel != nil ? "Chasing a \(subject)" : "Built for your \(r.label), whenever you toe the line"
+            if hasRace {
+                let date = raceDate.formatted(.dateTime.month().day())
+                if let goalTimeLabel { return "Chasing \(goalTimeLabel) for your \(r.label) on \(date)" }
+                return "Building toward your \(r.label) on \(date)"
+            }
+            if let goalTimeLabel { return "Chasing \(goalTimeLabel) for your \(r.label)" }
+            return "Building toward your \(r.label), one week at a time"
         }
-        // Every other goal is named for exactly what the athlete CHOSE — the plan is aimed at their
-        // goal, and the reveal says so, rather than a generic "faster, stronger runner" for a
-        // fat-loss or stay-consistent athlete who never asked to race.
+        // Every other goal still resolves through the running promise: the athlete's chosen outcome
+        // changes what the miles and supporting strength are trying to accomplish.
         let phrase: String
         switch goal {
         case .endurance:
             phrase = running && lifting ? "Farther and stronger everywhere" : "Going farther, running stronger"
-        case .loseFat:        phrase = "Leaner and fitter"
-        case .buildMuscle:    phrase = "Building real muscle"
-        case .getStronger:    phrase = "Getting stronger"
-        case .stayConsistent: phrase = "Consistent for good"
+        case .loseFat:        phrase = "Fitter, leaner, running stronger"
+        case .buildMuscle:    phrase = "More muscle, stronger running"
+        case .getStronger:    phrase = "A stronger, more durable runner"
+        case .stayConsistent: phrase = "A running habit that lasts"
         case .generalFitness:
-            phrase = running && lifting ? "Fitter and stronger, all over"
-                : running ? "A fitter, stronger runner" : lifting ? "Leaner and stronger" : "Fitter, across the board"
-        case .raceDistance:   phrase = "Race-ready"   // handled above; kept for exhaustiveness
+            phrase = "A fitter, stronger runner"
+        case .raceDistance:   phrase = "Building toward race day"   // handled above; exhaustive fallback
         }
         if hasRace { return "\(phrase) by \(raceDate.formatted(.dateTime.month().day()))" }
         return "\(phrase), one week at a time"
@@ -439,7 +438,7 @@ final class OnboardingViewModel {
     @discardableResult
     func finish(in context: ModelContext) -> UserProfile {
         let profile = UserProfile()
-        let chosen = disciplines.isEmpty ? [Discipline.running] : Array(disciplines)
+        let chosen = Array(disciplines)
         // Identity from onboarding fills the profile (no more blank "Athlete").
         profile.displayName = name.trimmingCharacters(in: .whitespaces)
         profile.handle = SocialPrivacy.normalizedHandle(handle)
@@ -495,7 +494,7 @@ final class OnboardingViewModel {
         profile.birthYear = birthYear
         if let bodyMassKg { profile.bodyMassKg = bodyMassKg }
         // Resting HR from Apple Health (when connected) → Karvonen HR zones from day one.
-        if let rhr = importedRestingHR { profile.restingHR = rhr }
+        if let rhr = healthRestingHR { profile.restingHR = rhr }
         // Estimate max HR from age (Tanaka) when we have it and nothing better.
         if profile.maxHR == nil, let year = birthYear {
             let age = Calendar.current.component(.year, from: Date()) - year
@@ -517,9 +516,8 @@ final class OnboardingViewModel {
 
 // MARK: - Activity picker
 
-/// A choice on the onboarding "what do you want to do?" step. Programmable activities map to a
-/// `Discipline` the engine writes structured sessions for; the rest are tracked add-ons the plan
-/// includes as simple recurring sessions you can check off.
+/// A choice on the onboarding training-mix step. Running is the plan foundation and strength is the
+/// programmable supporting pillar; the other sports remain trackable cross-training.
 enum ActivityChoice: String, CaseIterable, Identifiable {
     case run, cycle, walk, hike, strength, hiit, swim, rowing, yoga
     var id: String { rawValue }
@@ -541,9 +539,9 @@ enum ActivityChoice: String, CaseIterable, Identifiable {
     /// The engine discipline this maps to when programmable; nil → a tracked add-on.
     var discipline: Discipline? {
         switch self {
-        case .run: .running; case .cycle: .cycling; case .walk: .walking
-        case .hike: .walking; case .strength: .strength; case .hiit: .strength
-        case .swim, .rowing, .yoga: nil
+        case .run: .running
+        case .strength, .hiit: .strength
+        case .cycle, .walk, .hike, .swim, .rowing, .yoga: nil
         }
     }
     /// The concrete workout type for a tracked add-on session.

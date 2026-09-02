@@ -118,7 +118,7 @@ struct PostFacts: Sendable, Hashable {
                   miles: parsed.miles, durationS: parsed.durationS, climbFt: parsed.climbFt,
                   volumeLb: parsed.volumeLb, sets: parsed.sets,
                   pr: item.prBadge,
-                  hasRoute: (item.routeLatLon?.count ?? 0) > 1,
+                  hasRoute: item.hasRenderableRoute,
                   hour: comps.hour ?? 9,
                   weekday: Self.weekdayNames[max(0, min(6, (comps.weekday ?? 3) - 1))],
                   // Hemisphere reads the METRO, not the town: a Sydney athlete who lives in Manly

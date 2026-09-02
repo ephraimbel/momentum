@@ -24,7 +24,7 @@ struct CoachCapabilitiesSheet: View {
 
                     section("CHANGES YOUR PLAN — WITH YOUR CONSENT", items: [
                         ("wand.and.stars", "Tune the load",
-                         "Ease a brutal week, raise it when you've earned more, or ease target paces so sessions land right."),
+                         "Ease a brutal week, review a bounded increase after a lighter week, or ease target paces so sessions land right."),
                         ("arrow.left.arrow.right", "Reshape the schedule",
                          "Move or clear sessions, change your training days, session length, or equipment."),
                         ("flag.checkered", "Point at a new goal",

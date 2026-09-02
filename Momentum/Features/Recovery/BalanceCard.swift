@@ -456,8 +456,8 @@ struct BalanceCard: View {
         switch week.state {
         case .building:     "Building"
         case .balanced:     "Balanced"
-        case .overreaching: "Overreaching"
-        case .detraining:   "Detraining"
+        case .overreaching: "Recovery lagging"
+        case .detraining:   "Recovery ahead"
         case .insufficient: "Learning"
         }
     }
@@ -466,8 +466,8 @@ struct BalanceCard: View {
         switch week.state {
         case .building:     "Productive stress — the block is working."
         case .balanced:     "Strain and recovery are trading evenly."
-        case .overreaching: "Spending past what recovery replaces — an easier day is cheap right now."
-        case .detraining:   "Plenty in the tank — there's room to add."
+        case .overreaching: "Recent strain is running ahead of recovery — favor an easier day."
+        case .detraining:   "Recovery is running ahead of strain. Keep following the plan and check how you feel."
         // The action, never the calendar: days do not track themselves.
         case .insufficient: "Record a few more sessions and the pattern shows."
         }

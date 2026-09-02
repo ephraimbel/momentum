@@ -1,5 +1,11 @@
 # Recovery Hub — Design & Integration Plan
 
+> **Historical shipped-design record; not current coaching doctrine.** As of 2026-09-01, Apple Health
+> supplies signals only and load ratios are exposure context, not injury/overtraining prediction or a
+> universal target band. Follow [`ENDURANCE-FOCUS.md`](ENDURANCE-FOCUS.md) and
+> [`ELITE-RUNNING-SYSTEM.md`](ELITE-RUNNING-SYSTEM.md) for changes. Legacy terminology below is kept
+> only to explain the implementation that existed when this plan was written.
+
 > Status: approved design, drives implementation. Composes with the shipped stack — `TrainingLoad` → `ProgressInsights` → `RecoveryModel` → `RecoverySignals` → `RecoveryAdaptation` → `FitnessFreshness` → `TrendAnalytics` — every new engine consumes those; nothing re-derives them. All file:line references verified against the current tree.
 
 ---

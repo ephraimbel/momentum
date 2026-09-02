@@ -729,7 +729,14 @@ struct ProgressScreen: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("formRace", anchor: .top) }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-records") {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("records", anchor: .top) }
+                    // The card is intentionally empty until the one-time record backfill finishes.
+                    // A single early scroll targeted that zero-height placeholder and left the
+                    // populated card below the viewport. Retry after the async aggregate pass.
+                    for delay: TimeInterval in [2.2, 3.8] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                            proxy.scrollTo("records", anchor: .top)
+                        }
+                    }
                 }
                 if ProcessInfo.processInfo.arguments.contains("--progress-scroll-growth") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { proxy.scrollTo("growth", anchor: .top) }
@@ -959,7 +966,7 @@ struct ProgressScreen: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// The last 28 days of runs → the 80/20 polarized check. Reads the cache — `aggregatesReady`
+    /// The last 28 days of runs → an easy-versus-quality description. Reads the cache — `aggregatesReady`
     /// gates every segment behind the first `refreshAggregates()` pass, so this is always current.
     private var intensityMix: IntensityMix.Mix? { cachedIntensityMix }
 
@@ -975,8 +982,7 @@ struct ProgressScreen: View {
         return IntensityMix.analyze(runs: runs, p5kSPerKm: profiles.first?.plan?.p5kSPerKm ?? 0)
     }
 
-    /// The polarized-training story (§12): one stacked easy/hard bar against the 80/20 target. The
-    /// sweet spot earns the iridescent accent; everything else stays monochrome and matter-of-fact.
+    /// One stacked easy/quality bar with 80% as a familiar reference, never a universal target.
     @ViewBuilder
     private var intensityMixCard: some View {
         if let mix = intensityMix {
@@ -988,7 +994,7 @@ struct ProgressScreen: View {
                         .foregroundStyle(Theme.inkTertiary)
                         .accessibilityHidden(true)
                     // Kept out of the collapsed element below so VoiceOver can still open the
-                    // 80/20 explainer (the card-wide `children: .ignore` used to eat it).
+                    // Mix explainer (the card-wide `children: .ignore` used to eat it).
                     MetricInfoButton(explainer: MetricExplainers.intensityMix).padding(.leading, 2)
                 }
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
@@ -1003,7 +1009,7 @@ struct ProgressScreen: View {
                                     .fill(MetricColor.load)
                                     .frame(maxWidth: .infinity)
                             }
-                            // The 80/20 target tick — background-colored so it reads over either segment.
+                            // The 80% reference tick — background-colored over either segment.
                             Rectangle().fill(Theme.background).frame(width: 2, height: 22)
                                 .shadow(color: .black.opacity(0.25), radius: 0.5)
                                 .offset(x: w * 0.8)
@@ -1014,7 +1020,7 @@ struct ProgressScreen: View {
                         Text("\(Int((mix.easyFraction * 100).rounded()))% easy · \(mix.hardCount) hard run\(mix.hardCount == 1 ? "" : "s")")
                             .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
                         Spacer()
-                        Text("80/20 target").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
+                        Text("80% reference").font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     }
                     Text(mix.blurb)
                         .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkSecondary)
@@ -2142,14 +2148,9 @@ struct ProgressScreen: View {
             out.append(AthleteCallout(label: "READINESS", value: "—", unit: nil,
                                       context: "Learning your norm", target: "formRace"))
         }
-        // Training load — ACWR with a no-shame band word.
+        // Training load — recent-to-usual context, never a universal safe/injury band.
         if insights.chronic >= 1 {
-            let word: String = switch insights.acwr {
-            case ..<0.8:      "Fresh"
-            case 0.8..<1.31:  "Sweet spot"
-            case 1.31..<1.51: "Pushing"
-            default:          "High — absorb it"
-            }
+            let word = TrainingLoadContext.band(ratio: insights.acwr).displayName
             out.append(AthleteCallout(label: "TRAINING LOAD", value: String(format: "%.2f", insights.acwr),
                                       unit: nil, context: word, target: "charts"))
         } else {

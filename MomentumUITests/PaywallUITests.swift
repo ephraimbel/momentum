@@ -2,6 +2,7 @@ import XCTest
 
 /// The Pro paywall (premium redesign 2026-07-10): full feature list, both plan cards, and the
 /// trial CTA all reachable. Dumps PNGs of both scroll states for visual inspection.
+@MainActor
 final class PaywallUITests: XCTestCase {
 
     private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/dab5c7b2-3f47-4a9d-a69d-e9360d163b0c/scratchpad"
@@ -10,18 +11,25 @@ final class PaywallUITests: XCTestCase {
 
     func testPaywallShowsFeaturesPlansAndTrialCTA() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--debug-free", "--paywall"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--paywall"]
         app.launch()
 
         let headline = app.staticTexts["Run smarter.\nRace faster."]
         XCTAssertTrue(headline.waitForExistence(timeout: 15), "Paywall didn't present.")
-        // Trial retired (owner call 2026-08-20): the CTA quotes the yearly price outright and the
-        // yearly's badge carries the savings. A trial CTA reappearing means a store-side intro
-        // offer (or the placeholder catalog) grew a trial back — that's a regression, not a bonus.
-        XCTAssertTrue(app.buttons["Continue · $29.99/year"].exists, "Trial-less yearly CTA missing.")
-        XCTAssertFalse(app.buttons["Start my 7-day free trial"].exists,
-                       "The free trial is retired — no trial CTA may render.")
-        XCTAssertTrue(app.staticTexts["SAVE 90%"].exists, "Yearly savings badge missing.")
+        // Annual-only seven-day trial (owner call 2026-09-01). The fallback catalog is the DEBUG
+        // contract; production derives this eligibility and the localized renewal price from StoreKit.
+        XCTAssertTrue(app.buttons["Start my 7-day free trial"].exists,
+                      "The annual trial CTA is missing.")
+        XCTAssertFalse(app.buttons["Continue · $29.99/year"].exists,
+                       "The annual plan must not charge immediately while its trial is eligible.")
+        XCTAssertTrue(app.staticTexts["No payment due now"].exists,
+                      "The trial must say plainly that payment is not due today.")
+        XCTAssertTrue(app.staticTexts["7 days free, then $29.99/yr · cancel anytime"].exists,
+                      "The annual trial's renewal terms are missing or ambiguous.")
+        XCTAssertTrue(app.staticTexts["7 DAYS FREE"].exists,
+                      "The annual card must foreground its active trial.")
+        XCTAssertFalse(app.staticTexts["SAVE 90%"].exists,
+                       "The savings badge must not compete with an active trial badge.")
         // The Marquee (2026-08-27) + weekly pricing (2026-08-28): plans are Yearly/Weekly cards (a11y
         // "Yearly plan, $0.58 per week, $29.99 billed yearly"), and the features are the marquee.
         // One-screen contract: both cards, the feature marquee, and the CTA — no scrolling.
@@ -40,6 +48,8 @@ final class PaywallUITests: XCTestCase {
         weekly.tap()
         XCTAssertTrue(app.buttons["Continue · $5.99/week"].waitForExistence(timeout: 5),
                       "CTA didn't follow the weekly selection.")
+        XCTAssertFalse(app.buttons["Start my 7-day free trial"].exists,
+                       "The weekly plan must not inherit the annual plan's trial.")
         XCTAssertTrue(app.staticTexts["$5.99/wk · cancel anytime"].waitForExistence(timeout: 5),
                       "Fine print didn't follow the weekly selection.")
     }

@@ -33,6 +33,11 @@ final class AppRouter {
     /// switches its segment).
     var pendingProgressSegment: String?
 
+    /// Social inbox deep links land on Profile's Community face, then open exactly one post or
+    /// athlete. ProfileScreen switches faces; CommunityView consumes and clears these mailboxes.
+    var pendingCommunityPostID: UUID?
+    var pendingCommunityAthleteHandle: String?
+
     /// The live workout in flight (2026-08-19 shared-map pass). NOT a one-shot mailbox: this is
     /// presentation state — non-nil for the whole recording → save → celebration journey. Writers
     /// are Today's Start controls and the Plan tab's session sheet; the single owner is the ONE

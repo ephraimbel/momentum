@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The top of the community home (owner call 2026-08-25, the Share Aura structure in our theme):
 /// a "Find people" field, then the people you follow as ringed faces — "Your day" first, then
-/// everyone who trained in the last 24h, then the rest. The ring IS the presence signal
+/// everyone who posted in the last 24h, then the rest. The ring IS the presence signal
 /// (`PresenceRing`): quiet ink normally, animated iridescence once they have posted. Tapping a ringed face opens their day in
 /// the full-bleed pager, so a "story" is just the post seen through a 24h window — no second
 /// content type, nothing that expires off the profile grid.
@@ -114,7 +114,7 @@ struct FollowingRow: View {
     private func face(_ person: Person, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                PresenceRing(active: person.ringed, lineWidth: 2.5, gap: 2.5) {
+                PresenceRing(active: person.ringed, lineWidth: 3.5, gap: 2.5) {
                     AvatarView(photo: person.avatarData, name: person.fullName, size: faceSize,
                                imageName: person.imageName, preset: person.preset)
                 }
@@ -130,7 +130,7 @@ struct FollowingRow: View {
             }
         }
         .buttonStyle(PressableScaleStyle(scale: 0.95))
-        .accessibilityLabel(person.ringed ? "\(person.label), trained today" : person.label)
+        .accessibilityLabel(person.ringed ? "\(person.label), posted today" : person.label)
     }
 
     private var moreFace: some View {

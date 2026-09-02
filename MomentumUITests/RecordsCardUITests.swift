@@ -12,13 +12,21 @@ final class RecordsCardUITests: XCTestCase {
 
     func testRecordBookShowsBests() {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-demo", "--progress-tab", "--progress-scroll-records"]
+        // Record Book lives in the Pro analytics cluster; the regression verifies its populated
+        // state, not the free-tier teaser that deliberately replaces that whole cluster.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-pro",
+                               "--progress-tab", "--progress-scroll-records"]
         app.launch()
 
         let title = app.staticTexts["RECORD BOOK"]
-        XCTAssertTrue(title.waitForExistence(timeout: 20), "Record book card missing.")
-        XCTAssertTrue(app.staticTexts["Fastest 5K"].exists, "Fastest 5K row missing.")
-        XCTAssertTrue(app.staticTexts["Longest run"].exists, "Longest run row missing.")
+        XCTAssertTrue(title.waitForExistence(timeout: 30), "Record book card missing.")
+        // Rows intentionally collapse their children into one VoiceOver sentence, so assert that
+        // accessible contract instead of looking for child StaticTexts that are correctly hidden.
+        let allElements = app.descendants(matching: .any)
+        let fastest5K = allElements.matching(NSPredicate(format: "label BEGINSWITH %@", "Fastest 5K:")).firstMatch
+        let longestRun = allElements.matching(NSPredicate(format: "label BEGINSWITH %@", "Longest run:")).firstMatch
+        XCTAssertTrue(fastest5K.exists, "Fastest 5K row missing.")
+        XCTAssertTrue(longestRun.exists, "Longest run row missing.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_recordbook.png"))
     }
 }

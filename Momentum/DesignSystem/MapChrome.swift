@@ -1,20 +1,23 @@
-@_spi(Restricted) import MapboxMaps
+import MapboxMaps
 
-/// Hidden map chrome — no scale bar, compass, Mapbox logo, or attribution button — so every map reads
-/// as a clean brand canvas. Hiding the Mapbox logo/attribution uses Mapbox's `@_spi(Restricted)` API;
-/// the account owner is responsible for the Terms-of-Service implications of removing attribution.
-/// Isolated here so this is the only file that touches the restricted SPI.
+/// Minimal map chrome: the decorative scale and compass stay hidden while Mapbox's required logo
+/// and attribution remain visible at opposite bottom corners. Keeping this policy in one place makes
+/// every map feel consistent and prevents a presentation-only screen from accidentally suppressing
+/// required attribution.
 enum MapChrome {
-    static var hidden: OrnamentOptions {
-        var logo = LogoViewOptions()
-        logo.visibility = .hidden
-        var attribution = AttributionButtonOptions()
-        attribution.visibility = .hidden
+    static var minimal: OrnamentOptions {
         return OrnamentOptions(
             scaleBar: ScaleBarViewOptions(visibility: .hidden),
             compass: CompassViewOptions(visibility: .hidden),
-            logo: logo,
-            attributionButton: attribution)
+            logo: LogoViewOptions(
+                position: .bottomLeading,
+                margins: CGPoint(x: 8, y: 8)
+            ),
+            attributionButton: AttributionButtonOptions(
+                position: .bottomTrailing,
+                margins: CGPoint(x: 8, y: 8)
+            )
+        )
     }
 
     /// Strip the basemap's points of interest and transit markers on a map whose subject is a

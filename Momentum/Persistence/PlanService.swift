@@ -1,25 +1,192 @@
 import Foundation
 import SwiftData
 
+struct PlanFitnessSnapshot: Equatable, Sendable {
+    let weeklyM: Double?
+    let longestM: Double?
+    let usesLoggedRuns: Bool
+}
+
+struct PlanRunEvidence: Sendable {
+    let startedAt: Date
+    let distanceM: Double
+}
+
+enum PlanFitnessEvidence {
+    static let historyDays = 56
+    static let establishedFallbackWeeklyM = 8_000.0
+
+    private static func usableDistance(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, value > 0 else { return nil }
+        return value
+    }
+
+    static func recentWeeklyRunVolumeM(_ runs: [PlanRunEvidence],
+                                       endingAt end: Date,
+                                       weeks: Int,
+                                       calendar: Calendar) -> Double? {
+        guard weeks > 0,
+              let since = calendar.date(byAdding: .day, value: -7 * weeks, to: end) else { return nil }
+        var buckets = [Double](repeating: 0, count: weeks)
+        for run in runs where run.startedAt >= since && run.startedAt <= end
+            && run.distanceM.isFinite && run.distanceM > 0 {
+            let daysBack = calendar.dateComponents(
+                [.day],
+                from: calendar.startOfDay(for: run.startedAt),
+                to: calendar.startOfDay(for: end)
+            ).day ?? 0
+            let index = min(weeks - 1, max(0, daysBack / 7))
+            buckets[index] += run.distanceM
+        }
+        let active = buckets.filter { $0 > 0 }
+        guard active.count >= 2 else { return nil }
+        let kept = weeks > 2 ? Array(buckets.sorted().dropFirst()) : buckets
+        guard !kept.isEmpty else { return nil }
+        return kept.reduce(0, +) / Double(kept.count)
+    }
+
+    /// Onboarding declarations are useful while they are fresh. After eight weeks, recent Momentum
+    /// runs replace them instead of being maxed against a months-old peak forever. Sparse history
+    /// deliberately returns a conservative starting week; downstream progression can build from
+    /// evidence, while an inactive returning athlete cannot accidentally restart at 70 km/week.
+    static func snapshot(runs: [PlanRunEvidence],
+                         declaredWeeklyM: Double?,
+                         declaredLongestM: Double?,
+                         profileCreatedAt: Date,
+                         endingAt end: Date,
+                         calendar: Calendar) -> PlanFitnessSnapshot {
+        let cutoff = calendar.date(byAdding: .day, value: -historyDays, to: end) ?? .distantPast
+        let recent = runs.filter {
+            $0.startedAt >= cutoff && $0.startedAt <= end
+                && $0.distanceM.isFinite && $0.distanceM > 0
+        }
+        let declaredWeeklyM = usableDistance(declaredWeeklyM)
+        let declaredLongestM = usableDistance(declaredLongestM)
+        let observedWeekly = recentWeeklyRunVolumeM(
+            recent,
+            endingAt: end,
+            weeks: 4,
+            calendar: calendar
+        )
+        let observedLongest = recent.map(\.distanceM).max()
+        let declarationsAreFresh = profileCreatedAt >= cutoff
+
+        let weekly: Double?
+        if let observedWeekly {
+            weekly = observedWeekly
+        } else if declarationsAreFresh {
+            weekly = declaredWeeklyM
+        } else {
+            let sparseAverage = recent.reduce(0) { $0 + $1.distanceM } / 4
+            let conservativeFallback = min(
+                declaredWeeklyM ?? establishedFallbackWeeklyM,
+                establishedFallbackWeeklyM
+            )
+            weekly = max(sparseAverage, conservativeFallback)
+        }
+
+        let longest: Double?
+        if declarationsAreFresh {
+            switch (observedLongest, declaredLongestM) {
+            case let (observed?, declared?): longest = max(observed, declared)
+            case let (observed?, nil): longest = observed
+            case let (nil, declared): longest = declared
+            }
+        } else {
+            longest = observedLongest
+        }
+        return PlanFitnessSnapshot(
+            weeklyM: weekly,
+            longestM: longest,
+            usesLoggedRuns: observedWeekly != nil
+        )
+    }
+}
+
+/// Reads only the bounded evidence window on SwiftData's serial model executor. The Plan Settings
+/// sheet awaits this value without faulting an athlete's entire workout history on the main actor.
+@ModelActor
+actor PlanFitnessWorker {
+    func snapshot(declaredWeeklyM: Double?,
+                  declaredLongestM: Double?,
+                  profileCreatedAt: Date,
+                  endingAt end: Date = Date(),
+                  calendar: Calendar = .current) throws -> PlanFitnessSnapshot {
+        let runs = try PlanService.runEvidence(endingAt: end, in: modelContext, calendar: calendar)
+        return PlanFitnessEvidence.snapshot(
+            runs: runs,
+            declaredWeeklyM: declaredWeeklyM,
+            declaredLongestM: declaredLongestM,
+            profileCreatedAt: profileCreatedAt,
+            endingAt: end,
+            calendar: calendar
+        )
+    }
+}
+
 /// Bridges the pure `PlanEngine` to SwiftData: builds the catalog snapshot, runs generation, and
 /// persists the result into `TrainingPlan`/`PlannedSession`/`PlannedExercise` (PRD §9, §8.7).
 @MainActor
 enum PlanService {
 
-    /// Regenerate and persist the plan for a profile, replacing any existing one.
+    enum ReplacementError: Error, Equatable {
+        case ambiguousMetadata(UUID)
+        case ambiguousSeason(UUID)
+        case ambiguousIntent(UUID)
+    }
+
+    struct Hooks {
+        var beforeSave: (() throws -> Void)?
+        @MainActor static let none = Hooks()
+    }
+
+    /// Regenerate and persist the plan for a profile, replacing any existing one atomically.
     @discardableResult
     static func regenerate(for profile: UserProfile,
                            calibration: CalibrationSeed = .none,
                            startDate: Date = Date(),
                            blockIndex: Int = 0,
                            recoveryWeeks: Int = 0,
-                           in context: ModelContext) -> TrainingPlan {
+                           in context: ModelContext,
+                           hooks: Hooks = .none) -> TrainingPlan? {
+        transactReplacement(for: profile, in: context, hooks: hooks) {
+            try stageRegenerate(
+                for: profile,
+                calibration: calibration,
+                startDate: startDate,
+                blockIndex: blockIndex,
+                recoveryWeeks: recoveryWeeks,
+                in: context
+            )
+        }
+    }
+
+    /// Mutation-only generation used by larger transactions such as Plan Settings. The caller must
+    /// disable autosave, reconcile compatibility sidecars, and perform the sole final save.
+    static func stageRegenerate(for profile: UserProfile,
+                                calibration: CalibrationSeed = .none,
+                                startDate: Date = Date(),
+                                blockIndex: Int = 0,
+                                recoveryWeeks: Int = 0,
+                                in context: ModelContext) throws -> TrainingPlan {
         let catalogItems = catalog(in: context)
         var inputs = planInputs(from: profile, startDate: startDate)
+        // A rebuild is a new coaching decision, so it starts from what the athlete is doing now —
+        // not the volume they typed during onboarding. `observedFitness` reads Momentum-logged runs
+        // only (Health remains signals-only), then falls back conservatively when history is thin.
+        let current = observedFitness(for: profile, on: startDate, in: context)
+        inputs.currentWeeklyVolumeM = current.weeklyM
+        inputs.longestRunM = current.longestM
         inputs.postRaceRecoveryWeeks = recoveryWeeks
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
                                             calibration: calibration, startDate: startDate)
-        return persist(generated, for: profile, startDate: startDate, blockIndex: blockIndex, in: context)
+        return try stagePersist(
+            generated,
+            for: profile,
+            startDate: startDate,
+            blockIndex: blockIndex,
+            in: context
+        )
     }
 
     /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
@@ -56,22 +223,47 @@ enum PlanService {
                 context.insert(s)
             }
         }
-        try? context.save()
     }
 
     /// Rebuild the whole plan from `profile` — the one path used by both onboarding and the
     /// "edit plan settings" sheet. Shares the day budget between structured work and tracked add-ons
     /// (total distinct days ≤ daysPerWeek), preserves the calibrated 5k pace unless a fresh calibration
     /// is supplied, and re-adds the athlete's cross-training. Starts the plan from `startDate`.
+    @discardableResult
     static func rebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
                         startDate: Date = Date(), blockIndex: Int = 0, recoveryWeeks: Int = 0,
-                        in context: ModelContext) {
-        // A running goal implies you run: if the athlete switched to a race/endurance focus (via the
-        // coach or plan settings) without running among their disciplines, add it — otherwise the
-        // engine would build a race plan with no runs. Guards every rebuild caller in one place.
-        let runningGoal = profile.goal == .raceDistance || profile.goal == .endurance
-        if runningGoal, !profile.disciplines.contains(Discipline.running.rawValue) {
-            profile.disciplines = [Discipline.running.rawValue] + profile.disciplines
+                        in context: ModelContext, hooks: Hooks = .none) -> TrainingPlan? {
+        transactReplacement(for: profile, in: context, hooks: hooks) {
+            try stageRebuild(
+                for: profile,
+                calibration: calibration,
+                startDate: startDate,
+                blockIndex: blockIndex,
+                recoveryWeeks: recoveryWeeks,
+                in: context
+            )
+        }
+    }
+
+    /// Mutation-only rebuild. This is deliberately throwing so a containing user action can roll
+    /// back profile edits, plan replacement, and sidecars as one unit.
+    static func stageRebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
+                             startDate: Date = Date(), blockIndex: Int = 0, recoveryWeeks: Int = 0,
+                             in context: ModelContext) throws -> TrainingPlan {
+        // Every coached plan in Momentum is a RUNNING plan. Strength is programmed in support;
+        // cycling/walking remain useful cross-training the athlete can track, but cannot silently
+        // replace the running foundation because the selected outcome is not a race. Keeping the
+        // invariant here protects onboarding, Plan Settings, Coach actions, and legacy profiles.
+        let savedDisciplines = profile.disciplines.compactMap(Discipline.init(rawValue:))
+        let supportingCardio = savedDisciplines.filter { $0 != .running && $0 != .strength }
+        if !supportingCardio.isEmpty {
+            var extras = Set(profile.crossTraining)
+            supportingCardio.forEach { extras.insert(WorkoutType.forDiscipline($0).rawValue) }
+            profile.crossTraining = extras.sorted()
+        }
+        profile.disciplines = [Discipline.running.rawValue]
+        if savedDisciplines.contains(.strength) {
+            profile.disciplines.append(Discipline.strength.rawValue)
         }
         // Symmetric guard: a strength goal implies you lift — a runner who tells the coach "get
         // stronger" must get strength sessions, not a run-only plan pointed at a barbell.
@@ -87,12 +279,20 @@ enum PlanService {
         let seed = calibration ?? (profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none)
 
         profile.daysPerWeek = structuredDays
-        regenerate(for: profile, calibration: seed, startDate: startDate, blockIndex: blockIndex,
-                   recoveryWeeks: recoveryWeeks, in: context)
-        profile.daysPerWeek = userDays   // restore the athlete's actual choice (plan + display)
-        if let plan = profile.plan, !extras.isEmpty {
+        defer { profile.daysPerWeek = userDays }
+        let plan = try stageRegenerate(
+            for: profile,
+            calibration: seed,
+            startDate: startDate,
+            blockIndex: blockIndex,
+            recoveryWeeks: recoveryWeeks,
+            in: context
+        )
+        profile.daysPerWeek = userDays   // restore before cross-training applies the full day budget
+        if !extras.isEmpty {
             addCrossTraining(extras, to: plan, startDate: startDate, in: context, totalDaysPerWeek: userDays)
         }
+        return plan
     }
 
     /// The post-race continuation (the coaching arc's close): once race day has passed, the season
@@ -138,9 +338,15 @@ enum PlanService {
         profile.raceDate = nil
         profile.raceDistanceM = nil
         profile.goalFinishTimeS = nil
-        rebuild(for: profile, calibration: CalibrationSeed(estimatedP5kSPerKm: seedP5k),
-                startDate: today, blockIndex: plan.blockIndex + 1, recoveryWeeks: recovery, in: context)
-        profile.plan?.name = ""   // the season was named for the race that's now behind them
+        guard let replacement = rebuild(
+            for: profile,
+            calibration: CalibrationSeed(estimatedP5kSPerKm: seedP5k),
+            startDate: today,
+            blockIndex: plan.blockIndex + 1,
+            recoveryWeeks: recovery,
+            in: context
+        ) else { return nil }
+        replacement.name = ""   // the season was named for the race that's now behind them
 
         let headline = raced ? "Race done — recovery block first" : "Race week's behind you"
         let detail = raced
@@ -170,8 +376,13 @@ enum PlanService {
             profile.weeklyRunVolumeM = achieved
         }
         let seed = CalibrationSeed(estimatedP5kSPerKm: plan.p5kSPerKm)
-        rebuild(for: profile, calibration: seed, startDate: startDate, blockIndex: nextIndex, in: context)
-        return profile.plan
+        return rebuild(
+            for: profile,
+            calibration: seed,
+            startDate: startDate,
+            blockIndex: nextIndex,
+            in: context
+        )
     }
 
     /// The athlete's real running volume per week over the trailing `weeks`, in meters — the average
@@ -179,13 +390,66 @@ enum PlanService {
     /// GPS distance at all), so callers can fall back to the declared figure rather than trust a zero.
     static func recentWeeklyRunVolumeM(endingAt end: Date = Date(), weeks: Int = 4,
                                        in context: ModelContext, calendar: Calendar = .current) -> Double? {
-        guard let since = calendar.date(byAdding: .day, value: -7 * weeks, to: end) else { return nil }
-        let recent = ((try? context.fetch(FetchDescriptor<Workout>())) ?? []).filter {
-            $0.type.discipline == .running && $0.startedAt >= since && $0.startedAt <= end
+        let runs = (try? runEvidence(endingAt: end, in: context, calendar: calendar)) ?? []
+        return PlanFitnessEvidence.recentWeeklyRunVolumeM(
+            runs,
+            endingAt: end,
+            weeks: weeks,
+            calendar: calendar
+        )
+    }
+
+    /// Where the athlete is **right now** — the figures a coach would ask for before writing or
+    /// reshaping a block, read from what was actually logged rather than what was typed at signup.
+    ///
+    /// `UserProfile.weeklyRunVolumeM` / `longestRunM` are written once during onboarding and never
+    /// again, so every rebuild (a settings change, a coach intent, an injury report) restarted the
+    /// volume ramp from a number that could be months old: a marathoner peaking at 70 km/wk who
+    /// typed 40 at signup was rebuilt back down to 40. The declared figure remains a conservative
+    /// guardrail, never the automatic answer.
+    ///
+    /// Onboarding declarations remain valid during the first eight weeks. After that evidence window,
+    /// recent logged running replaces them; sparse or absent evidence gets a conservative returning
+    /// baseline instead of resurrecting a months-old peak.
+    static func observedFitness(for profile: UserProfile, on date: Date = Date(),
+                                in context: ModelContext,
+                                calendar: Calendar = .current) -> (weeklyM: Double?, longestM: Double?) {
+        let runs = (try? runEvidence(endingAt: date, in: context, calendar: calendar)) ?? []
+        let snapshot = PlanFitnessEvidence.snapshot(
+            runs: runs,
+            declaredWeeklyM: profile.weeklyRunVolumeM,
+            declaredLongestM: profile.longestRunM,
+            profileCreatedAt: profile.createdAt,
+            endingAt: date,
+            calendar: calendar
+        )
+        return (snapshot.weeklyM, snapshot.longestM)
+    }
+
+    /// One time-bounded query shared by main-actor generation and `PlanFitnessWorker`. A hard limit
+    /// protects corrupted stores while remaining far above any plausible 56-day workout count.
+    nonisolated static func runEvidence(endingAt end: Date,
+                                        in context: ModelContext,
+                                        calendar: Calendar) throws -> [PlanRunEvidence] {
+        guard let cutoff = calendar.date(
+            byAdding: .day,
+            value: -PlanFitnessEvidence.historyDays,
+            to: end
+        ) else { return [] }
+        var descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { workout in
+                workout.startedAt >= cutoff && workout.startedAt <= end
+            },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1_000
+        return try context.fetch(descriptor).compactMap { workout in
+            guard workout.type.discipline == .running,
+                  let distanceM = workout.gps?.distanceM,
+                  distanceM.isFinite,
+                  distanceM > 0 else { return nil }
+            return PlanRunEvidence(startedAt: workout.startedAt, distanceM: distanceM)
         }
-        let total = recent.compactMap { $0.gps?.distanceM }.reduce(0, +)
-        guard total > 0 else { return nil }
-        return total / Double(weeks)
     }
 
     /// Snapshot the exercise library for the engine.
@@ -245,11 +509,12 @@ enum PlanService {
             distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved())
     }
 
-    static func persist(_ plan: GeneratedPlan, for profile: UserProfile,
-                        startDate: Date, blockIndex: Int = 0, in context: ModelContext,
-                        calendar: Calendar = .current) -> TrainingPlan {
+    static func stagePersist(_ plan: GeneratedPlan, for profile: UserProfile,
+                             startDate: Date, blockIndex: Int = 0, in context: ModelContext,
+                             calendar: Calendar = .current) throws -> TrainingPlan {
         // Replace any existing plan — but the athlete's name for it survives the rebuild.
-        let carriedName = profile.plan?.name ?? ""
+        let existing = profile.plan
+        let carriedName = existing?.name ?? ""
         // Finished work survives too: completed sessions from the CURRENT calendar week detach from
         // the old plan before its cascade delete and re-attach to the new block — rebuilding on a
         // Thursday must not turn Monday's finished run into a "Rest day". A completed RACE carries
@@ -259,7 +524,7 @@ enum PlanService {
         // Carried history can therefore predate the block, which is why `blockStart` (not the earliest
         // session) anchors phase indexing and "Week N of M". The workouts themselves are never touched.
         var carriedDone: [PlannedSession] = []
-        if let existing = profile.plan {
+        if let existing {
             if let weekStart = calendar.dateInterval(of: .weekOfYear, for: startDate)?.start {
                 // The race exemption is bounded to the recent past. Unbounded, every rebuild re-carried
                 // every race the athlete had ever run, so a multi-season history accumulated on the
@@ -271,14 +536,7 @@ enum PlanService {
                     $0.status == .completed && $0.date <= startDate
                         && ($0.date >= weekStart || ($0.runType == .race && $0.date >= raceFloor))
                 }
-                let carriedIDs = Set(carriedDone.map(\.id))
-                existing.sessions.removeAll { carriedIDs.contains($0.id) }   // detach from the cascade
-                // Materialize the detach BEFORE the delete: cascade walks the last-SAVED relationship
-                // snapshot, so deleting in the same transaction would still take the carried sessions.
-                if !carriedDone.isEmpty { try? context.save() }
             }
-            context.delete(existing)
-            profile.plan = nil
         }
 
         let exercisesByName = Dictionary(
@@ -327,10 +585,130 @@ enum PlanService {
                 sessions.append(ps)
             }
         }
-        trainingPlan.sessions = sessions + carriedDone   // the new block + this week's finished work
+        // Clone carried rows instead of detaching and pre-saving them. SwiftData's cascade tracks the
+        // old plan's last-saved relationship snapshot; cloning lets the old graph be deleted inside
+        // the same transaction without risking the completed workout link.
+        let carriedClones = carriedDone.map(cloneCompletedSession)
+        trainingPlan.sessions = sessions + carriedClones.map(\.session)
         context.insert(trainingPlan)
-        profile.plan = trainingPlan
-        try? context.save()
+        profile.plan = trainingPlan // direct old -> new; the UI never observes a nil plan
+        for carried in carriedClones {
+            if let workout = carried.workout {
+                carried.session.completedWorkout = workout
+                workout.plannedSession = carried.session
+            }
+        }
+        if let existing {
+            try relinkReplacementSidecars(
+                from: existing,
+                to: trainingPlan,
+                carriedSessionIDs: Set(carriedDone.map(\.id)),
+                in: context
+            )
+            context.delete(existing)
+        }
         return trainingPlan
+    }
+
+    private struct CarriedSessionClone {
+        let session: PlannedSession
+        let workout: Workout?
+    }
+
+    private static func cloneCompletedSession(_ source: PlannedSession) -> CarriedSessionClone {
+        let clone = PlannedSession()
+        clone.id = source.id
+        clone.date = source.date
+        clone.discipline = source.discipline
+        clone.sportType = source.sportType
+        clone.runType = source.runType
+        clone.targetDistanceM = source.targetDistanceM
+        clone.targetDurationS = source.targetDurationS
+        clone.targetPaceSPerKm = source.targetPaceSPerKm
+        clone.intervals = source.intervals
+        clone.status = source.status
+        clone.rationale = source.rationale
+        clone.strengthLabel = source.strengthLabel
+        clone.strengthTargets = source.strengthTargets.map { sourceTarget in
+            let target = PlannedExercise()
+            target.order = sourceTarget.order
+            target.exercise = sourceTarget.exercise
+            target.targetSets = sourceTarget.targetSets
+            target.targetRepLow = sourceTarget.targetRepLow
+            target.targetRepHigh = sourceTarget.targetRepHigh
+            target.targetRPE = sourceTarget.targetRPE
+            target.targetPctRM = sourceTarget.targetPctRM
+            target.progression = sourceTarget.progression
+            return target
+        }
+        return CarriedSessionClone(session: clone, workout: source.completedWorkout)
+    }
+
+    /// Moves the exact season ownership and carryover intents before legacy reconciliation runs.
+    /// Domain-owned seasons (`backfillVersion == 0`) are intentionally included: renewal is a plan
+    /// replacement inside the same season, not permission to create a duplicate legacy season.
+    private static func relinkReplacementSidecars(from oldPlan: TrainingPlan,
+                                                  to newPlan: TrainingPlan,
+                                                  carriedSessionIDs: Set<UUID>,
+                                                  in context: ModelContext) throws {
+        let metadataMatches = try context.fetch(FetchDescriptor<PlanMetadataRecord>()).filter {
+            $0.id == oldPlan.id || $0.planID == oldPlan.id
+        }
+        guard metadataMatches.count <= 1 else {
+            throw ReplacementError.ambiguousMetadata(oldPlan.id)
+        }
+        let oldMetadata = metadataMatches.first
+
+        let allSeasons = try context.fetch(FetchDescriptor<RunningSeasonRecord>())
+        let linkedSeasonIDs = Set(
+            allSeasons.filter { $0.activePlanID == oldPlan.id }.map(\.id)
+                + (oldMetadata.map { [$0.seasonID] } ?? [])
+        )
+        guard linkedSeasonIDs.count <= 1 else {
+            throw ReplacementError.ambiguousSeason(oldPlan.id)
+        }
+        let season = linkedSeasonIDs.first.flatMap { id in
+            allSeasons.first { $0.id == id }
+        }
+        if let season {
+            season.activePlanID = newPlan.id
+            season.updatedAt = Date()
+        }
+
+        let oldIntents = try context.fetch(FetchDescriptor<PlannedSessionIntentRecord>()).filter {
+            $0.planID == oldPlan.id
+        }
+        let grouped = Dictionary(grouping: oldIntents, by: \.plannedSessionID)
+        if let duplicate = grouped.first(where: { $0.value.count > 1 }) {
+            throw ReplacementError.ambiguousIntent(duplicate.key)
+        }
+        for intent in oldIntents {
+            if carriedSessionIDs.contains(intent.plannedSessionID) {
+                intent.planID = newPlan.id
+                if let season { intent.seasonID = season.id }
+            } else {
+                context.delete(intent)
+            }
+        }
+        if let oldMetadata { context.delete(oldMetadata) }
+    }
+
+    private static func transactReplacement(for profile: UserProfile,
+                                            in context: ModelContext,
+                                            hooks: Hooks,
+                                            mutation: () throws -> TrainingPlan) -> TrainingPlan? {
+        let previousAutosave = context.autosaveEnabled
+        context.autosaveEnabled = false
+        defer { context.autosaveEnabled = previousAutosave }
+        do {
+            let replacement = try mutation()
+            _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+            try hooks.beforeSave?()
+            try context.save()
+            return replacement
+        } catch {
+            context.rollback()
+            return nil
+        }
     }
 }

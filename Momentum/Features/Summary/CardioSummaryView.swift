@@ -44,8 +44,8 @@ struct CardioSummaryContent: View {
     // (The route map lives in `ActivityHero` now — the full-bleed faded hero the HOSTS render
     // above this content, 2026-08-14. The coordinate replay, remount keying, and full-screen
     // zoom all moved with it.)
-    /// HR series pulled from Apple Health for the run's window — populated only when we didn't capture
-    /// a live series ourselves (Watch / imported runs), so the HR chart appears for every run.
+    /// HR pulled from Apple Health inside this Momentum run's window only when we did not capture a
+    /// live series ourselves. This enriches a known run; it never discovers or imports one.
     @State private var healthHR: [(date: Date, bpm: Double)] = []
     /// The run's seven-day window, fetched here (on this always-present task) and handed to the
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
@@ -121,8 +121,8 @@ struct CardioSummaryContent: View {
                     }.value
                 hits = analysis.hits
                 verdict = analysis.verdict
-                // Backfill the HR series from Health when we didn't record one live (Watch / imported
-                // runs). Same window + threshold as the time-in-zones card, so the two agree.
+                // Fill the HR series from this known run's Health time window when we did not record
+                // one live. Same window + threshold as the time-in-zones card, so the two agree.
                 if (gps.hrSamples.filter { $0.bpm > 0 }).count < 4 {
                     let end = workout.startedAt.addingTimeInterval(max(workout.elapsedS, workout.durationS))
                     healthHR = await services.health.heartRateSeries(start: workout.startedAt, end: end)
@@ -438,8 +438,8 @@ struct CardioSummaryContent: View {
         return stats
     }
 
-    /// The run's average heart rate — our own captured average, else the mean of the Health series
-    /// we backfilled for a Watch/imported run (nil until that async load lands, then it appears).
+    /// The run's average heart rate — our own captured average, else the mean of the Health signal
+    /// queried inside this run's window (nil until that async load lands, then it appears).
     private func avgHR(_ gps: GPSDetail) -> Int? {
         if let a = gps.avgHR, a > 0 { return a }
         guard !healthHR.isEmpty else { return nil }
@@ -514,4 +514,3 @@ enum RepGrouping {
         return sorted[sorted.count / 2]
     }
 }
-

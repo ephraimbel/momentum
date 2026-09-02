@@ -7,26 +7,40 @@ import SwiftData
 struct RecordsCard: View {
     var distanceUnit: DistanceUnit = .auto
 
-    @Query private var profiles: [UserProfile]
+    @Query private var records: [PersonalRecord]
 
     /// The segment-flip static cache (the HeatmapHistoryCard/HealthSegmentView pattern): this card
-    /// remounts on every Trends visit, and `RecordsBook.currentBests` filtered the whole faulted
-    /// `prs` relationship ~8× (once per cardio type) on every BODY pass — including every chart
-    /// scrub tick. Value types only, never SwiftData refs.
+    /// remounts on every Trends visit, and `RecordsBook.currentBests` filters the full record list
+    /// once per cardio type. Value types only, never SwiftData refs.
     @MainActor private static var cache: (key: Int, bests: [RecordsBook.Best])?
-    @State private var bests: [RecordsBook.Best] = RecordsCard.cache?.bests ?? []
 
-    /// Cheap change signature: count + newest achievement (records are append-mostly).
+    /// Scalar signature over everything the displayed shelf reads. A direct record query is
+    /// deliberate: inserts performed by the one-time backfill invalidate it immediately, whereas
+    /// observing the profile did not reliably invalidate when only its `prs` relationship changed.
     private var recordsKey: Int {
-        let prs = profiles.first?.prs ?? []
         var h = Hasher()
-        h.combine(prs.count)
-        h.combine(prs.map(\.achievedAt).max())
+        h.combine(records.count)
+        for record in records {
+            h.combine(record.type.rawValue)
+            h.combine(record.value)
+            h.combine(record.achievedAt)
+        }
         return h.finalize()
     }
 
+    /// Compute synchronously on the first populated query. The previous empty-state `.task`
+    /// lived on an empty conditional view, so SwiftUI could elide the task that was required to
+    /// make that very view non-empty—a cold record book could therefore hide forever.
+    private var currentBests: [RecordsBook.Best] {
+        let key = recordsKey
+        if let cached = Self.cache, cached.key == key { return cached.bests }
+        let computed = RecordsBook.currentBests(records)
+        Self.cache = (key, computed)
+        return computed
+    }
+
     var body: some View {
-        let rows = bests
+        let rows = currentBests
         return Group {
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
@@ -42,15 +56,6 @@ struct RecordsCard: View {
             .padding(Theme.Space.md)
             .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
-        }
-        .task(id: recordsKey) {
-            if let c = Self.cache, c.key == recordsKey {
-                bests = c.bests
-                return
-            }
-            let computed = RecordsBook.currentBests(profiles.first?.prs ?? [])
-            bests = computed
-            Self.cache = (recordsKey, computed)
         }
     }
 

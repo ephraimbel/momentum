@@ -4,8 +4,54 @@ import SwiftData
 @testable import Momentum
 
 /// The sync contract (PRD §8.9/§27): dirty selection + the privacy/raw-log rules for what uploads.
+@Suite(.serialized)
 @MainActor
 struct SyncEngineTests {
+
+    private final class RequestRecorderURLProtocol: URLProtocol, @unchecked Sendable {
+        nonisolated(unsafe) static var requests: [URLRequest] = []
+        nonisolated(unsafe) static var responder: ((URLRequest) -> (Int, Data))?
+
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+        override func startLoading() {
+            // URLSession commonly hands a custom URLProtocol an upload stream rather than keeping
+            // `httpBody` populated. Materialize it so assertions and responders inspect the bytes
+            // that production actually sent instead of accidentally treating every body as empty.
+            var received = request
+            if received.httpBody == nil, let stream = received.httpBodyStream {
+                let body = Self.read(stream)
+                // `httpBody` and `httpBodyStream` are mutually exclusive. Explicitly clear the
+                // stream first; otherwise Foundation can keep returning nil from `httpBody` even
+                // after the assignment, causing body-aware stubs to accept every request.
+                received.httpBodyStream = nil
+                received.httpBody = body
+            }
+            Self.requests.append(received)
+            let stub = Self.responder?(received) ?? (201, Data())
+            let response = HTTPURLResponse(url: request.url!, statusCode: stub.0,
+                                           httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: stub.1)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+
+        private static func read(_ stream: InputStream) -> Data {
+            stream.open()
+            defer { stream.close() }
+            var result = Data()
+            var buffer = [UInt8](repeating: 0, count: 4_096)
+            while true {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                result.append(buffer, count: count)
+            }
+            return result
+        }
+    }
 
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema(PersistenceController.models)
@@ -23,6 +69,177 @@ struct SyncEngineTests {
         w.gps = g
         ctx.insert(w)
         return w
+    }
+
+    private func recordingSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [RequestRecorderURLProtocol.self]
+        return URLSession(configuration: configuration)
+    }
+
+    @Test func guestSyncMakesNoDoomedNetworkRequest() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workout = gpsRun(context, privacy: .private, synced: false)
+        try context.save()
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = nil
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { nil }
+        )
+        await service.sync([workout], in: context)
+
+        #expect(RequestRecorderURLProtocol.requests.isEmpty)
+        #expect(workout.syncedAt == nil)
+    }
+
+    @Test func signedInSyncStillUsesTheUserJWT() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workout = gpsRun(context, privacy: .private, synced: false)
+        try context.save()
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = nil
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { "user-jwt" }
+        )
+        await service.sync([workout], in: context)
+
+        #expect(RequestRecorderURLProtocol.requests.count == 1)
+        #expect(RequestRecorderURLProtocol.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer user-jwt")
+        #expect(workout.syncedAt != nil)
+    }
+
+    @Test func unauthorizedSyncRefreshesOnceAndCarriesTheNewJWT() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workout = gpsRun(context, privacy: .private, synced: false)
+        try context.save()
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = { request in
+            if request.value(forHTTPHeaderField: "Authorization") == "Bearer fresh-jwt" {
+                return (201, Data())
+            }
+            return (401, Data(#"{"code":"PGRST301","message":"JWT expired"}"#.utf8))
+        }
+        var refreshes = 0
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { "stale-jwt" },
+            refreshAccessToken: { refreshes += 1; return "fresh-jwt" }
+        )
+        await service.sync([workout], in: context)
+
+        #expect(refreshes == 1)
+        #expect(RequestRecorderURLProtocol.requests.count == 2)
+        #expect(RequestRecorderURLProtocol.requests.last?.value(forHTTPHeaderField: "Authorization")
+                == "Bearer fresh-jwt")
+        #expect(workout.syncedAt != nil)
+    }
+
+    @Test func unauthorizedAfterRefreshStopsWithoutLoopingOrStampingRows() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workouts = [
+            gpsRun(context, privacy: .private, synced: false),
+            gpsRun(context, privacy: .private, synced: false),
+        ]
+        try context.save()
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = { _ in
+            (401, Data(#"{"code":"PGRST301","message":"JWT rejected"}"#.utf8))
+        }
+        var refreshes = 0
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { "stale-jwt" },
+            refreshAccessToken: { refreshes += 1; return "fresh-jwt" }
+        )
+        await service.sync(workouts, in: context)
+
+        #expect(refreshes == 1)
+        #expect(RequestRecorderURLProtocol.requests.count == 2)
+        #expect(workouts.allSatisfy { $0.syncedAt == nil })
+    }
+
+    @Test func rowScoped400IsolatesBadWorkoutAndContinuesGoodBackups() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let first = gpsRun(context, privacy: .private, synced: false)
+        let bad = gpsRun(context, privacy: .private, synced: false)
+        let last = gpsRun(context, privacy: .private, synced: false)
+        first.startedAt = Date(timeIntervalSince1970: 1)
+        bad.startedAt = Date(timeIntervalSince1970: 2)
+        last.startedAt = Date(timeIntervalSince1970: 3)
+        try context.save()
+        let rejectedID = bad.id.uuidString
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = { request in
+            let objects = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data()))
+                as? [[String: Any]] ?? []
+            if objects.contains(where: { $0["id"] as? String == rejectedID }) {
+                return (400, Data(#"{"code":"22P02","message":"invalid input syntax"}"#.utf8))
+            }
+            return (201, Data())
+        }
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { "user-jwt" }
+        )
+        await service.sync([first, bad, last], in: context)
+
+        #expect(first.syncedAt != nil)
+        #expect(bad.syncedAt == nil)
+        #expect(last.syncedAt != nil)
+
+        // The bad row remains recoverable and dirty, but it cannot hammer the server on every
+        // foreground sweep of this app session.
+        let requestsAfterIsolation = RequestRecorderURLProtocol.requests.count
+        await service.sync([bad], in: context)
+        #expect(RequestRecorderURLProtocol.requests.count == requestsAfterIsolation)
+    }
+
+    @Test func global400StopsWithoutFanningOutOneRequestPerWorkout() async throws {
+        let container = try makeContainer()
+        let context = container.mainContext
+        let workouts = (0..<3).map { index -> Workout in
+            let workout = gpsRun(context, privacy: .private, synced: false)
+            workout.startedAt = Date(timeIntervalSince1970: TimeInterval(index))
+            return workout
+        }
+        try context.save()
+        RequestRecorderURLProtocol.requests = []
+        RequestRecorderURLProtocol.responder = { _ in
+            (400, Data(#"{"code":"PGRST204","message":"column not found"}"#.utf8))
+        }
+
+        let service = SyncService(
+            session: recordingSession(),
+            endpointOverride: URL(string: "https://example.invalid/rest/v1/workouts"),
+            bearerOverride: "anon-key",
+            accessToken: { "user-jwt" }
+        )
+        await service.sync(workouts, in: context)
+
+        #expect(RequestRecorderURLProtocol.requests.count == 1)
+        #expect(workouts.allSatisfy { $0.syncedAt == nil })
     }
 
     @Test func publicRouteUploadsButPrivateStaysOnDevice() throws {

@@ -115,10 +115,10 @@ enum CoachProactive {
         return true
     }
 
-    // MARK: - The earned load bump (the one direction that always needs a tap)
+    // MARK: - The reviewed load bump (the one direction that always needs a tap)
 
-    /// When completed load says the athlete has earned more, the offer lands in the chat as a real
-    /// proposal card — not just a row buried on the Plan page.
+    /// When completed load is lighter than the recent pattern, a conditional review lands in chat as
+    /// a real proposal card. The ratio never claims the athlete has "earned" or is cleared for more.
     @discardableResult
     private static func seedEarnedBump(profile: UserProfile, workouts: [Workout],
                                        messages: [ChatMessage], today: Date,

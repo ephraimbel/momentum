@@ -9,10 +9,13 @@ struct AnalyticsEventTests {
     @Test func eventNamesMatchPRDTaxonomy() {
         #expect(AnalyticsEvent.appLaunched(first: true).name == "app_launched")
         #expect(AnalyticsEvent.welcomeAction(action: "get_started").name == "welcome_action")
-        #expect(AnalyticsEvent.onboardingStep(index: 0).name == "onboarding_step")
+        #expect(AnalyticsEvent.onboardingStep(name: "name", index: 0, position: 1, total: 22).name == "onboarding_step")
+        #expect(AnalyticsEvent.onboardingShowcase(action: "viewed").name == "onboarding_showcase")
+        #expect(AnalyticsEvent.onboardingPermission(kind: "location", status: "granted").name == "onboarding_permission")
         #expect(AnalyticsEvent.planGenerated(disciplines: 2).name == "plan_generated")
-        #expect(AnalyticsEvent.paywallView(placement: "ai_read").name == "paywall_view")
-        #expect(AnalyticsEvent.paywallConvert(product: "annual").name == "paywall_convert")
+        #expect(AnalyticsEvent.paywallView(placement: "ai_read", pricingLive: true).name == "paywall_view")
+        #expect(AnalyticsEvent.paywallAction(action: "purchase_attempt", placement: "ai_read", product: "annual").name == "paywall_action")
+        #expect(AnalyticsEvent.paywallConvert(product: "annual", placement: "full_plan").name == "paywall_convert")
         #expect(AnalyticsEvent.workoutStarted(type: "run").name == "workout_started")
         #expect(AnalyticsEvent.setLogged(latencyMs: 12).name == "set_logged")
         #expect(AnalyticsEvent.restTimerComplete.name == "rest_timer_complete")
@@ -27,7 +30,8 @@ struct AnalyticsEventTests {
         #expect(AnalyticsEvent.workoutStarted(type: "trailRun").parameters == ["type": "trailRun"])
         #expect(AnalyticsEvent.aiReadViewed(latencyMs: 420, fallback: false).parameters
                 == ["latency_ms": "420", "fallback": "false"])
-        #expect(AnalyticsEvent.paywallConvert(product: "monthly").parameters == ["product": "monthly"])
+        #expect(AnalyticsEvent.paywallConvert(product: "weekly", placement: "fuel_locked").parameters
+                == ["product": "weekly", "placement": "fuel_locked"])
         #expect(AnalyticsEvent.restTimerComplete.parameters.isEmpty)
         #expect(AnalyticsEvent.planSessionAdapted.parameters.isEmpty)
         // The install denominator: `first` must serialize as the literal the funnel views filter on
@@ -36,6 +40,12 @@ struct AnalyticsEventTests {
         #expect(AnalyticsEvent.appLaunched(first: false).parameters == ["first": "false"])
         #expect(AnalyticsEvent.welcomeAction(action: "get_started").parameters
                 == ["action": "get_started"])
+        #expect(AnalyticsEvent.onboardingStep(name: "notifications", index: 23, position: 20, total: 24).parameters
+                == ["step": "notifications", "index": "23", "position": "20", "total": "24"])
+        #expect(AnalyticsEvent.paywallView(placement: "full_plan", pricingLive: false).parameters
+                == ["placement": "full_plan", "pricing_live": "false"])
+        #expect(AnalyticsEvent.onboardingPermission(kind: "notifications", status: "skipped").parameters
+                == ["kind": "notifications", "status": "skipped"])
     }
 }
 

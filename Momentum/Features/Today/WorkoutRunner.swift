@@ -355,7 +355,8 @@ enum WorkoutCompletion {
     /// reminder rescheduling.
     static func adapt(_ workout: Workout, plan: TrainingPlan?, profile: UserProfile?,
                       unit: DistanceUnit, services: Services, in context: ModelContext) {
-        // Protective adaptation first (ACWR-driven, ≤1×/week, never auto-increases load) —
+        // Protective adaptation first (load change corroborated by session response, ≤1×/week,
+        // never auto-increases load) —
         // then pace recalibration only when the plan was NOT just eased. The old order could
         // announce "paces got faster" and ease those same sessions in one save.
         // Each path records its own CoachingEvent, which now carries delivery (toast or budgeted

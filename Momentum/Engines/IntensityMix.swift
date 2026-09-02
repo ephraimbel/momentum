@@ -1,13 +1,13 @@
 import Foundation
 
-/// The polarized-training check (ENDURANCE-FOCUS §12): what fraction of recent running was actually
-/// easy? Elite practice — and the research behind it — lands near **80/20 easy:hard**; the classic
-/// self-coached mistake is drifting into the grey middle (every run "kind of hard"). Pure + tested.
+/// Describes what fraction of recent running was easy versus quality work (ENDURANCE-FOCUS §12).
+/// The 80% marker is a familiar reference, not a universal prescription: event, phase, training age,
+/// and classification method all change the appropriate distribution. Pure + tested.
 enum IntensityMix {
     enum Verdict: String, Sendable {
-        case polarized       // ≥ ~75% easy — the sweet spot
-        case grey            // 60–75% easy — drifting hard
-        case tooHard         // < 60% easy — the engine never gets built
+        case polarized       // ≥ ~75% easy — mostly easy
+        case grey            // 60–75% easy — mixed intensity
+        case tooHard         // < 60% easy — hard work dominates the sample
     }
 
     struct Mix: Sendable, Equatable {
@@ -18,9 +18,9 @@ enum IntensityMix {
 
         var blurb: String {
             switch verdict {
-            case .polarized: "Right in the polarized sweet spot — easy days are building your engine."
-            case .grey:      "Drifting toward the grey zone. Make the easy days truly easy."
-            case .tooHard:   "Most runs are hard — easy running is where the aerobic engine gets built."
+            case .polarized: "Most of your running is easy, with quality kept deliberate."
+            case .grey:      "Your recent mix is more even. Check that easy days still feel genuinely easy."
+            case .tooHard:   "Hard work dominates this sample. Review the block before adding more intensity."
             }
         }
     }

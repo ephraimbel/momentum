@@ -31,6 +31,16 @@ enum NotificationPrefs {
         d.set(value, forKey: key)
     }
 
+    /// Persist exactly what the onboarding copy promises. Accepting enables planned-session
+    /// reminders and adaptation heads-ups; the other categories stay off until chosen in Settings.
+    static func setOnboardingChoice(enabled: Bool, in d: UserDefaults = .standard) {
+        set(sessionKey, to: enabled, in: d)
+        set(coachingKey, to: enabled, in: d)
+        set(streakKey, to: false, in: d)
+        set(weeklyKey, to: false, in: d)
+        set(morningKey, to: false, in: d)
+    }
+
     /// The athlete's explicit reminder time, when they've chosen one. nil → learned/default timing.
     static func customReminderTime(_ d: UserDefaults = .standard) -> (hour: Int, minute: Int)? {
         guard d.string(forKey: reminderModeKey) == "custom",

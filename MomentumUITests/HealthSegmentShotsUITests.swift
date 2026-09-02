@@ -7,7 +7,12 @@ final class HealthSegmentShotsUITests: XCTestCase {
 
     private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/9e5489bb-10b4-4631-a8cd-f5b4f9789f6e/scratchpad/healthwalk"
 
-    override func setUp() { super.setUp(); continueAfterFailure = false }
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        continueAfterFailure = false
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["HEALTH_UI_AUDIT"] == "1",
+                          "Health visual audit; set TEST_RUNNER_HEALTH_UI_AUDIT=1 to run")
+    }
 
     private func dump(_ app: XCUIApplication, _ name: String) {
         try? FileManager.default.createDirectory(atPath: dumpDir, withIntermediateDirectories: true)

@@ -13,6 +13,7 @@ struct RootView: View {
     @Environment(Services.self) private var services          // crash-recovery completion runs the live pipeline
     @Environment(\.modelContext) private var context
     @Environment(\.colorScheme) private var colorScheme   // the tab-bar monogram bakes it in
+    @Environment(\.scenePhase) private var scenePhase
     // Cold-launch recovery (PRD §8.3/§8.4): a workout that was live when the app died. Every sample
     // and set was persisted as it happened — this prompt is how they come back.
     @State private var recoveredWorkout: Workout?
@@ -94,10 +95,23 @@ struct RootView: View {
         #if DEBUG
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
+            .task(id: auth.userID) { await refreshSocialInbox() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await refreshSocialInbox() } }
+            }
         #else
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
+            .task(id: auth.userID) { await refreshSocialInbox() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await refreshSocialInbox() } }
+            }
         #endif
+    }
+
+    private func refreshSocialInbox() async {
+        guard CommunityAccess.enabled, auth.isSignedIn, !auth.isGuest else { return }
+        await SocialActivityInbox.refresh(backend: services.social, in: context)
     }
 
     /// A root fullScreenCover owns the screen — pause under-cover overlays (awards, toasts).
@@ -138,7 +152,7 @@ struct RootView: View {
                     }
                 }
                 // Award unlocks meet the athlete wherever they land — awards can arrive from any
-                // path (save flows, Health import, a plan week completing), so the presenter sits
+                // path (save flows or a plan week completing), so the presenter sits
                 // once at the root rather than on each surface. Paused while a root cover owns the
                 // screen (the overlay renders UNDER covers — presenting then would play the whole
                 // celebration invisibly behind them).
@@ -183,15 +197,11 @@ struct RootView: View {
                     set: { paywall.presentedFeature = $0 })) { feature in
                     PaywallView(feature: feature)
                 }
-                // The onboarding gate — SOFT since 2026-08-06 (user call). `finishOnboarding` still
-                // sets the flag when setup reaches the paywall un-entitled, so a force-quit at the
-                // wall re-raises it here once; but the wall's X now clears the flag and moves on,
-                // so no one is ever locked out. Anyone left mid-gate by the hard era (the flag
-                // persisted) gets the same X on their next launch.
-                // `set` still does NOT clear `onboardingGatePending` — the clears are an entitlement
-                // (`setPro(true)`) and the flow's own close(), both of which run before this cover
-                // resolves, so a dismissal here never needs to. The store-unreachable deferral
-                // (`storeUnreachableDeferral`, unpersisted) remains as a belt-and-braces escape.
+                // The onboarding gate — HARD since 2026-09-01. `finishOnboarding` sets the persisted
+                // flag when setup reaches checkout un-entitled, so force-quitting cannot bypass it;
+                // this root host re-raises directly at checkout. Only an entitlement clears the flag.
+                // The unpersisted store-unreachable deferral remains the safety valve for a real
+                // StoreKit/RevenueCat outage and returns on the next launch.
                 .fullScreenCover(isPresented: Binding(
                     get: { gateAccountBeat
                         || (paywall.onboardingGatePending && !paywall.isPro && !paywall.storeUnreachableDeferral
@@ -206,9 +216,8 @@ struct RootView: View {
                             })
                         .environment(\.colorScheme, .light)   // same light sequence onboarding runs in
                     } else {
-                        // Re-enters the three-page flow AT the checkout page — the athlete saw
-                        // the try-free and reminder pages before force-quitting; re-telling the
-                        // story would read as a loop.
+                        // Re-enters the two-page flow AT checkout — the athlete already saw the
+                        // showcase before force-quitting, so re-telling it would read as a loop.
                         OnboardingPaywallFlow(startAtCheckout: true, onEntitled: {
                             // A purchase landed HERE, so onboarding's own paywall → `.account`
                             // hand-off never ran. Swap this cover to the account beat instead of
@@ -216,13 +225,6 @@ struct RootView: View {
                             // true, so the cover is never torn down and there is no re-presentation
                             // to lose under load. If they already have a real account there's nothing
                             // to offer: leave it alone and `get` goes false on its own.
-                            guard !(auth.isSignedIn && !auth.isGuest) else { return }
-                            gateAccountBeat = true
-                        }, onClose: {
-                            // The X (soft gate): they skipped paying, but they also never reached
-                            // onboarding's account beat — offer it the same cover-swapping way.
-                            // close() already cleared the gate flag, so for a signed-in athlete
-                            // `get` goes false on its own and the cover resolves.
                             guard !(auth.isSignedIn && !auth.isGuest) else { return }
                             gateAccountBeat = true
                         })
@@ -530,8 +532,8 @@ struct RootView: View {
                 }
                 // Mint the record book on LAUNCH, not on a tab visit. This is one-shot (versioned
                 // flag) and dedupes per (type, workout), but it used to run only inside
-                // `ProgressView` — so an athlete who imported a history from Apple Health and went
-                // straight to Profile read a flat "0 PRS" until they happened to open Progress.
+                // `ProgressView` — so an athlete with workouts that predated record persistence and
+                // went straight to Profile read a flat "0 PRS" until they happened to open Progress.
                 // The trio is one of the first things anyone sees; it has to be true on arrival.
                 // Deferred so the replay never competes with first paint — 0.8 s turned out to be
                 // exactly when the athlete starts scrolling, so it moved to 3 s (2026-08-13). A

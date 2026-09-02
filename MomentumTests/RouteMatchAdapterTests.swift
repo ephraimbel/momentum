@@ -183,7 +183,7 @@ struct RouteMatchAdapterTests {
     }
 
     @Test func aRunWithNoStoredTraceNeverMatches() throws {
-        // Apple Health imports arrive as a summary with no fixes. No geometry, no claim.
+        // A manually summarized legacy row can have distance but no fixes. No geometry, no claim.
         let container = try makeContainer()
         let ctx = container.mainContext
         let prior = insertRun(ctx, daysAgo: 7, paceSPerKm: 340, jitterSeed: 0)

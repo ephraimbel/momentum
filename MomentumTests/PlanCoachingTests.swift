@@ -243,7 +243,7 @@ struct PlanCoachingTests {
         #expect(plan.p5kSPerKm == 300)                  // a bad day never slows you down (no-shame)
     }
 
-    // MARK: Auto-adaptive load (P3 — ACWR ease/rest, never auto-increase, ≤1/week)
+    // MARK: Corroborated load response (ratio + athlete response, never auto-increase, ≤1/week)
 
     private func loggedWorkout(in ctx: ModelContext, daysAgo: Int, minutes: Double = 60, rpe: Int = 6) -> Workout {
         let w = Workout()
@@ -256,11 +256,24 @@ struct PlanCoachingTests {
         return w
     }
 
-    /// 10 equal sessions weighted so the acute:chronic ratio lands ~1.54 ⇒ "ease".
-    /// (Chronic load is normalized to the history that exists — oldest at day 27 keeps the
-    /// divisor ≈ 3.86 and this genuinely overreaching; day 28 would sit on the window boundary.)
-    private func overreachingHistory(in ctx: ModelContext) {
-        for d in [0, 2, 4, 6] { _ = loggedWorkout(in: ctx, daysAgo: d) }       // acute (last 7d)
+    /// 10 equal sessions weighted so the recent-to-usual ratio lands ~1.54. By default the newest
+    /// planned easy run also carries an explicit harder-than-planned response; the ratio alone is
+    /// intentionally insufficient to mutate a plan.
+    private func overreachingHistory(in ctx: ModelContext, corroborated: Bool = true) {
+        for d in [0, 2, 4, 6] {
+            let workout = loggedWorkout(in: ctx, daysAgo: d)
+            if d == 0, corroborated {
+                let session = PlannedSession()
+                session.date = workout.startedAt
+                session.discipline = .running
+                session.runType = .easy
+                session.status = .completed
+                session.completedWorkout = workout
+                workout.plannedSession = session
+                workout.planFit = .harder
+                ctx.insert(session)
+            }
+        }
         for d in [10, 12, 14, 18, 22, 27] { _ = loggedWorkout(in: ctx, daysAgo: d) }  // chronic-only
     }
 
@@ -297,6 +310,20 @@ struct PlanCoachingTests {
 
         #expect(PlanCoaching.autoAdapt(plan, workouts: workouts, in: ctx) == .ease)
         #expect(PlanCoaching.autoAdapt(plan, workouts: workouts, in: ctx) == nil)   // gated, no compounding
+    }
+
+    @Test func loadRatioAloneNeverMutatesThePlan() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        overreachingHistory(in: ctx, corroborated: false)
+        let future = futureRun(in: ctx, distanceM: 8000)
+        let plan = makePlan(in: ctx, sessions: [future])
+        let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+
+        #expect(ProgressInsights(workouts: workouts).recommendation == .ease)
+        #expect(PlanCoaching.autoAdapt(plan, workouts: workouts, in: ctx) == nil)
+        #expect(plan.lastAdaptedAt == nil)
+        #expect(future.targetDistanceM == 8000)
     }
 
     @Test func autoAdaptNeverIncreasesLoad() throws {

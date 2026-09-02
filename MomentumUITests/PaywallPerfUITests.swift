@@ -7,14 +7,23 @@ import XCTest
 ///  • scroll hitches while flinging the marquee (`scrollDecelerationMetric` reads the OS's own
 ///    scroll signposts — SwiftUI's ScrollView is UIScrollView-backed, so they fire);
 ///  • the page still answers after the burst: picking the other plan flips the selection.
+@MainActor
 final class PaywallPerfUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     private func launch() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--paywall", "--debug-free"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--paywall", "--debug-free"]
         app.launch()
         return app
+    }
+
+    /// `FeatureMarquee` deliberately combines its rows into one VoiceOver element, so its
+    /// underlying SwiftUI `ScrollView` is not part of the XCUI accessibility tree. Gesture on the
+    /// semantic element at the same on-screen frame instead of depending on the implementation
+    /// type leaking through accessibility.
+    private func marquee(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)["Everything in Pro"].firstMatch
     }
 
     func testOpensFast() {
@@ -28,7 +37,7 @@ final class PaywallPerfUITests: XCTestCase {
 
     func testMarqueeScrollsWithoutHitches() {
         let app = launch()
-        let marquee = app.scrollViews.firstMatch
+        let marquee = marquee(in: app)
         XCTAssertTrue(marquee.waitForExistence(timeout: 10), "Marquee not found.")
         sleep(2)   // let the entrance settle so we measure steady state
         measure(metrics: [XCTOSSignpostMetric.scrollDecelerationMetric],
@@ -40,8 +49,8 @@ final class PaywallPerfUITests: XCTestCase {
 
     func testStaysResponsiveAfterBurst() {
         let app = launch()
-        let marquee = app.scrollViews.firstMatch
-        XCTAssertTrue(marquee.waitForExistence(timeout: 10))
+        let marquee = marquee(in: app)
+        XCTAssertTrue(marquee.waitForExistence(timeout: 10), "Marquee not found.")
         for _ in 0..<6 { marquee.swipeUp(velocity: .fast); marquee.swipeDown(velocity: .fast) }
         let weekly = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Weekly plan'")).firstMatch
         XCTAssertTrue(weekly.waitForExistence(timeout: 5), "Weekly card not found after the burst.")

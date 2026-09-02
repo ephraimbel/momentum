@@ -1,6 +1,5 @@
 import Foundation
 import HealthKit
-import SwiftData
 
 /// Apple Health, one direction out and signals only in.
 ///
@@ -120,7 +119,7 @@ final class HealthService: HealthServing {
 
     /// Read the athlete's most recent body mass + resting HR from Health, to personalize estimates
     /// (calories) and recovery signals (PRD §8.6). Returns `nil`s when unavailable/unauthorized.
-    func importedBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) {
+    func currentBodyMetrics() async -> (bodyMassKg: Double?, restingHR: Int?) {
         guard HKHealthStore.isHealthDataAvailable() else { return (nil, nil) }
         async let mass = latest(.bodyMass, unit: .gramUnit(with: .kilo))
         async let rhr = latest(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()))

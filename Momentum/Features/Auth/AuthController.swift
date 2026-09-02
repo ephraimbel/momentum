@@ -108,8 +108,19 @@ final class AuthController {
             UserDefaults.standard.removeObject(forKey: Self.emailKey)
             UserDefaults.standard.removeObject(forKey: Self.cloudSessionKey)
             UserDefaults.standard.removeObject(forKey: Self.lastRealUserIDKey)
-            UserDefaults.standard.removeObject(forKey: Self.explicitSignOutKey)
-            if let client = SupabaseClientProvider.client { Task { try? await client.auth.signOut() } }
+            // This launch argument promises a stable signed-out gate. Mark it as an explicit exit
+            // before the first SwiftUI frame so a lived-in simulator cannot auto-resume as a guest
+            // while the asynchronous Supabase cleanup is still in flight. The marker is cleared by
+            // every real entry path (`continueAsGuest` / `noteRealSignIn`), exactly like production.
+            UserDefaults.standard.set(true, forKey: Self.explicitSignOutKey)
+            // Do not launch `auth.signOut()` in a Task here. It can finish after a recovery link
+            // has established a NEW session and erase that session underneath the password sheet.
+            // The SDK's default storage is public and synchronous, so the UI-test seam can clear
+            // its two local keys deterministically before the first frame without touching the
+            // temporary account's server-side sessions.
+            let authStorage = KeychainLocalStorage()
+            try? authStorage.remove(key: "supabase.auth.token")
+            try? authStorage.remove(key: "supabase.auth.token-code-verifier")
             return
         }
         // Walk onboarding as a real GUEST — the shipping path since 2026-07-27, where the account
@@ -387,7 +398,6 @@ final class AuthController {
 
     /// True while a reset-link session wants a new password — RootView presents the sheet.
     var needsNewPassword = false
-
     /// Handle the momentum://auth-callback deep link — email-confirmation and password-reset
     /// links land here (the OAuth sheet handles its own callback internally). Creates the
     /// session and, for recovery links, raises the set-new-password prompt.
@@ -440,7 +450,10 @@ final class AuthController {
         do {
             _ = try await client.auth.update(user: UserAttributes(password: password))
             return true
-        } catch { return false }
+        } catch {
+            authLog.error("password update failed: \(error, privacy: .public)")
+            return false
+        }
     }
 
     /// Permanently delete the account server-side (App Store 5.1.1(v)): photos and avatar via

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import Momentum
 
-/// The plan-generation safety governor — a plan can't ramp into the ACWR injury-risk zone.
+/// The plan-generation progression governor — a plan cannot exceed its documented internal limit.
 struct ACWRGovernorTests {
 
     @Test func saneRampsPassUntouched() {
@@ -51,7 +51,7 @@ struct ACWRGovernorTests {
             let chronic = history.suffix(4).reduce(0, +) / 4
             let v = week.runVolumeM
             // ×1.03 absorbs clean-distance snapping (RunRounding), the last generation step — it can
-            // round a capped week up by <2%, still safely inside the ACWR range.
+            // round a capped week up by <2%, still inside the documented progression tolerance.
             if chronic > 0 { #expect(v <= chronic * ACWRGovernor.maxRatio * 1.03, "week \(week.index)") }
             history.append(v)
         }

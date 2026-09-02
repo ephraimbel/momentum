@@ -208,7 +208,10 @@ struct PaywallShowcase: View {
                     // And the thumb can take over mid-dwell without moving a whole card, so
                     // `slide` never changes, the id never flips, and nothing cancels us at all.
                     guard !Task.isCancelled, scrollPhase == .idle else { return }
-                    withAnimation(.easeInOut(duration: 0.55)) { slide = (slide ?? band) + 1 }
+                    // A critically-damped spring, not ease-in-out: the deck leaves its card the
+                    // way a flicked card does and decelerates into the next slot like a thumb
+                    // would land it, so the auto-play and the athlete's own swipes share one hand.
+                    withAnimation(.spring(response: 0.7, dampingFraction: 0.92)) { slide = (slide ?? band) + 1 }
                 }
             slideNote
             pageDots
@@ -369,6 +372,8 @@ struct PaywallShowcase: View {
 /// entitlement hand-off — so no paywall surface ever reimplements store handling.
 struct PaywallCheckout: View {
     let product: PaywallProduct
+    let placement: String
+    var ctaLead: String?
     /// Hard placement (onboarding + relaunch gate): no dismissal path exists, so after two genuine
     /// store failures the deferral escape appears. Contextual placements never show it.
     var hard: Bool = false
@@ -380,8 +385,13 @@ struct PaywallCheckout: View {
     @Environment(Services.self) private var services
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var working = false
+    /// The purchase landed. The CTA holds a check for one beat before the cover goes, so the
+    /// athlete SEES the transaction complete rather than having the page vanish under their
+    /// thumb mid-sheet-dismissal.
+    @State private var done = false
     /// Set when a restore finds nothing to restore — the user gets a plain confirmation rather
     /// than a button that silently does nothing.
     @State private var nothingToRestore = false
@@ -400,7 +410,7 @@ struct PaywallCheckout: View {
         VStack(spacing: Theme.Space.sm) {
             // The Cal AI-style trust line: when the selected plan starts with a free trial, say
             // out loud that today costs nothing. Suppressed with placeholder pricing (the trial
-            // length is a promise too) and for the trial-less monthly — but its SLOT is always
+            // length is a promise too) and for the trial-less weekly plan — but its SLOT is always
             // reserved (owner call 2026-08-20): removing the row shrank the checkout and nudged
             // every control above it when switching plans. Geometry holds; only opacity moves.
             Label("No payment due now", systemImage: "checkmark")
@@ -442,19 +452,29 @@ struct PaywallCheckout: View {
                 // package to buy, so retry the fetch instead of firing a purchase that can only
                 // fail. Succeeds → the athlete taps again and buys at the store's real price.
                 guard paywall.pricingIsLive else {
+                    logAction("pricing_retry")
                     await paywall.reloadPricing()
                     working = false
                     if !paywall.pricingIsLive {
+                        logAction("pricing_failed")
+                        SentryMonitor.capture(.storePricingUnavailable,
+                                              tags: ["placement": placement,
+                                                     "product": product.isAnnual ? "annual" : "weekly"])
                         storeFailures += 1
                         purchaseError = "We couldn't load pricing from the App Store. Check your connection and try again."
                     }
                     return
                 }
+                logAction("purchase_attempt")
                 let outcome = await paywall.purchase(product)
                 working = false
                 switch outcome {
                 case .purchased:
-                    services.analytics.log(.paywallConvert(product: product.isAnnual ? "annual" : "monthly"))
+                    if paywall.claimPurchaseConversion(for: product.id) {
+                        services.analytics.log(.paywallConvert(
+                            product: product.isAnnual ? "annual" : "weekly",
+                            placement: placement))
+                    }
                     // The reminder page 2 of the onboarding flow promises. Scheduled only when a
                     // trial actually started, and harmless without notification permission (iOS
                     // simply won't deliver it).
@@ -464,32 +484,68 @@ struct PaywallCheckout: View {
                             renewText: "\(product.priceText)/\(product.isAnnual ? "year" : "week")")
                     }
                 case .cancelled:
-                    break                                   // they changed their mind — say nothing
+                    logAction("purchase_cancelled")         // UI stays silent; analytics does not
                 case .failed(let message):
+                    logAction("purchase_failed")
+                    // Never send StoreKit's free-form message — it can change and is not needed to
+                    // identify the failed stage. Static issue + bounded tags are enough to triage.
+                    SentryMonitor.capture(.storePurchaseFailed,
+                                          tags: ["placement": placement,
+                                                 "product": product.isAnnual ? "annual" : "weekly"])
                     storeFailures += 1
                     purchaseError = message
                 }
-                if paywall.isPro { finishEntitled() }
+                if paywall.isPro {
+                    // The success beat: the spinner gives way to a check and the phone says so.
+                    Haptics.success()
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.7)) { done = true }
+                    if let onEntitled {
+                        // A host that swaps its cover to a next beat must hear about it in the
+                        // SAME tick `isPro` flipped: the relaunch gate's cover is presented off
+                        // `!isPro`, and only the host's own flag keeps it standing. Holding this
+                        // for the beat tore that cover down and left the wall stuck
+                        // (OnboardingPaywallUITests caught it). The next beat is the confirmation.
+                        onEntitled()
+                    } else {
+                        // Dismissing ourselves: hold the check for one beat, so the athlete SEES the
+                        // transaction complete rather than having the page vanish under their thumb.
+                        if !reduceMotion { try? await Task.sleep(for: .seconds(0.7)) }
+                        dismiss()
+                    }
+                }
             }
         } label: {
             // The working state crossfades to a spinner instead of dimming a sentence — the
-            // button holds its shape and weight while the store round-trip runs.
+            // button holds its shape and weight while the store round-trip runs. A changed
+            // title (the plan switched under it) rolls like a ticker: the old line rises out,
+            // the new one rises in.
             ZStack {
                 Text(ctaTitle)
                     .font(.rounded(17, weight: .medium))
-                    .opacity(working ? 0 : 1)
+                    .id(ctaTitle)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 7)),
+                        removal: .opacity.combined(with: .offset(y: -7))))
+                    .opacity(working || done ? 0 : 1)
                 ProgressView()
                     .tint(Theme.background)
-                    .opacity(working ? 1 : 0)
+                    .opacity(working && !done ? 1 : 0)
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
+                    Text("You're in").font(.rounded(17, weight: .medium))
+                }
+                .scaleEffect(done ? 1 : 0.6)
+                .opacity(done ? 1 : 0)
             }
             .frame(maxWidth: .infinity).frame(height: 54)
             .foregroundStyle(Theme.background)
             .background(Capsule().fill(Theme.ink))
             .contentShape(Capsule())
             .animation(.easeOut(duration: 0.18), value: working)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: ctaTitle)
         }
         .buttonStyle(PressableScaleStyle(scale: 0.98))
-        .disabled(working)
+        .disabled(working || done)
     }
 
     private var ctaTitle: String {
@@ -497,6 +553,9 @@ struct PaywallCheckout: View {
         // Don't quote a price we haven't confirmed with the store, and don't promise a trial
         // length that came from a placeholder either.
         guard paywall.pricingIsLive else { return "Retry" }
+        if let ctaLead, product.trialDays == 0 {
+            return "\(ctaLead) · \(product.priceText)\(product.isAnnual ? "/year" : "/week")"
+        }
         return product.trialDays > 0
             ? "Start my \(product.trialDays)-day free trial"
             : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/week")"
@@ -505,7 +564,12 @@ struct PaywallCheckout: View {
     /// One tiny line: honest renewal terms + the required links, nothing taller.
     private var fineprint: some View {
         HStack(spacing: Theme.Space.xs) {
+            // Crossfades when the plan switches, on the same clock as the CTA above it — the
+            // two lines change together, so they should move together.
             Text(renewalTerms)
+                .id(renewalTerms)
+                .transition(.opacity)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: renewalTerms)
             Text("·")
             Button("Restore") { restore() }
             Text("·")
@@ -536,6 +600,13 @@ struct PaywallCheckout: View {
             working = true; _ = await paywall.restore(); working = false
             if paywall.isPro { finishEntitled() } else { nothingToRestore = true }
         }
+    }
+
+    private func logAction(_ action: String) {
+        services.analytics.log(.paywallAction(
+            action: action,
+            placement: placement,
+            product: product.isAnnual ? "annual" : "weekly"))
     }
 
     /// Entitlement landed. A host that keeps its cover on screen for a following beat handles it

@@ -52,7 +52,7 @@ pushed to the live listing — the API write needs the owner's go-ahead (permiss
 ```
 Momentum is your personal endurance coach. It builds a training plan around your body, your schedule, and your race, then adapts it week by week from how you're actually recovering.
 
-Most running apps hand you a rigid plan and hope for the best. Momentum reads your sleep, resting heart rate and HRV, watches your training load, and adjusts before you break down. No hype. No shame. Just steady progress, from your first 5K to your first ultra.
+Most running apps hand you a rigid plan and hope for the best. Momentum reads your sleep, resting heart rate and HRV, watches how your recent training is landing, and makes bounded adjustments when the signals agree. No hype. No shame. Just steady progress, from your first 5K to your first ultra.
 
 A PLAN BUILT FOR YOU
 • A personalized training plan for your race: 5K, 10K, half, marathon, or ultra
@@ -72,7 +72,7 @@ GUIDED RUNS, REAL COACHING
 • Race-week briefing, fueling guidance, and a shakeout the day before
 
 STRENGTH FOR ENDURANCE
-• Short, runner-specific strength sessions that build durability and cut injury risk
+• Short, runner-specific strength sessions that build durability and running economy
 • See exactly which muscles you worked, session to session
 
 BUILT FOR APPLE, BUILT FOR YOU
@@ -132,7 +132,7 @@ Declare accurately (you collect these):
 ## Pricing (subscriptions — App Store Connect → Subscriptions)
 Two auto-renewing subscriptions in one group (must match `PaywallOffering.standard` in the app):
 - **momentum Pro — Weekly** (`momentum_pro_weekly`): **$5.99/wk**, no trial. The entry plan (owner call 2026-08-28, replacing the $9.99 monthly, which was retired from the offering — existing monthly subscribers keep their price and entitlement).
-- **momentum Pro — Annual** (`momentum_pro_annual`): **$29.99/yr**, no trial — sold at its own per-week number, **$0.58/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48); the badge rounds to a clean "SAVE 90%". (Cut from $64.99 on 2026-08-28 to buy conversion; it still clears the ~$21.48/yr heavy-user break-even, by ~$10.)
+- **momentum Pro — Annual** (`momentum_pro_annual`): **$29.99/yr** with a **7-day introductory free trial** for eligible new subscribers — sold at its own per-week number, **$0.58/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48). Eligible customers see the stronger "7 DAYS FREE" badge; ineligible customers see the rounded "SAVE 90%" value message. (Trial restored 2026-09-01 for the onboarding hard-wall test.)
 - Both products must live in the **same subscription group**, or upgrade/downgrade between them breaks.
 
 The App Store renders these prices natively from the product — the listing **description does not hardcode them**. Full activation runbook: `docs/MONETIZATION-SETUP.md`.
@@ -161,14 +161,15 @@ new build; no ASC action.
 
 ### 2 — Guideline 2.1(b) (In-App Purchases not submitted) — YOUR ASC ACTION
 The subscriptions exist but weren't submitted for review. In App Store Connect:
-1. **Subscriptions** → the `Momentum Pro` group → each product (`momentum_pro_monthly`,
+1. **Subscriptions** → the `Momentum Pro` group → each sold product (`momentum_pro_weekly`,
    `momentum_pro_annual`): status must be **Ready to Submit**. Fill anything missing (localized
    display name, description, **subscription duration**, price).
 2. Add the **App Review screenshot** each subscription requires (a screenshot of your paywall showing
    that product — `--seed-demo --debug-free --paywall` gives you a clean one). *Without this screenshot
    the IAP cannot be submitted — this is the specific blocker Apple named.*
-3. On the **version** page (1.0), scroll to **In-App Purchases and Subscriptions** and **attach both
-   products to this version** so they submit together with the build.
+3. On the version page, scroll to **In-App Purchases and Subscriptions** and attach the sold weekly
+   and annual products to the version so they submit together with the build. Do not re-attach the
+   retired monthly product; it remains live only for existing renewals.
 4. Submit the version — the IAPs go to review with it.
 
 ### 3 — Guideline 3.1.2(c) (subscription metadata — Terms of Use) — YOUR ASC ACTION

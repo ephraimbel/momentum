@@ -37,6 +37,12 @@ final class WatchSyncStore: NSObject {
         /// A quality session's full guided structure (phone-built, phone-encoded) — the wrist
         /// runs the same step tracker the phone does. nil for plain runs.
         var structured: StructuredWorkout?
+        /// Diagnostic provenance for the single shared execution contract. Views keep reading the
+        /// resolved fields above, so version fallback changes no interaction model.
+        var executionSource: ExecutionPrescriptionSource = .legacyMissingPayload
+        var intentID: String? = nil
+        var targetHierarchy: ExecutionTargetHierarchy? = nil
+        var purpose: String? = nil
     }
 
     struct Race: Equatable {
@@ -128,13 +134,29 @@ final class WatchSyncStore: NSObject {
            let day = defaults.string(forKey: "sync.session.dayKey") {
             let steps = (defaults.data(forKey: "sync.session.steps"))
                 .flatMap { try? JSONDecoder().decode(StructuredWorkout.self, from: $0) }
+            let fallback = LegacyExecutionFields(
+                discipline: Self.discipline(typeRaw: typeRaw),
+                runType: nil,
+                targetDistanceM: defaults.object(forKey: "sync.session.targetM") as? Double,
+                targetDurationS: nil,
+                targetPaceSPerKm: defaults.object(forKey: "sync.session.targetPace") as? Double,
+                intervalPrescription: nil
+            )
+            let resolved = ExecutionPrescriptionResolver.resolve(
+                defaults.data(forKey: "sync.session.prescription"),
+                legacyFallback: fallback
+            )
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: defaults.object(forKey: "sync.session.paceLo") as? Double,
                                    paceHiSPerKm: defaults.object(forKey: "sync.session.paceHi") as? Double,
-                                   targetM: defaults.object(forKey: "sync.session.targetM") as? Double,
-                                   targetPaceSPerKm: defaults.object(forKey: "sync.session.targetPace") as? Double,
+                                   targetM: resolved.legacy.targetDistanceM,
+                                   targetPaceSPerKm: resolved.legacy.targetPaceSPerKm,
                                    dayKey: day,
-                                   structured: steps)
+                                   structured: resolved.structuredWorkout ?? steps,
+                                   executionSource: resolved.source,
+                                   intentID: resolved.prescription?.intentID,
+                                   targetHierarchy: resolved.target?.hierarchy,
+                                   purpose: resolved.purpose)
         }
         voiceCoachOn = defaults.bool(forKey: "sync.voiceCoach")
         if let name = defaults.string(forKey: "sync.race.name"),
@@ -165,13 +187,30 @@ final class WatchSyncStore: NSObject {
             let typeRaw = context["sessionTypeRaw"] as? String ?? "run"
             let stepsData = context["sessionSteps"] as? Data
             let steps = stepsData.flatMap { try? JSONDecoder().decode(StructuredWorkout.self, from: $0) }
+            let fallback = LegacyExecutionFields(
+                discipline: Self.discipline(typeRaw: typeRaw),
+                runType: nil,
+                targetDistanceM: context["sessionTargetM"] as? Double,
+                targetDurationS: nil,
+                targetPaceSPerKm: context["sessionTargetPace"] as? Double,
+                intervalPrescription: nil
+            )
+            let prescriptionData = context["executionPrescription"] as? Data
+            let resolved = ExecutionPrescriptionResolver.resolve(
+                prescriptionData,
+                legacyFallback: fallback
+            )
             session = TodaySession(title: title, detail: detail, typeRaw: typeRaw,
                                    paceLoSPerKm: context["sessionPaceLo"] as? Double,
                                    paceHiSPerKm: context["sessionPaceHi"] as? Double,
-                                   targetM: context["sessionTargetM"] as? Double,
-                                   targetPaceSPerKm: context["sessionTargetPace"] as? Double,
+                                   targetM: resolved.legacy.targetDistanceM,
+                                   targetPaceSPerKm: resolved.legacy.targetPaceSPerKm,
                                    dayKey: day,
-                                   structured: steps)
+                                   structured: resolved.structuredWorkout ?? steps,
+                                   executionSource: resolved.source,
+                                   intentID: resolved.prescription?.intentID,
+                                   targetHierarchy: resolved.target?.hierarchy,
+                                   purpose: resolved.purpose)
             defaults.set(title, forKey: "sync.session.title")
             defaults.set(detail, forKey: "sync.session.detail")
             defaults.set(typeRaw, forKey: "sync.session.typeRaw")
@@ -185,10 +224,16 @@ final class WatchSyncStore: NSObject {
             } else {
                 defaults.removeObject(forKey: "sync.session.steps")
             }
+            if let prescriptionData {
+                defaults.set(prescriptionData, forKey: "sync.session.prescription")
+            } else {
+                defaults.removeObject(forKey: "sync.session.prescription")
+            }
         } else if context["sessionCleared"] as? Bool == true {
             session = nil
             defaults.removeObject(forKey: "sync.session.title")
             defaults.removeObject(forKey: "sync.session.steps")
+            defaults.removeObject(forKey: "sync.session.prescription")
         }
         if let raceName = context["raceName"] as? String,
            let raceDate = context["raceDateKey"] as? String {
@@ -203,6 +248,15 @@ final class WatchSyncStore: NSObject {
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
+    }
+
+    private static func discipline(typeRaw: String) -> Discipline {
+        switch WorkoutType(rawValue: typeRaw) {
+        case .strength, .crossfit, .hiit: .strength
+        case .ride, .mountainBikeRide, .gravelRide, .eBikeRide: .cycling
+        case .walk, .hike: .walking
+        default: .running
+        }
     }
 
     // MARK: Debug overrides — the watch sim has no paired phone; cards verify via launch args

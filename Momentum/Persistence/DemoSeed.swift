@@ -118,7 +118,10 @@ enum DemoSeed {
             try? context.delete(model: HeartRateSample.self);    try? context.delete(model: Split.self)
             try? context.delete(model: GPSDetail.self);          try? context.delete(model: WorkoutPhoto.self)
             try? context.delete(model: Workout.self);            try? context.delete(model: PlannedExercise.self)
+            try? context.delete(model: PlannedSessionIntentRecord.self)
             try? context.delete(model: PlannedSession.self);     try? context.delete(model: TrainingPlan.self)
+            try? context.delete(model: PlanMetadataRecord.self); try? context.delete(model: RunningEventRecord.self)
+            try? context.delete(model: RunningSeasonRecord.self); try? context.delete(model: PlanDecisionRecord.self)
             try? context.delete(model: MemoryNote.self);         try? context.delete(model: FitnessSnapshot.self)
             try? context.delete(model: AthleteModel.self);       try? context.delete(model: PersonalRecord.self)
             try? context.delete(model: EarnedAward.self);        try? context.delete(model: ChatMessage.self)
@@ -131,11 +134,19 @@ enum DemoSeed {
             // with an empty exercise catalog and no way back, which is worse than the staleness this
             // whole reset exists to remove.
             try? context.save()
+            // SwiftData is only part of a fresh install. These two checkpoints live in
+            // UserDefaults, so leaving them behind can immediately cover the newly-empty app with
+            // a stale recovery prompt or resume onboarding halfway through a prior UI test.
+            ActiveWorkoutMarker.clear()
+            OnboardingDraftStore.clear()
             // One-shot migrations gate on UserDefaults, not on the store, so wiping the rows alone
             // leaves them believing they already ran: the record book came back permanently empty
             // because `RecordsBook.backfillIfNeeded` had ticked its v4 flag on a previous launch.
             // A reset that only clears half the state is a worse lie than no reset at all.
             UserDefaults.standard.removeObject(forKey: "com.momentum.records.backfill.v4")
+            // AppStorage survives the SwiftData wipe too. Map tests deliberately persist a style,
+            // so a fresh-store launch must not inherit the previous test's map preference.
+            UserDefaults.standard.removeObject(forKey: MapStyleOption.storageKey)
         }
         // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
         if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
@@ -311,7 +322,16 @@ enum DemoSeed {
                 // The demo athlete shares their freshest run: with `--community` it joins today's
                 // lift as the OWN posts on the wall (Friends scope shows exactly these), proving
                 // the save→feed pipeline. Invisible in solo builds — nothing reads privacy there.
-                if daysAgo == 2 { run.privacy = .friends }
+                if daysAgo == 2 {
+                    run.privacy = .friends
+                    // Focused cover-swap fixture: a route post whose author explicitly chose the
+                    // attached photo as its first frame. DEBUG-only launch argument, so production
+                    // seed behavior and real athlete data are untouched.
+                    if ProcessInfo.processInfo.arguments.contains("--seed-route-photo-cover") {
+                        run.photos = demoPhotos()
+                        run.coverIsPhoto = true
+                    }
+                }
                 run.gps = gps; context.insert(run)
                 runIndex += 1
             }

@@ -32,8 +32,8 @@ enum WorkoutSnapshotHealer {
         inFlight.insert(id)
         defer { inFlight.remove(id) }
         // Route derivation (fault every LocationSample + Kalman) hops OFF the main actor via a
-        // background context — this runs per visible tile, and for an imported history with no
-        // snapshots the first Profile-grid scroll used to pay the full walk on main per tile
+        // background context — this runs per visible tile, and for snapshot-less older history the
+        // first Profile-grid scroll used to pay the full walk on main per tile
         // (perf audit 2026-08-13; the WorkoutTileMedia `routeCoordsOffMain` pattern).
         let coords = await Self.routeCoordsOffMain(gps: gps, type: workout.type)
         guard coords.count > 1 else { return }
@@ -98,8 +98,8 @@ enum WorkoutSnapshotHealer {
     }
 
     /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
-    /// janked the surface that requested the heal (tiles heal on appearance, so a snapshot-less
-    /// imported history paid this per tile during the first Profile scroll). Fault + smooth on a
+    /// janked the surface that requested the heal (tiles heal on appearance, so snapshot-less older
+    /// history paid this per tile during the first Profile scroll). Fault + smooth on a
     /// fresh background context instead (the WorkoutTileMedia / HeatmapSource pattern: only the
     /// container and the detail's persistent id cross the hop — SwiftData models aren't Sendable).
     /// Transient/preview objects (no container) fall back inline.

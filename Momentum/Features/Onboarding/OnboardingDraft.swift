@@ -55,6 +55,8 @@ struct OnboardingDraft: Codable {
     var paceFeel: String?
     var benchmark: String?
     var recentRunSeconds: Double?
+    /// Legacy JSON key retained for v1 draft compatibility. This is a current Health signal, not an
+    /// imported workout or workout-history value.
     var importedRestingHR: Int?
     var plannedRaceName: String?
 }
@@ -117,7 +119,7 @@ extension OnboardingViewModel {
             paceFeel: paceFeel?.rawValue,
             benchmark: benchmark.rawValue,
             recentRunSeconds: recentRunSeconds,
-            importedRestingHR: importedRestingHR,
+            importedRestingHR: healthRestingHR,
             plannedRaceName: plannedRaceName)
     }
 
@@ -128,17 +130,16 @@ extension OnboardingViewModel {
     @discardableResult
     func restore(from d: OnboardingDraft) -> Bool {
         guard let placedStep = Step.allCases.first(where: { String(describing: $0) == d.savedStep }) else { return false }
-        // Never resume AT or PAST the building beat: those drafts describe an onboarding whose
-        // plan generation already ran (or should have), and restoring onto the post-plan beats
-        // with no profile strands the athlete on screens that can't create one — the infinite
-        // "Save your progress" loop after Delete-all-data (audit 2026-08-11). Discarding sends
-        // them through the questions again, which is always recoverable.
-        if let buildIdx = Step.allCases.firstIndex(of: .building),
-           let placedIdx = Step.allCases.firstIndex(of: placedStep),
-           placedIdx >= buildIdx { return false }
+        // Never resume onto an output beat. Those drafts describe an onboarding whose plan
+        // generation already ran (or should have), and restoring there with no profile strands
+        // the athlete on a screen that cannot create one — the infinite "Save your progress"
+        // loop after Delete-all-data (audit 2026-08-11). This is an explicit set, not an
+        // `allCases` position check: the stable enum order intentionally differs from the live
+        // flow order, where Notifications and Primers now come BEFORE Building.
+        if [Step.building, .reveal, .account].contains(placedStep) { return false }
         name = d.name
         handle = d.handle
-        activities = Set(d.activities.compactMap(ActivityChoice.init(rawValue:)))
+        activities = Set(d.activities.compactMap(ActivityChoice.init(rawValue:))).union([.run])
         goal = d.goal.flatMap(Goal.init(rawValue:)) ?? goal
         experience = d.experience.flatMap(ExperienceLevel.init(rawValue:)) ?? experience
         liftExperience = d.liftExperience.flatMap(ExperienceLevel.init(rawValue:)) ?? liftExperience
@@ -171,7 +172,7 @@ extension OnboardingViewModel {
         paceFeel = d.paceFeel.flatMap(PaceFeel.init(rawValue:))
         benchmark = d.benchmark.flatMap(RunBenchmark.init(rawValue:)) ?? benchmark
         recentRunSeconds = d.recentRunSeconds ?? recentRunSeconds
-        importedRestingHR = d.importedRestingHR
+        healthRestingHR = d.importedRestingHR
         plannedRaceName = d.plannedRaceName
         step = placedStep
         // Cross-version skew guard: single fields fall back to defaults on unknown rawValues

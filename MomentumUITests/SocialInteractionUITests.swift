@@ -115,7 +115,154 @@ final class SocialInteractionUITests: XCTestCase {
                       "A query matching nobody showed no empty state.")
     }
 
+    // MARK: Media opening
+
+    /// The alternate rectangle is a two-way in-post switch, never a lightbox: visual → photos puts
+    /// the body in the rectangle, then body → visual puts the photos back there.
+    @MainActor
+    func testWorkoutMediaRectangleSwapsBothDirections() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--profile-tab", "--profile-open-strength"]
+        app.launch()
+
+        guard let photos = hittableButton("Workout photos", in: app, timeout: 25) else {
+            XCTFail("A visual-cover lift did not put its attached photos in the alternate rectangle.")
+            return
+        }
+        photos.tap()
+
+        guard let body = hittableButton("Strength session visual", in: app, timeout: 5) else {
+            XCTFail("Bringing photos forward did not move the body visual into the rectangle.")
+            return
+        }
+        XCTAssertFalse(app.otherElements["workout-visual-full-screen"].exists,
+                       "The cover switch incorrectly opened a separate viewer.")
+        body.tap()
+        XCTAssertNotNil(hittableButton("Workout photos", in: app, timeout: 5),
+                      "Tapping the body visual did not restore it as the cover.")
+    }
+
+    /// Same contract for a real route: the author's photo-cover preference establishes the first
+    /// frame, tapping Route map makes the explorable route + replay control the hero, and tapping
+    /// the photo rectangle restores the carousel.
+    @MainActor
+    func testRouteAndPhotosSwapWhileReplayStaysWithTheRouteHero() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--seed-route-photo-cover",
+                               "--profile-tab", "--profile-open-run"]
+        app.launch()
+
+        guard let route = hittableButton("Route map", in: app, timeout: 25) else {
+            XCTFail("A photo-cover run did not put its route in the alternate rectangle.")
+            return
+        }
+        route.tap()
+
+        guard let photos = hittableButton("Workout photos", in: app, timeout: 5) else {
+            XCTFail("Bringing the route forward did not move the photos into the rectangle.")
+            return
+        }
+        XCTAssertTrue(app.buttons["routeReplayButton"].waitForExistence(timeout: 5),
+                      "The route hero did not expose route replay.")
+        XCTAssertFalse(app.otherElements["workout-visual-full-screen"].exists,
+                       "The route switch incorrectly opened a separate viewer.")
+        photos.tap()
+        XCTAssertNotNil(hittableButton("Route map", in: app, timeout: 5),
+                      "Tapping the photo rectangle did not restore the author's photo cover.")
+    }
+
+    /// Pin the same exchange inside the real Community vertical pager. This path has its own lazy
+    /// page state and Mapbox lifecycle, so the profile viewer's matching test cannot protect it.
+    @MainActor
+    func testCommunityRouteRectangleSwapsBothDirections() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--seed-route-photo-cover",
+                               "--profile-tab", "--profile-community", "--community-friends",
+                               "--open-photo-route-post"]
+        app.launch()
+
+        guard let route = hittableButton("Route map", in: app, timeout: 35) else {
+            XCTFail("The Community photo-cover post did not expose its route rectangle.")
+            return
+        }
+        route.tap()
+
+        guard let photos = hittableButton("Workout photos", in: app, timeout: 8) else {
+            XCTFail("The Community route did not become hero or move the photos into the rectangle.")
+            return
+        }
+        XCTAssertTrue(app.buttons["routeReplayButton"].waitForExistence(timeout: 8),
+                      "Community route replay was not connected to the route hero.")
+        photos.tap()
+        XCTAssertNotNil(hittableButton("Route map", in: app, timeout: 8),
+                        "The Community pager did not restore the author's photo cover.")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    /// A post with one media source has no fake switcher. The route itself remains interactive and
+    /// replayable; there simply is not a second object to exchange with it.
+    @MainActor
+    func testPostWithoutPhotosHasNoHittableMediaRectangle() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--profile-tab", "--profile-open-run"]
+        app.launch()
+
+        XCTAssertTrue(app.buttons["routeReplayButton"].waitForExistence(timeout: 25),
+                      "The no-photo route post did not reach its route hero.")
+        XCTAssertFalse(app.buttons["Workout photo"].isHittable)
+        XCTAssertFalse(app.buttons["Workout photos"].isHittable)
+        XCTAssertFalse(app.buttons["Route map"].isHittable)
+        XCTAssertFalse(app.buttons["Strength session visual"].isHittable)
+    }
+
+    /// Attached photos are a separate door into their own lightbox. This deliberately launches
+    /// fresh instead of depending on the workout-visual test's presentation state.
+    @MainActor
+    func testAttachedPhotoOpensFullScreen() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--seed-demo", "--profile-tab", "--profile-open-strength"]
+        app.launch()
+
+        guard let edit = hittableButton("Edit activity", in: app, timeout: 25) else {
+            XCTFail("The activity editor was unreachable.")
+            return
+        }
+        edit.tap()
+
+        let photo = app.buttons["Open photo 1 of 2"]
+        let deadline = Date().addingTimeInterval(12)
+        while Date() < deadline, !photo.isHittable {
+            app.swipeUp()
+            usleep(250_000)
+        }
+        XCTAssertTrue(photo.isHittable, "The attached photo was not an interactive thumbnail.")
+        photo.tap()
+
+        XCTAssertTrue(app.otherElements["photo-lightbox"].waitForExistence(timeout: 8)
+                        || app.buttons["Close photo"].waitForExistence(timeout: 2),
+                      "Tapping the attached photo did not open the photo lightbox.")
+        app.buttons["Close photo"].tap()
+        XCTAssertTrue(app.navigationBars["Edit activity"].waitForExistence(timeout: 5),
+                      "Closing the lightbox did not return to the activity editor.")
+    }
+
     // MARK: Helpers
+
+    /// A vertical LazyVStack realizes neighboring posts, so labels such as "Workout photos" can
+    /// legitimately exist more than once. XCUITest's subscript demands one match and may tap an
+    /// off-screen recycled page; selecting the currently hittable control mirrors a real finger.
+    private func hittableButton(_ label: String, in app: XCUIApplication,
+                                timeout: TimeInterval) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        let query = app.buttons.matching(NSPredicate(format: "label == %@", label))
+        while Date() < deadline {
+            if let button = query.allElementsBoundByIndex.first(where: \.isHittable) {
+                return button
+            }
+            usleep(100_000)
+        }
+        return nil
+    }
 
     /// Maya's newest grid tile → the community pager, opened on that exact post. The tile label is
     /// "<name>, <title>, <stat line>, <when>"; the "when" drifts between launches, so match on the

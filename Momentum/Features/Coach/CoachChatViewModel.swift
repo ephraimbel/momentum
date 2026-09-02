@@ -685,7 +685,7 @@ final class CoachChatViewModel {
             notes: ordered.prefix(5).map(\.text),
             preferredSessionMinutes: Int(m.preferredSessionMinutes.rounded()),
             topDiscipline: topShare.flatMap { WorkoutType(rawValue: $0)?.title },
-            overreachACWR: m.overreachThresholdACWR,
+            priorHighStrainLoadRatio: m.priorHighStrainLoadRatio,
             paceTrendPct: m.paceAtEffortTrendPct
         )
     }

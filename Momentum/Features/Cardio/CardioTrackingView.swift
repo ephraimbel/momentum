@@ -604,7 +604,7 @@ private struct LiveMapLayer: View {
                 // Mapbox's default puck asset won't load.
             }
             .mapStyle(liveStyle.mapboxStyle(for: colorScheme))
-            .ornamentOptions(MapChrome.hidden)
+            .ornamentOptions(MapChrome.minimal)
             .gestureOptions(GestureOptions(rotateEnabled: false, pitchEnabled: false))
             .onStyleLoaded { _ in
                 BrandPuck.apply(to: proxy)

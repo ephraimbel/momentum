@@ -14,6 +14,7 @@ struct NotificationsView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(CoachPresenter.self) private var coach
+    @Environment(AppRouter.self) private var router
 
     var body: some View {
         VStack(spacing: 0) {
@@ -119,14 +120,18 @@ struct NotificationsView: View {
     /// A notification is a promise — tapping it keeps it. Coaching notes open the coach chat,
     /// reminders and streak nudges land on Today, achievements open Progress. System notes are
     /// informational and stay put (no chevron, no dead tap).
-    private enum Destination { case coach, today, progress }
+    private enum Destination { case coach, today, progress, communityPost(UUID), athlete(String) }
 
-    private func destination(for kind: AppNotification.Kind) -> Destination? {
-        switch kind {
+    private func destination(for notification: AppNotification) -> Destination? {
+        switch notification.kind {
         case .coaching: .coach
         case .reminder, .streak, .nudge: .today
         case .achievement: .progress
         case .system: nil
+        case .respect, .comment:
+            notification.targetPostID.map(Destination.communityPost)
+        case .follow:
+            notification.targetHandle.map(Destination.athlete)
         }
     }
 
@@ -142,12 +147,22 @@ struct NotificationsView: View {
             coach.navigate(.startToday)
         case .progress:
             coach.navigate(.viewProgress)
+        case .communityPost(let id):
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                router.pendingCommunityPostID = id
+                router.pendingTab = .profile
+            }
+        case .athlete(let handle):
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                router.pendingCommunityAthleteHandle = handle
+                router.pendingTab = .profile
+            }
         }
     }
 
     @ViewBuilder
     private func row(_ n: AppNotification) -> some View {
-        if let destination = destination(for: n.kind) {
+        if let destination = destination(for: n) {
             Button { open(destination) } label: { rowContent(n, chevron: true) }
                 .buttonStyle(.plain)
         } else {

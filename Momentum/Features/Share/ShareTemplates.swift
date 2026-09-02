@@ -171,8 +171,8 @@ struct SplitsCard: View {
     private struct SplitLine { let index: Int; let distanceM: Double; let durationS: Double; let elevDeltaM: Double?; let isPartial: Bool }
 
     /// Persisted splits when the recorder wrote them; otherwise derived from the route the same
-    /// way the post-run charts do (`CardioMetrics.splits` over `routePoints`), so an older or
-    /// imported run still gets a real table instead of "no splits".
+    /// way the post-run charts do (`CardioMetrics.splits` over `routePoints`), so an older run with
+    /// a stored trace still gets a real table instead of "no splits".
     private var rows: [SplitLine] {
         guard let gps = workout.gps else { return [] }
         let stored = gps.splits.sorted { $0.index < $1.index }

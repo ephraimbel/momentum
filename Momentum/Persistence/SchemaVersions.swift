@@ -10,18 +10,19 @@ import SwiftData
 /// relaunches empty and the training history, while recoverable by hand, is gone from the app. A
 /// data-loss event for the whole install base, reachable by one ordinary-looking property edit.
 ///
-/// Declaring V1 now costs nothing and buys the ability to name a V2. **The version identifier must
-/// stay `1.0.0`**: an unversioned `Schema(_:)` already reports itself as 1.0.0, so this pins the
-/// existing store's identity rather than announcing a new one, and shipping builds open exactly as
-/// they did before (verified against a store written by the previous build).
+/// **The version identifier must stay `1.0.0`**: an unversioned `Schema(_:)` already reports itself
+/// as 1.0.0, so this pins the released store's identity rather than announcing a new one.
+///
+/// A historical schema is a byte-level contract, not a list of whatever today's model classes look
+/// like. Most V1 types below still use their unchanged production class. `AppNotification` is the
+/// first model whose stored shape changed after build 36, so V1 owns a frozen nested snapshot while
+/// V2 uses the live class. If another persisted V1 type changes, snapshot its released shape here
+/// before editing the live class; the archived-store test will reject an accidental mutation.
 enum SchemaV1: VersionedSchema {
     static var versionIdentifier: Schema.Version { Schema.Version(1, 0, 0) }
 
-    /// Every persisted model type. Keep in sync with `Models/`.
-    ///
-    /// This list is the canonical one — `PersistenceController.models` now forwards here. It lives on
-    /// the versioned schema because that is what a V2 will need to diff against: the next schema
-    /// declares its own list, and the two together are what makes a `MigrationStage` expressible.
+    /// Exact build-36 shape. Never append current-only models or point a changed entry back at its
+    /// live type; add those to the next schema instead.
     static var models: [any PersistentModel.Type] {
         [
             UserProfile.self,
@@ -40,17 +41,61 @@ enum SchemaV1: VersionedSchema {
             Meal.self,
         ]
     }
+
+    /// Frozen copy of the build-36 entity. The class name intentionally remains `AppNotification`:
+    /// SwiftData/Core Data uses that entity name to infer the lightweight V1 → V2 field addition.
+    @Model
+    final class AppNotification {
+        var id: UUID = UUID()
+        var date: Date = Date()
+        var kindRaw: String = "system"
+        var title: String = ""
+        var body: String = ""
+        var read: Bool = false
+        var dedupeToken: String?
+
+        init() {}
+    }
 }
 
-/// The migration plan. One schema, no stages — there is nothing to migrate yet, and that is the
-/// point: the plan exists so the day a change is NOT additive, the fix is to add `SchemaV2` and a
-/// stage here, rather than to discover at ship time that there was never anywhere to put one.
-///
-/// **Adding V2**: declare `SchemaV2` with the new model list, append it to `schemas` (ordered
-/// oldest → newest), and add a `MigrationStage` — `.lightweight` when the change is still additive,
-/// `.custom` when data has to be moved. `PersistenceController` already passes this plan to the
-/// container, so nothing else changes.
+/// Release 1 of the running planner adds only isolated, scalar-ID sidecar tables. No V1 model class
+/// changes shape and no new relationship points into the released object graph. That makes the
+/// migration genuinely additive: old plan/workout rows are not rewritten, and rollback of planner
+/// behavior never requires a store down-migration.
+enum SchemaV2: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        [
+            UserProfile.self,
+            Workout.self, WorkoutPhoto.self, GPSDetail.self, LocationSample.self, Split.self, HeartRateSample.self,
+            StrengthSession.self, WorkoutExercise.self, SetEntry.self,
+            Exercise.self,
+            TrainingPlan.self, PlannedSession.self, PlannedExercise.self,
+            PersonalRecord.self,
+            SavedRoute.self,
+            EarnedAward.self,
+            AthleteModel.self, MemoryNote.self, FitnessSnapshot.self,
+            ChatMessage.self,
+            CoachingEvent.self,
+            AppNotification.self,
+            DailyCheckin.self,
+            Meal.self,
+            RunningSeasonRecord.self,
+            RunningEventRecord.self,
+            PlanMetadataRecord.self,
+            PlannedSessionIntentRecord.self,
+            PlanDecisionRecord.self,
+        ]
+    }
+}
+
+/// Ordered oldest → newest. The V1 → V2 path is covered by an on-disk fixture that verifies the
+/// completed-plan/workout relationship graph, GPS samples, external photo data, and athlete memory
+/// before and after the sidecar tables are written.
 enum MomentumMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self] }
-    static var stages: [MigrationStage] { [] }
+    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self] }
+    static var stages: [MigrationStage] {
+        [.lightweight(fromVersion: SchemaV1.self, toVersion: SchemaV2.self)]
+    }
 }

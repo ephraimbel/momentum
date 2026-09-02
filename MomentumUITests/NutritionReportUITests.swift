@@ -35,7 +35,12 @@ final class NutritionReportUITests: XCTestCase {
         app.launch()
 
         // The detail sheet opens on the newest seeded meal (an evening one) — add a pantry item.
-        let addField = app.textFields["Add an item — banana, 2 eggs…"]
+        // A vertical-axis SwiftUI TextField is surfaced as a TextView by the iOS 26 automation
+        // runtime. Match the placeholder across element types, as the main Fuel composer tests do.
+        let addItemPlaceholder = NSPredicate(
+            format: "placeholderValue BEGINSWITH %@", "Add an item —"
+        )
+        let addField = app.descendants(matching: .any).matching(addItemPlaceholder).firstMatch
         XCTAssertTrue(addField.waitForExistence(timeout: 20), "Add-an-item field missing from the sheet.")
         addField.tap()
         addField.typeText("banana\n")

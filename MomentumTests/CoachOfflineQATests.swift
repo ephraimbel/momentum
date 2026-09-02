@@ -160,12 +160,13 @@ struct CoachOfflineQATests {
 
     // MARK: Readiness
 
-    @Test func readinessClearsTrainingWhenSignalsAreGood() {
+    @Test func readinessNeverTreatsGoodSignalsAsClearance() {
         let good = RecoverySignals(hrvMs: 70, hrvBaselineMs: 65, restingHR: 48,
                                    restingHRBaseline: 49, sleepHours: 8)
         let turn = CoachResponder.respond(to: "I'm tired, should I still run today?",
                                           context: makeContext(recovery: good))
-        #expect(turn.text.contains("cleared to train"))
+        #expect(turn.text.contains("not a clearance test"))
+        #expect(!turn.text.contains("cleared to train"))
         #expect(turn.text.contains("HRV"))
     }
 

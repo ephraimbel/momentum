@@ -11,6 +11,10 @@ struct CommunityFeedGrid: View {
     let items: [FeedItem]
     /// When set, each tile registers as the zoom source for the community pager.
     var zoomNamespace: Namespace.ID? = nil
+    /// First already-seen post. When present, a full-width section header marks the exact row where
+    /// work newer than the previous visit ends.
+    var newBoundaryID: UUID? = nil
+    var newPostCount: Int = 0
     /// Fires with a tile's index as it scrolls into view — the wall's continuous-scroll prefetch
     /// hook (a near-end index means "the athlete is approaching the bottom, page more in NOW").
     /// nil for hosts that show a fixed set (athlete profiles).
@@ -26,6 +30,7 @@ struct CommunityFeedGrid: View {
     /// and a re-creation with the same posts costs one comparison instead of a full cascade.
     var body: some View {
         FeedGridBody(items: items, zoomNamespace: zoomNamespace,
+                     newBoundaryID: newBoundaryID, newPostCount: newPostCount,
                      onTileAppear: onTileAppear, onOpen: onOpen)
             .equatable()
     }
@@ -34,18 +39,22 @@ struct CommunityFeedGrid: View {
 private struct FeedGridBody: View, Equatable {
     let items: [FeedItem]
     var zoomNamespace: Namespace.ID?
+    var newBoundaryID: UUID?
+    var newPostCount: Int
     var onTileAppear: ((Int) -> Void)?
     var onOpen: (UUID) -> Void
 
-    /// Identity, in order — never the items' contents. A `FeedItem` carries `photosData`, so a
-    /// synthesized `==` would memcmp megabytes of JPEG on every comparison; and a post's content
-    /// for a given id is fixed at assembly, so the id list is the whole truth about what this grid
-    /// will draw. It is also what keeps the captured closures honest: both call sites derive their
-    /// paging state from `items` itself, so any state a closure reads has already moved the list.
-    static func == (a: Self, b: Self) -> Bool {
+    /// Identity plus the bounded render signature — never synthesized `FeedItem` equality, which
+    /// would memcmp whole JPEGs. Post ids survive edits, so id-only equality left changed photos,
+    /// captions, covers and server counts stale until the row order moved.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
         a.zoomNamespace == b.zoomNamespace
+            && a.newBoundaryID == b.newBoundaryID
+            && a.newPostCount == b.newPostCount
             && a.items.count == b.items.count
-            && !zip(a.items, b.items).contains { $0.id != $1.id }
+            && !zip(a.items, b.items).contains {
+                $0.id != $1.id || $0.renderSignature != $1.renderSignature
+            }
     }
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: ProfileGrid.gutter), count: 3)
@@ -62,9 +71,12 @@ private struct FeedGridBody: View, Equatable {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(items: [FeedItem], zoomNamespace: Namespace.ID? = nil,
+         newBoundaryID: UUID? = nil, newPostCount: Int = 0,
          onTileAppear: ((Int) -> Void)? = nil, onOpen: @escaping (UUID) -> Void) {
         self.items = items
         self.zoomNamespace = zoomNamespace
+        self.newBoundaryID = newBoundaryID
+        self.newPostCount = newPostCount
         self.onTileAppear = onTileAppear
         self.onOpen = onOpen
         _arrived = State(initialValue: Self.didPlayEntrance)
@@ -75,13 +87,27 @@ private struct FeedGridBody: View, Equatable {
         let _ = CommunityPerf.tick("grid")
         #endif
         LazyVGrid(columns: columns, spacing: ProfileGrid.gutter) {
-            // Indexed so a lazily-realized tile can report WHERE in the wall it is (the
-            // continuous-scroll prefetch); identity stays the item id, so diffing is unchanged.
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                tileCell(item)
-                    .onAppear { onTileAppear?(index) }
+            if let boundary = newBoundaryID,
+               let split = items.firstIndex(where: { $0.id == boundary }), split > 0 {
+                ForEach(Array(items[..<split].enumerated()), id: \.element.id) { index, item in
+                    indexedTile(item, index: index)
+                }
+                Section {
+                    ForEach(Array(items[split...].enumerated()), id: \.element.id) { offset, item in
+                        indexedTile(item, index: split + offset)
+                    }
+                } header: {
+                    NewSinceLastVisitDivider(count: newPostCount)
+                }
+            } else {
+                // Indexed so a lazily-realized tile can report WHERE in the wall it is (the
+                // continuous-scroll prefetch); identity stays the item id, so diffing is unchanged.
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    indexedTile(item, index: index)
+                }
             }
         }
+        .scrollTargetLayout()
         .padding(.top, ProfileGrid.gutter)
         .opacity(arrived ? 1 : 0)
         .offset(y: arrived ? 0 : 12)
@@ -97,6 +123,11 @@ private struct FeedGridBody: View, Equatable {
     }
 
     @ViewBuilder
+    private func indexedTile(_ item: FeedItem, index: Int) -> some View {
+        tileCell(item).onAppear { onTileAppear?(index) }
+    }
+
+    @ViewBuilder
     private func tileCell(_ item: FeedItem) -> some View {
         let bare = FeedTile(item: item) { onOpen(item.id) }
             .id(item.id)   // ScrollViewReader anchor (the --wall-scroll verification hook)
@@ -105,6 +136,30 @@ private struct FeedGridBody: View, Equatable {
         } else {
             bare
         }
+    }
+}
+
+/// The exact boundary between newly-arrived and already-seen work. Plain ink—not iridescence—keeps
+/// it structural rather than celebratory, and the section header spans all three grid columns.
+private struct NewSinceLastVisitDivider: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: Theme.Space.sm) {
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            Text(count == 1 ? "1 NEW POST" : "\(count) NEW POSTS")
+                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                .tracking(1.2)
+                .foregroundStyle(Theme.ink)
+                .fixedSize()
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+        }
+        .padding(.horizontal, Theme.Space.md)
+        .padding(.vertical, Theme.Space.md)
+        .background(Theme.background)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(count == 1 ? "1 new post above" : "\(count) new posts above")
+        .accessibilityIdentifier("community-new-posts-boundary")
     }
 }
 
@@ -128,7 +183,12 @@ private struct FeedTile: View {
         Button(action: onOpen) {
             Color.clear
                 .aspectRatio(3.0 / 4.0, contentMode: .fit)
-                .overlay { FeedTileMedia(item: item, onInkContext: { ink = $0 }) }
+                .overlay {
+                    FeedTileMedia(item: item, onInkContext: { ink = $0 })
+                        // Same post id can carry edited media; remount only that media layer while
+                        // the grid and zoom source keep their stable post identity.
+                        .id(item.renderSignature)
+                }
                 .overlay(alignment: .bottom) { metricStrip }
                 .overlay(alignment: .bottomTrailing) { avatarChip }
                 .overlay(alignment: .topTrailing) { if item.prBadge != nil { prMark } }
@@ -155,6 +215,7 @@ private struct FeedTile: View {
         // and it's the one thing a sighted athlete gets from the byline that VoiceOver had no
         // route to at all from the grid.
         .accessibilityLabel("\(item.authorName), \(item.title), \(item.statLine), \(item.date.formatted(.relative(presentation: .named)))")
+        .accessibilityHint("Opens the post full screen. Swipe up or down for more.")
         .accessibilityAddTraits(.isButton)
         // The double-tap-to-respect gesture is unreachable with VoiceOver on (a VoiceOver double
         // tap activates the button). The rotor action is the standard equivalent.
@@ -244,6 +305,9 @@ private struct FeedTile: View {
 /// mistake the card feed already made and fixed).
 struct FeedTileMedia: View {
     let item: FeedItem
+    /// Wall/grid tiles follow the author's cover choice. The post pager's alternate rectangle
+    /// opts out so it always previews the actual route/body visual, never a duplicate photo.
+    var respectsPhotoCover: Bool = true
     var onInkContext: ((InkContext) -> Void)? = nil
 
     /// One render size for every wall/grid tile, so the synchronous cache read below and the async
@@ -253,7 +317,8 @@ struct FeedTileMedia: View {
     /// A small tile wants a proportionally thicker trace — the profile grid's exact rule.
     static let tileRouteWidth: CGFloat = 4.5
 
-    /// Whether this post draws a route AT ALL — an O(1) count check.
+    /// Whether this post draws a route at all. `hasRenderableRoute` normally returns after the
+    /// first two points, while still rejecting malformed remote coordinate arrays safely.
     ///
     /// `item.routeCoordinates` (which walks and re-boxes every point) used to run in `init`, and
     /// `init` runs on every parent body pass, not once per view. The wall's host re-creates the
@@ -261,10 +326,12 @@ struct FeedTileMedia: View {
     /// polylines a hundred-plus times for tiles whose picture was already on screen. Nothing needs
     /// the points unless we are actually about to draw the silhouette or start a render, so they
     /// are mapped there and nowhere else.
-    private var hasRoute: Bool { (item.routeLatLon?.count ?? 0) > 1 }
+    private var hasRoute: Bool { item.hasRenderableRoute }
 
-    init(item: FeedItem, onInkContext: ((InkContext) -> Void)? = nil) {
+    init(item: FeedItem, respectsPhotoCover: Bool = true,
+         onInkContext: ((InkContext) -> Void)? = nil) {
         self.item = item
+        self.respectsPhotoCover = respectsPhotoCover
         self.onInkContext = onInkContext
         #if DEBUG
         if Thread.isMainThread {
@@ -280,6 +347,7 @@ struct FeedTileMedia: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var photo: UIImage?
+    @State private var photoPreview: UIImage?
     @State private var snapshot: UIImage?
 
     /// The already-rendered map for this tile, if one exists — `@State` first, then the shared
@@ -302,6 +370,10 @@ struct FeedTileMedia: View {
         Group {
             if let photo {
                 Image(uiImage: photo).resizable().scaledToFill()
+            } else if let photoPreview {
+                Image(uiImage: photoPreview).resizable().scaledToFill()
+                    .scaleEffect(1.08)
+                    .blur(radius: 16, opaque: true)
             } else if let muscles = item.muscles, muscles.values.contains(where: { $0 > 0 }) {
                 ZStack {
                     IridescentWash()
@@ -329,20 +401,27 @@ struct FeedTileMedia: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: map != nil)
-        .task(id: "\(item.id)-\(colorScheme == .dark)") {
+        .task(id: "\(item.id)-\(item.renderSignature)-\(colorScheme == .dark)-\(respectsPhotoCover)") {
             // The cover rule (2026-07-29): the activity's own visual leads; a photo covers only
             // when the author chose it — or when the post has no route/muscle visual at all.
-            if item.coverIsPhoto, let data = item.photoData {
+            if respectsPhotoCover, item.coverIsPhoto, let data = item.photoData {
+                photoPreview = await ImageDownsampler.thumbnail(data, maxPixel: 36)
                 photo = await ImageDownsampler.thumbnail(data, maxPixel: 480)
                 onInkContext?(.photo)
                 return
             }
+            // This same SwiftUI view identity can survive a cover-choice edit. Clear the old
+            // decoded cover before resolving route/body, or the `if let photo` branch above keeps
+            // winning even after the preference changed.
+            photo = nil
+            photoPreview = nil
             if item.muscles?.values.contains(where: { $0 > 0 }) == true {
                 onInkContext?(.appearance)
                 return
             }
             guard hasRoute else {
                 if let data = item.photoData {
+                    photoPreview = await ImageDownsampler.thumbnail(data, maxPixel: 36)
                     photo = await ImageDownsampler.thumbnail(data, maxPixel: 480)
                     onInkContext?(.photo)
                 } else {

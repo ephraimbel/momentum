@@ -12,19 +12,34 @@ import XCTest
 final class OnboardingLocationHandoffUITests: XCTestCase {
 
     func testGrantingAtOnboardingLeavesTodayLocated() {
+        continueAfterFailure = false
         let app = XCUIApplication()
+        // Make this a live grant test on every run instead of inheriting whichever choice the
+        // simulator happened to hold from a sibling test.
+        app.resetAuthorizationStatus(for: .location)
+        var grantedThroughSystemAlert = false
+        addUIInterruptionMonitor(withDescription: "Location permission") { alert in
+            let allow = alert.buttons["Allow While Using App"]
+            guard allow.exists else { return false }
+            allow.tap()
+            grantedThroughSystemAlert = true
+            return true
+        }
         app.launchArguments = ["--onboarding", "--onboarding-primers"]
         app.launch()
 
         XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 25),
                       "the location beat should be on screen")
 
-        // The system alert belongs to SpringBoard, so it is queried there, not in the app. When the
-        // simulator already holds a grant from an earlier run the alert never appears — that's the
-        // "already authorized" path, equally valid here, so don't fail on it.
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allow = springboard.buttons["Allow While Using App"]
-        if allow.waitForExistence(timeout: 12) { allow.tap() }
+        // The CTA owns the request. The old test waited for the system alert before tapping it, so
+        // no alert could exist; repeated snapshots of an absent SpringBoard process then got the
+        // runner watchdog-killed. Tap first, let XCTest's interruption monitor answer the real
+        // sheet, and wait until its completion advances the flow.
+        app.buttons["Continue"].tap()
+        app.tap()
+        XCTAssertTrue(app.staticTexts["Building your plan"].waitForExistence(timeout: 15),
+                      "the location response must resolve before plan generation begins")
+        XCTAssertTrue(grantedThroughSystemAlert, "the clean permission prompt was not granted")
 
         // Re-enter at Today, exactly where the flow hands off.
         app.terminate()

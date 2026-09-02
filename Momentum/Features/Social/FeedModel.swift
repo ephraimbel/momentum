@@ -28,6 +28,9 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     let caption: String?
     let statLine: String
     let prBadge: String?
+    /// At most one truthful reason this post matters (record, first distance milestone, or plan
+    /// context). It is separate from `prBadge`: a planned long run is meaningful but is not a PR.
+    var earnedContext: String? = nil
     /// Muscles worked (strength/HIIT) → rendered as a glowing `MuscleMapView`, the lift counterpart
     /// to the route map. nil/empty for non-strength posts.
     var muscles: [MuscleGroup: Double]? = nil
@@ -37,11 +40,10 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     var mapStyle: MapStyleOption = .standard
     /// Seeded baseline respects (community sample engagement); the viewer's own reaction adds on top.
     var baseReactions: Int = 0
-    /// Photos the athlete attached (Strava-style, ordered; first is the hero). Since 2026-07-29
-    /// they page BEHIND the activity's own visual — see `coverIsPhoto`.
+    /// Photos the athlete attached (Strava-style, ordered; first is the hero photo).
     var photosData: [Data] = []
-    /// The cover rule: the activity's own visual (route/muscle/glyph) covers the tile and leads
-    /// the pager; a photo covers only when the author explicitly chose it.
+    /// The initial cover rule: the activity's own visual (route/muscle/glyph) leads unless the
+    /// author explicitly chose a photo. The post viewer keeps both available as a two-way swap.
     var coverIsPhoto: Bool = false
     /// The hero photo — the first attached photo (convenience for tile/thumbnail contexts).
     var photoData: Data? { photosData.first }
@@ -60,9 +62,73 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     /// `feed_page.comment_count`). nil for seeded/own posts — their counts are computed locally.
     var remoteCommentCount: Int? = nil
 
-    /// Route as map coordinates for `RouteMapView`.
+    /// Whether the post contains at least one real, drawable route segment. This intentionally
+    /// validates the untrusted server array instead of trusting `count`: a malformed pair such as
+    /// `[latitude]` used to pass the count gate and then crash every Community surface when the
+    /// coordinate accessor subscripted its missing longitude.
+    var hasRenderableRoute: Bool {
+        guard let pairs = routeLatLon else { return false }
+        var first: CLLocationCoordinate2D?
+        for pair in pairs {
+            guard let coordinate = Self.validCoordinate(pair) else { continue }
+            guard let first else {
+                first = coordinate
+                continue
+            }
+            if coordinate.latitude != first.latitude || coordinate.longitude != first.longitude {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Route as validated map coordinates for `RouteMapView`. Remote JSON is never allowed to
+    /// reach SwiftUI, Mapbox, the snapshotter, or Saved Routes until malformed values and adjacent
+    /// duplicates have been removed. `nil` means there is no drawable segment and callers should
+    /// fall back to the post's photo/sport visual.
     var routeCoordinates: [CLLocationCoordinate2D]? {
-        routeLatLon.map { $0.map { CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) } }
+        sanitizedRouteLatLon?.map {
+            CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1])
+        }
+    }
+
+    /// The storage representation of the validated route, used when bookmarking a shared post.
+    /// Keeping this derived from `routeCoordinates` prevents malformed server JSON from becoming a
+    /// durable `SavedRoute` that would fail again on a later screen.
+    var sanitizedRouteLatLon: [[Double]]? {
+        Self.sanitizedRouteLatLon(routeLatLon)
+    }
+
+    /// Sanitize once at the network boundary as well as defensively at use sites. This keeps the
+    /// stored `FeedItem` honest, so even future call sites that perform a cheap nil/count check do
+    /// not accidentally treat a malformed remote payload as a route.
+    static func sanitizedRouteLatLon(_ pairs: [[Double]]?) -> [[Double]]? {
+        guard let pairs else { return nil }
+        var result: [[Double]] = []
+        result.reserveCapacity(pairs.count)
+        for pair in pairs {
+            guard let coordinate = validCoordinate(pair) else { continue }
+            if let previous = result.last,
+               previous[0] == coordinate.latitude,
+               previous[1] == coordinate.longitude {
+                continue
+            }
+            result.append([coordinate.latitude, coordinate.longitude])
+        }
+        guard result.count > 1,
+              result.dropFirst().contains(where: {
+                  $0[0] != result[0][0] || $0[1] != result[0][1]
+              }) else { return nil }
+        return result
+    }
+
+    private static func validCoordinate(_ pair: [Double]) -> CLLocationCoordinate2D? {
+        guard pair.count >= 2 else { return nil }
+        let latitude = pair[0]
+        let longitude = pair[1]
+        guard latitude.isFinite, longitude.isFinite,
+              (-90...90).contains(latitude), (-180...180).contains(longitude) else { return nil }
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 
     /// The stat line split into the Strava-style metric strip (value + label). Derived from `statLine`
@@ -89,7 +155,84 @@ struct FeedItem: Identifiable, Sendable, Hashable {
     }
 }
 
+/// A bounded identity for image bytes. UI tasks need to notice replacement content, but hashing a
+/// multi-megabyte JPEG every time SwiftUI compares a tile would recreate the scroll hitch the image
+/// cache removed. Length, the first/last 64 bytes, and evenly-spaced interior samples distinguish
+/// real photo edits while keeping the work constant.
+enum MediaFingerprint {
+    static func value(_ data: Data?) -> UInt64 {
+        guard let data else { return 0 }
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        func mix(_ byte: UInt8, into value: inout UInt64) {
+            value ^= UInt64(byte)
+            value &*= 1_099_511_628_211
+        }
+        var count = UInt64(data.count)
+        for _ in 0..<8 {
+            mix(UInt8(truncatingIfNeeded: count), into: &hash)
+            count >>= 8
+        }
+        for byte in data.prefix(64) { mix(byte, into: &hash) }
+        if data.count > 128 {
+            for sample in 1...16 {
+                let offset = sample * (data.count - 1) / 17
+                mix(data[data.index(data.startIndex, offsetBy: offset)], into: &hash)
+            }
+        }
+        for byte in data.suffix(64) { mix(byte, into: &hash) }
+        return hash
+    }
+
+    static func value(_ data: [Data]) -> UInt64 {
+        var hash: UInt64 = 1_469_598_103_934_665_603
+        for photo in data {
+            hash ^= value(photo)
+            hash &*= 1_099_511_628_211
+        }
+        hash ^= UInt64(data.count)
+        return hash
+    }
+}
+
 extension FeedItem {
+    /// Everything a realized grid tile or pager summary can visibly draw, without comparing whole
+    /// JPEGs or full polylines. A post id is stable across edits, so id-only equality is incorrect:
+    /// this signature lets same-id photo/cover/caption/count updates invalidate exactly that tile.
+    var renderSignature: Int {
+        var h = Hasher()
+        h.combine(authorName)
+        h.combine(authorHandle)
+        h.combine(location)
+        h.combine(isCommunity)
+        h.combine(isPro)
+        h.combine(type)
+        h.combine(date)
+        h.combine(title)
+        h.combine(caption)
+        h.combine(statLine)
+        h.combine(prBadge)
+        h.combine(earnedContext)
+        h.combine(mapStyle)
+        h.combine(baseReactions)
+        h.combine(remoteCommentCount)
+        h.combine(coverIsPhoto)
+        h.combine(MediaFingerprint.value(photosData))
+        h.combine(MediaFingerprint.value(avatarData))
+        if let muscles {
+            for pair in muscles.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+                h.combine(pair.key)
+                h.combine(pair.value)
+            }
+        }
+        if let routeLatLon {
+            h.combine(routeLatLon.count)
+            if let first = routeLatLon.first { h.combine(first) }
+            if routeLatLon.count > 2 { h.combine(routeLatLon[routeLatLon.count / 2]) }
+            if let last = routeLatLon.last { h.combine(last) }
+        }
+        return h.finalize()
+    }
+
     /// The post's distance in km, read back off its own stat line — what the "save this route"
     /// bookmark stores. The UNIT has to be read too: the leading token is "5.5 mi" for an athlete
     /// on imperial and "8.9 km" for one on metric, and dividing both by 0.621371 stored every
@@ -129,7 +272,8 @@ enum FeedAssembler {
     }
 
     /// Map a shared `Workout` into a feed card from the owner's point of view.
-    static func item(from w: Workout, profile: UserProfile?, isPro: Bool = false) -> FeedItem {
+    static func item(from w: Workout, profile: UserProfile?, isPro: Bool = false,
+                     earnedContext: String? = nil) -> FeedItem {
         let weightUnit = WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg
         let distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let showRoute = profile.map { SocialPrivacy.showsRoute(w, profile: $0) } ?? false
@@ -148,6 +292,7 @@ enum FeedAssembler {
             caption: w.note.isEmpty ? nil : w.note,
             statLine: statLine(w, weightUnit: weightUnit, distanceUnit: distanceUnit),
             prBadge: nil,
+            earnedContext: earnedContext,
             muscles: muscles,
             routeLatLon: route,
             // The athlete's own posts render the map THEY saved the run with (save-screen choice).

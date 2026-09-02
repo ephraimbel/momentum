@@ -18,13 +18,14 @@ The products live in ONE subscription group (`22239084 "momentum pro"`) and must
 | Product ID | Duration | Price | Intro offer | Sold? |
 |---|---|---|---|---|
 | `momentum_pro_weekly` | 1 week  | $5.99  | — | yes — the entry plan |
-| `momentum_pro_annual` | 1 year  | **$29.99** | — | yes — $0.58/wk, badge "SAVE 90%" |
+| `momentum_pro_annual` | 1 year  | **$29.99** | **7 days free** | yes — $0.58/wk; eligible badge "7 DAYS FREE" |
 | `momentum_pro_monthly`| 1 month | $9.99  | — | **no** — retired from the offering 2026-08-28 |
 
 The monthly stays live but unsold: removing a product never cancels or re-prices an existing
-subscriber, and keeping it is what lets the remaining monthly subs renew. NO product carries a
-trial (retired 2026-08-20 — the soft paywall is the trial); the paywall's trial branches stay
-data-driven off the store's intro offer, so a future offer lights them back up.
+subscriber, and keeping it is what lets the remaining monthly subs renew. The annual carries a
+seven-day introductory free trial (restored 2026-09-01 for the onboarding hard-wall test); weekly
+and retired monthly charge immediately. The app reads StoreKit's offer, so only eligible customers
+see trial copy and ineligible customers see the ordinary annual purchase terms.
 
 ⚠️ **Price decreases flow to existing subscribers automatically at their next renewal** — the
 "preserve price" option only exists for increases. The 2026-08-28 cut from $64.99 to $29.99
@@ -63,7 +64,7 @@ xcodebuild -scheme Momentum -destination 'generic/platform=iOS' build
 load live localized prices into the paywall, and keep `isPro` in sync via `customerInfoStream`.
 
 ## 5. Verify on device (Gate 3)
-- Sandbox account → paywall shows **real localized prices**; NO plan shows a trial, and the annual wears its savings badge instead.
+- Fresh sandbox account → annual shows **7 days free** with real localized renewal terms; weekly has no trial.
 - Purchase → entitlement flips; gated surfaces unlock; **Restore** works on a fresh install.
 - **Settings → Manage subscription** opens the App Store sheet (cancel in ≤2 taps).
 - Superwall A/B: confirm each placement shows its remote paywall; the native `PaywallView` remains

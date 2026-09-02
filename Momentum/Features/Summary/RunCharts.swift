@@ -10,10 +10,9 @@ struct RunAnalysisSection: View {
     let gps: GPSDetail
     let type: WorkoutType
     var distanceUnit: DistanceUnit = .auto
-    /// HR series from Apple Health for the workout window, used ONLY when we didn't capture a live
-    /// series ourselves (an Apple Watch run, or a HealthKit-imported workout — the phone never
-    /// streamed HR, but the Watch wrote it to Health). Resolved by the summary and passed in, so the
-    /// HR chart shows for every run with heart-rate data anywhere — not just BLE-strap runs.
+    /// HR series from Apple Health for this Momentum workout's time window, used ONLY when we did not
+    /// capture a live series ourselves (for example, the phone recorded the run while the Watch
+    /// wrote heart rate to Health). This never discovers or imports a workout from Apple Health.
     var healthHRSeries: [(date: Date, bpm: Double)] = []
 
     private var unitMeters: Double { distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000 }
@@ -58,7 +57,7 @@ struct RunAnalysisSection: View {
             Pt(t: $0.t, distanceM: $0.cumulativeM, altitudeM: $0.altitudeM,
                paceSPerKm: $0.speedMS > 0.4 ? 1000 / $0.speedMS : 0)   // near-stopped → 0 = "no pace here"
         }
-        // HR: prefer our own live series; fall back to Apple Health for Watch/imported runs.
+        // HR: prefer our own live series; query this Momentum workout's Health time window if needed.
         let local = gps.hrSamples.filter { $0.bpm > 0 }.sorted { $0.t < $1.t }.map { (date: $0.t, bpm: Double($0.bpm)) }
         let readings = local.count >= 4 ? local : health.sorted { $0.date < $1.date }
         var hr: [HRPt] = []

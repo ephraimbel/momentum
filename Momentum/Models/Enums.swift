@@ -12,15 +12,15 @@ enum HybridPriority: String, Codable, Sendable, CaseIterable {
     /// lifting is here to make people better runners, not to split the week with running:
     ///  • **running** — as much running as the week holds, with one day in the gym;
     ///  • **balanced** — still a running plan, with a little more lifting than "mainly running";
-    ///  • **lifting** — a genuine 50/50 week, which is what "I want more lifting" should mean in
-    ///    a running app; it is never lift-DOMINANT.
+    ///  • **lifting** — as close to 50/50 as the day count allows, with an odd day always going to
+    ///    running; it is never lift-DOMINANT.
     /// Before this, "balanced" meant 3 runs and 3 lifts on a six-day week and "lifting" meant 2
     /// runs to 4 lifts — a strength programme with some running in it.
     var liftFraction: Double {
         switch self {
         case .running: 0.20
         case .balanced: 0.35
-        case .lifting: 0.55
+        case .lifting: 0.50
         }
     }
 }
@@ -109,6 +109,45 @@ enum BiologicalSex: String, Codable, Sendable, CaseIterable, Identifiable {
 }
 enum Goal: String, Codable, Sendable, CaseIterable {
     case loseFat, buildMuscle, getStronger, raceDistance, endurance, generalFitness, stayConsistent
+
+    /// One athlete-facing vocabulary for every place a plan asks or reminds them what the work is
+    /// for. The stored enum stays deliberately broad; these words make the outcome concrete without
+    /// inventing a second goal model (or turning body-composition support into dieting coaching).
+    var planLabel: String {
+        switch self {
+        case .raceDistance:  "Run a race"
+        case .endurance:     "Run farther & faster"
+        case .stayConsistent:"Stay consistent"
+        case .generalFitness:"Build running fitness"
+        case .loseFat:       "Get fitter & leaner"
+        case .buildMuscle:   "Build muscle for running"
+        case .getStronger:   "Become a stronger runner"
+        }
+    }
+
+    var planSubtitle: String {
+        switch self {
+        case .raceDistance:  "Periodized to your distance, date, and optional finish time"
+        case .endurance:     "Build sustainable volume, speed, and durability"
+        case .stayConsistent:"A repeatable running week that protects the habit"
+        case .generalFitness:"Build aerobic fitness with strength in support"
+        case .loseFat:       "Run consistently and support body composition without under-fueling"
+        case .buildMuscle:   "Progressive strength around the miles, not instead of them"
+        case .getStronger:   "Focused lifts for power, durability, and running economy"
+        }
+    }
+
+    var planSystemImage: String {
+        switch self {
+        case .raceDistance: "flag.checkered"
+        case .endurance: "wind"
+        case .stayConsistent: "calendar"
+        case .generalFitness: "figure.run.circle"
+        case .loseFat: "heart.fill"
+        case .buildMuscle: "figure.strengthtraining.traditional"
+        case .getStronger: "dumbbell.fill"
+        }
+    }
 }
 /// Macrocycle phase of a plan week (ENDURANCE-FOCUS §6.1) — persisted per week so the Plan page reads
 /// like a coached block (Base → Build → Peak → Taper), not a list of runs.

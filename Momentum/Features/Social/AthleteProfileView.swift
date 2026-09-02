@@ -110,11 +110,12 @@ struct AthleteProfileView: View {
 
     // MARK: Hero — the shared ProfileHero (twin of ProfileScreen's)
 
-    /// Trained in the last 24h — the ring. Derived from their latest post, so it is only ever as
+    /// Posted in the last 24h — the ring. Derived from their latest post, so it is only ever as
     /// true as what they actually shared.
-    private var trainedToday: Bool {
+    private var postedToday: Bool {
         guard let latest = (gridPosts.isEmpty ? athlete.posts : gridPosts).map(\.date).max() else { return false }
-        return Date().timeIntervalSince(latest) < 86_400
+        let age = Date().timeIntervalSince(latest)
+        return age >= 0 && age < 86_400
     }
 
     /// Disciplines they actually train, most frequent first — counted over their WHOLE ledger, not
@@ -132,7 +133,7 @@ struct AthleteProfileView: View {
         let dist = Formatters.wholeDistance(meters: life.distanceM, unit: distanceUnit)
         let following = follows.isFollowing(athlete.handle)
         return ProfileHero(
-            ringed: trainedToday,
+            ringed: postedToday,
             // Grouped, like every other figure in the app: "2560" beside a tile reading
             // "15,583 lb" is the same page speaking two dialects.
             trio: [(life.sessions.formatted(), "Workouts"), (dist.value.formatted(), dist.unit),
@@ -190,7 +191,7 @@ struct AthleteProfileView: View {
                 .accessibilityLabel(following ? "Following \(athlete.name). Tap to unfollow." : "Follow \(athlete.name)")
                 // Nudge: a mutual with no ring today (they haven't trained) can be nudged once.
                 // Care, not pressure — it never appears on someone who already moved today.
-                if following, !trainedToday, nudges.canNudge(athlete.handle, isSample: athlete.isSample) || nudges.nudgedToday(athlete.handle) {
+                if following, !postedToday, nudges.canNudge(athlete.handle, isSample: athlete.isSample) || nudges.nudgedToday(athlete.handle) {
                     let sent = nudges.nudgedToday(athlete.handle)
                     Button {
                         if !sent { nudges.nudge(athlete.handle, isSample: athlete.isSample, name: athlete.name) }
@@ -474,6 +475,5 @@ struct AthleteProfileView: View {
         Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
     }
 }
-
 
 

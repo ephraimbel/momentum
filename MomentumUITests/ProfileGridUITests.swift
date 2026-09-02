@@ -5,13 +5,17 @@ import XCTest
 /// PNGs to /tmp for visual inspection.
 final class ProfileGridUITests: XCTestCase {
 
-    private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/dab5c7b2-3f47-4a9d-a69d-e9360d163b0c/scratchpad"
+    private var dumpDir: URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("momentum-profile-grid-audit", isDirectory: true)
+    }
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     private func dump(_ app: XCUIApplication, _ name: String) {
         let png = app.screenshot().pngRepresentation
-        try? png.write(to: URL(fileURLWithPath: "\(dumpDir)/\(name).png"))
+        try? FileManager.default.createDirectory(at: dumpDir, withIntermediateDirectories: true)
+        try? png.write(to: dumpDir.appendingPathComponent("\(name).png"))
     }
 
     func testGridHighlightsAndImmersivePager() {
@@ -47,7 +51,10 @@ final class ProfileGridUITests: XCTestCase {
         let runTile = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'mi'")).firstMatch
         XCTAssertTrue(runTile.waitForExistence(timeout: 5), "No run tiles in the grid.")
         // The tile label is "Run, 4.45 mi" — grab the distance so we can confirm the pager opens on it.
-        let distance = runTile.label.components(separatedBy: ", ").last ?? ""
+        let distance = runTile.label.components(separatedBy: ", ")
+            .first(where: { $0.range(of: #"^\d+(?:\.\d+)?\s+(?:mi|km)$"#,
+                                     options: .regularExpression) != nil }) ?? ""
+        XCTAssertFalse(distance.isEmpty, "Couldn't read a distance from '\(runTile.label)'.")
         runTile.tap()
 
         let close = app.buttons["Close"].firstMatch
@@ -74,11 +81,14 @@ final class ProfileGridUITests: XCTestCase {
     /// The media counter pill sits BELOW the top-right control column — never under the Edit
     /// pencil. Owner report 2026-08-27: "1/3" rendered directly beneath the pencil on every
     /// multi-photo post, because the pill's offset was a hard-coded one-button height from before
-    /// Edit joined the column. The seeded strength post carries two photos, so its pager shows a
-    /// "1/3" pill beside a share + edit column: the exact screen from the report.
+    /// Edit joined the column. The seeded strength post carries two photos; its saved muscle-map
+    /// cover opens first, so the test uses the same alternate-media swap an athlete does before
+    /// judging the photo counter beside the share + edit column.
     func testMediaCounterClearsTheControlColumn() {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--profile-tab", "--profile-open-strength"]
+        // The assertion depends on the canonical seeded strength post carrying two photos. A
+        // pre-existing demo profile makes --seed-demo a no-op, so reset the shared UI-test store.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--profile-tab", "--profile-open-strength"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }
@@ -95,6 +105,10 @@ final class ProfileGridUITests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["Edit activity"].firstMatch.waitForExistence(timeout: 8),
                       "Immersive pager didn't open on the strength post.")
+        let photoThumb = app.buttons["Workout photos"]
+        XCTAssertTrue(photoThumb.waitForExistence(timeout: 5),
+                      "Seeded photos missing from the strength post's alternate-media card.")
+        photoThumb.tap()
         let counterQuery = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH 'Media 1 of'"))
         XCTAssertTrue(counterQuery.firstMatch.waitForExistence(timeout: 5),

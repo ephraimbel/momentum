@@ -1,5 +1,11 @@
 import Foundation
+import OSLog
 import SwiftData
+
+private let persistenceLogger = Logger(
+    subsystem: "com.ephraimbel.momentum.app",
+    category: "persistence"
+)
 
 /// Owns the SwiftData `ModelContainer` — the **local source of truth** and the only singleton
 /// in the app (PRD §17).
@@ -20,16 +26,16 @@ final class PersistenceController {
     static let shared = PersistenceController()
 
     let container: ModelContainer
+    private var didScheduleRunningPlanBackfill = false
 
     /// All persisted model types — forwards to the versioned schema, which is the canonical list.
     /// Kept as a name because tests and previews build containers from it.
-    static let models: [any PersistentModel.Type] = SchemaV1.models
+    static let models: [any PersistentModel.Type] = SchemaV2.models
 
     private init(inMemory: Bool = false) {
-        // `Schema(versionedSchema:)` stamps the store with V1's identifier. An unversioned
-        // `Schema(_:)` already reported 1.0.0, so this is the SAME identity an existing store
-        // carries — the upgrade is a no-op read, not a migration.
-        let schema = Schema(versionedSchema: SchemaV1.self)
+        // V2 adds only the running planner's scalar-ID sidecars. `MomentumMigrationPlan` upgrades a
+        // released V1 store in place without changing the existing plan/workout object graph.
+        let schema = Schema(versionedSchema: SchemaV2.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         do {
             container = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
@@ -53,6 +59,28 @@ final class PersistenceController {
         #if DEBUG
         DemoSeed.seedIfRequested(container.mainContext)
         #endif
+    }
+
+    /// Populate running-domain sidecars after first paint, on a dedicated SwiftData executor.
+    /// The repair is additive and idempotent: a failed pass rolls back and retries next launch,
+    /// while the legacy plan remains live throughout the compatibility window.
+    func scheduleRunningPlanBackfill() {
+        guard !didScheduleRunningPlanBackfill else { return }
+        didScheduleRunningPlanBackfill = true
+
+        let worker = RunningPlanBackfillWorker(modelContainer: container)
+        Task.detached(priority: .utility) {
+            do {
+                let report = try await worker.repair()
+                if report.didSave {
+                    persistenceLogger.info("Running-plan compatibility repair completed")
+                }
+            } catch {
+                persistenceLogger.error(
+                    "Running-plan compatibility repair deferred: \(String(describing: error), privacy: .public)"
+                )
+            }
+        }
     }
 
     /// In-memory container for tests and previews.

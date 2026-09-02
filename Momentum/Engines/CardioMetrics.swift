@@ -21,8 +21,8 @@ enum CardioMetrics {
     /// Never the live EMA. `GPSProcessor.smoothedPaceSPerKm` is an α=0.2 recency-weighted value with
     /// an effective window of a few seconds: it is the right number for the live screen and the wrong
     /// one to persist, because slowing to a walk before reaching for Finish drags it to walking pace.
-    /// Every other writer in the app (crash recovery, Health import, manual logging) already used
-    /// this formula — only the live-capture finish path stored the EMA, which is why the stored field
+    /// Every other writer in the app (crash recovery and manual logging) already used this formula —
+    /// only the live-capture finish path stored the EMA, which is why the stored field
     /// disagreed with the summary screen that recomputed it.
     ///
     /// Returns 0 for degenerate input — never inf, never NaN. 0 renders blank.

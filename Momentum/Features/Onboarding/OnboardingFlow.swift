@@ -20,10 +20,8 @@ struct OnboardingFlow: View {
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
-    /// The athlete left the last primer (Continue → paywall/account). `finishOnboarding` presents
-    /// the paywall as a COVER **without changing the step**, so anything the primers beat scheduled
-    /// can't key off `vm.step` alone — without this latch a fast Continue put the system location
-    /// prompt on top of the just-presented paywall.
+    /// The athlete left the location primer. Anything the beat scheduled can't key off `vm.step`
+    /// alone — without this latch a fast Continue can put the system prompt on top of plan building.
     @State private var leftPrimers = false
     @State private var pickedOnboardingAvatar: PhotosPickerItem?
     /// The curated look picked on the identity beat (ring in the strip); cleared by a photo pick.
@@ -44,6 +42,7 @@ struct OnboardingFlow: View {
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
+    @State private var locationRequestInFlight = false // wait for the real Core Location response
     @State private var lastStepChangeAt = Date.distantPast   // double-tap guard for goNext/goBack
     /// True while the paywall's exit advances the step UNDER the still-presented cover — the
     /// travel animation is suppressed so the account beat is fully composed before the cover
@@ -54,6 +53,7 @@ struct OnboardingFlow: View {
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
     @State private var completedOnce = false         // the completion hand-off ran — never twice
+    @State private var lastLoggedStep: OnboardingViewModel.Step? // `.onChange` cannot see screen one
 
     var body: some View {
         ZStack {
@@ -67,7 +67,7 @@ struct OnboardingFlow: View {
             } else if vm.step == .reveal {
                 // Full-bleed too: the reveal's scroll runs under the status bar (its aurora crown
                 // and a top scrim live there), so it escapes the question column's padding.
-                PlanRevealView(vm: vm, profile: profile) { goNext() }
+                PlanRevealView(vm: vm, profile: profile) { finishOnboarding() }
                     .transition(.opacity)
             } else {
                 VStack(spacing: Theme.Space.lg) {
@@ -201,10 +201,11 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
             #endif
+            logOnboardingStep(vm.step)
         }
         .onChange(of: vm.step) { _, step in
             Haptics.light()   // the screen landing — one light tick per step, so travel has feel
-            services.analytics.log(.onboardingStep(index: step.rawValue))
+            logOnboardingStep(step)
             // Checkpoint on every navigation — the draft now holds every answer made up to and
             // including the step just left, so an eviction resumes here, not at question one.
             saveDraftIfEnabled()
@@ -213,16 +214,13 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
-        // The onboarding_complete paywall (PRD §10) — shown from the last primer's hand-off, after
-        // every opt-in. **SOFT since 2026-08-06** (user call, reversing the 2026-07-28 hard flip):
-        // the flow's X closes it un-entitled. Purchase and close both exit through `exitPaywall`,
-        // which advances the flow UNDER the cover before dismissing it — so the dismissal reveals
-        // the account beat, not a half-second flash of the step the wall was presented over
-        // (that flash shipped through 1.2.0; fixed 2026-08-06). `onDismiss` remains only for the
-        // store-unreachable deferral, whose escape dismisses without an exit callback.
+        // The onboarding_complete paywall (PRD §10) — shown from the plan reveal, after every
+        // opt-in. Its first page remains the showcase, immediately before checkout.
+        // **HARD since 2026-09-01**: only purchase/Restore exits normally. `onDismiss` remains for
+        // the store-unreachable deferral, whose escape dismisses without an entitlement callback.
         // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
-        // re-raises it once from RootView (where the X is equally available) and the account beat
-        // is never silently lost. Since 2026-08-05 the wall is the two-page flow (the device tour,
+        // re-raises it from RootView at checkout and the account beat is never silently lost.
+        // Since 2026-08-05 the wall is the two-page flow (the showcase,
         // then the same PaywallView the rest of the app shows).
         .fullScreenCover(isPresented: $showPaywall, onDismiss: {
             if !paywallHandledExit {
@@ -235,7 +233,9 @@ struct OnboardingFlow: View {
             }
             paywallHandledExit = false
         }) {
-            OnboardingPaywallFlow(onEntitled: { exitPaywall() }, onClose: { exitPaywall() })
+            OnboardingPaywallFlow(
+                personalizedOutcome: vm.projectedOutcome(),
+                onEntitled: { exitPaywall() })
         }
     }
 
@@ -315,6 +315,17 @@ struct OnboardingFlow: View {
         vm.back()
     }
 
+    private func logOnboardingStep(_ step: OnboardingViewModel.Step) {
+        guard lastLoggedStep != step else { return }
+        lastLoggedStep = step
+        let position = (vm.steps.firstIndex(of: step) ?? 0) + 1
+        services.analytics.log(.onboardingStep(
+            name: String(describing: step),
+            index: step.rawValue,
+            position: position,
+            total: vm.steps.count))
+    }
+
     /// Persist the interruption-recovery draft, unless a deep link is driving the flow (those set a
     /// specific step for verification and must stay deterministic — no stray draft written or read).
     /// The answers snapshot on the main actor NOW; the encode + UserDefaults write hop off it —
@@ -356,10 +367,9 @@ struct OnboardingFlow: View {
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) {
-            // "This looks great" flows into the final opt-in beats — the paywall now waits until the
-            // very end (the last step's "Start training"), so nothing interrupts the reveal moment
-            // (user call 2026-07-24: the paywall is the LAST thing before the app).
-            goNext()
+            // The required opt-ins already happened. Preserve the showcase as the final bridge
+            // between this personalized payoff and the checkout.
+            finishOnboarding()
         }
         case .notifications: notificationsStep
         case .primers: primersStep
@@ -371,19 +381,27 @@ struct OnboardingFlow: View {
     // MARK: Question steps
 
     private var disciplinesStep: some View {
-        let programmed = ActivityChoice.allCases.filter(\.isProgrammed)
+        let programmed = ActivityChoice.allCases.filter { $0.isProgrammed && $0 != .run }
         let extras = ActivityChoice.allCases.filter { !$0.isProgrammed }
-        return questionScaffold("What do you want to do?", subtitle: "Pick all that apply. We'll build your plan around these.") {
-            activitySectionLabel("TRAIN")
+        return questionScaffold("What supports your running?",
+                                subtitle: "Running is the foundation. Add everything else that belongs in your week.") {
+            activitySectionLabel("YOUR FOUNDATION")
+            ChoiceCard(title: "Run", subtitle: "Included in every Momentum coaching plan",
+                       systemImage: ActivityChoice.run.icon, isSelected: true, multi: true) {}
+                .allowsHitTesting(false)
+                .accessibilityRemoveTraits(.isButton)
+                .accessibilityHint("Running is included in every coaching plan")
+                .reveal(cascade(0))
+            activitySectionLabel("ADD TO YOUR PLAN").padding(.top, Theme.Space.xs)
             ForEach(Array(programmed.enumerated()), id: \.element) { i, a in
-                activityCard(a).reveal(cascade(i))
+                activityCard(a).reveal(cascade(i + 1))
             }
             activitySectionLabel("ALSO TRACK").padding(.top, Theme.Space.xs)
-            Text("Logged as cross-training and added to your weeks. Your call.")
+            Text("Added as cross-training around the runs. Your call.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             ForEach(Array(extras.enumerated()), id: \.element) { i, a in
-                activityCard(a).reveal(cascade(programmed.count + i))
+                activityCard(a).reveal(cascade(programmed.count + i + 1))
             }
         }
     }
@@ -547,14 +565,13 @@ struct OnboardingFlow: View {
     private var goalStep: some View {
         // Running-first ordering (ENDURANCE-FOCUS Phase 0): the racing + endurance goals lead — this is
         // a running app. Strength/body-composition goals remain, as the supporting pillar.
-        let goals: [(Goal, String, String)] = [
-            (.raceDistance, "Run a race", "flag.checkered"), (.endurance, "Run farther & faster", "wind"),
-            (.stayConsistent, "Stay consistent", "calendar"), (.loseFat, "Lose fat / get fit", "flame"),
-            (.buildMuscle, "Build muscle", "figure.strengthtraining.traditional"), (.getStronger, "Get stronger", "dumbbell.fill")]
+        let goals: [Goal] = [
+            .raceDistance, .endurance, .stayConsistent, .loseFat, .buildMuscle, .getStronger]
         return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
-            ForEach(Array(goals.enumerated()), id: \.element.0) { i, g in
-                ChoiceCard(title: g.1, systemImage: g.2, isSelected: vm.goal == g.0) {
-                    pick { vm.goal = g.0 }
+            ForEach(Array(goals.enumerated()), id: \.element) { i, goal in
+                ChoiceCard(title: goal.planLabel, subtitle: goal.planSubtitle,
+                           systemImage: goal.planSystemImage, isSelected: vm.goal == goal) {
+                    pick { vm.goal = goal }
                 }
                 .reveal(cascade(i))
             }
@@ -757,10 +774,11 @@ struct OnboardingFlow: View {
     // level once. The `timeEntryCard` below is still shared by that step.
 
     /// Past injuries — multi-select body areas the plan will train around (ENDURANCE-FOCUS §8.2).
-    /// Optional and shame-free; empty = none. Feeds the protective ramp + the injury loop's watch list.
+    /// Optional and shame-free; empty = none. Feeds a conservative history modifier and the injury
+    /// loop's watch list; it is not a diagnosis of current capacity.
     private var injuriesStep: some View {
         questionScaffold("Anything to train around?",
-                         subtitle: "Past injuries shape a safer ramp. We'll build up gently where you've been hurt. Skip if you're all clear.") {
+                         subtitle: "Past injuries help us leave more recovery margin and avoid repeating aggravating patterns. Skip if none apply.") {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible())],
                       spacing: 12) {
                 ForEach(Array(InjuryArea.allCases.enumerated()), id: \.element) { i, area in
@@ -830,7 +848,7 @@ struct OnboardingFlow: View {
             HealthTile()
                 .reveal(0.02)
             OnboardingHeading(title: "Train around your recovery",
-                              subtitle: "Next, iOS will ask about Apple Health. Momentum reads your sleep, heart rate and HRV so each week adapts to how you're actually doing. You choose what to share.")
+                              subtitle: "Next, iOS will ask about Apple Health. Momentum reads supported recovery signals such as sleep, HRV and resting heart rate from connection onward. It never imports your workout history, and you choose what to share.")
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .reveal(0.08)
@@ -851,12 +869,11 @@ struct OnboardingFlow: View {
                 guard !healthRequestInFlight else { return }
                 healthRequestInFlight = true
                 Task {
-                    _ = await services.health.requestAuthorization()
+                    let connection = await services.health.connectForSignals()
                     // Grab resting HR (and body mass, if the athlete skipped it) while we have
                     // consent — it upgrades HR zones to Karvonen from the very first plan.
-                    let metrics = await services.health.importedBodyMetrics()
-                    if let rhr = metrics.restingHR { vm.importedRestingHR = rhr }
-                    if vm.bodyMassKg == nil { vm.bodyMassKg = metrics.bodyMassKg }
+                    if let rhr = connection.restingHR { vm.healthRestingHR = rhr }
+                    if vm.bodyMassKg == nil { vm.bodyMassKg = connection.bodyMassKg }
                     // No workout history is imported here — or anywhere. Health is a source of
                     // SIGNALS, never workouts (owner call 2026-08-15, `d419f0f`: the importer was
                     // deleted after a fresh signup pulled ~10,000 mirrored Watch/Garmin/Strava
@@ -1434,10 +1451,10 @@ struct OnboardingFlow: View {
     private var hybridFocusStep: some View {
         let opts: [(HybridPriority, String, String, String)] = [
             (.running, "Running comes first", "Lift to support the miles", "figure.run"),
-            (.balanced, "Balanced", "Both matter, side by side", "figure.run.circle"),
-            (.lifting, "Lifting comes first", "Run to stay conditioned", "dumbbell.fill")]
-        return questionScaffold("Run and lift: where's your focus?",
-                                subtitle: "We'll weight your week toward it. Change it anytime.") {
+            (.balanced, "Balanced runner", "More strength, with running still leading", "figure.run.circle"),
+            (.lifting, "More strength support", "Near-even split; the extra day stays a run", "dumbbell.fill")]
+        return questionScaffold("How should strength support your running?",
+                                subtitle: "Every option stays a running plan. Change it anytime.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
                     pick { vm.hybridPriority = o.0 }
@@ -1502,7 +1519,10 @@ struct OnboardingFlow: View {
                     remindersAdvanced = true
                     // Advance only AFTER the notifications prompt is dismissed, so the next page's
                     // location prompt lands on a settled screen instead of stacking on this one.
-                    services.notifications.requestAuthorization {
+                    services.notifications.requestAuthorization { granted in
+                        NotificationPrefs.setOnboardingChoice(enabled: granted)
+                        services.analytics.log(.onboardingPermission(
+                            kind: "notifications", status: granted ? "granted" : "denied"))
                         goNext()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                     }
@@ -1514,6 +1534,9 @@ struct OnboardingFlow: View {
                     // the location primer and stacking its prompt over the beat after it.
                     guard !remindersAdvanced else { return }
                     remindersAdvanced = true
+                    NotificationPrefs.setOnboardingChoice(enabled: false)
+                    services.analytics.log(.onboardingPermission(
+                        kind: "notifications", status: "skipped"))
                     goNext()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                 }
@@ -1638,32 +1661,28 @@ struct OnboardingFlow: View {
             .bottomFade(from: 0.72)
             .reveal(0.16)
             Spacer(minLength: 0)
-            // The last beat the athlete drives: hands straight off to the paywall gate, then the
-            // account. (Went through a `rateUs` step from 2026-07-26 until it was removed 2026-08-22.)
-            OnboardingCTA(title: "Continue") { finishOnboarding() }
+            // Permissions are settled before plan generation; the reveal and showcase still
+            // remain ahead, so this CTA advances into the build rather than raising checkout.
+            OnboardingCTA(title: "Continue", inFlight: locationRequestInFlight) {
+                guard !locationRequestInFlight else { return }
+                locationRequestInFlight = true
+                // The CTA owns the request so a fast tap can never outrun the prompt. Advance only
+                // after iOS returns the athlete's real choice; the shared service retains the grant
+                // for Today's map and every later GPS session.
+                services.location.requestAuthorization { granted in
+                    services.analytics.log(.onboardingPermission(
+                        kind: "location", status: granted ? "granted" : "denied"))
+                    locationRequestInFlight = false
+                    leftPrimers = true
+                    goNext()
+                }
+            }
                 .padding(.top, Theme.Space.sm)
                 .reveal(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Ask for location only AFTER this page is visibly on screen — the athlete reads WHY (their
-        // map centered on them) first, THEN the system prompt appears. The brief beat also guarantees
-        // the prior notifications prompt has cleared, so the two never stack (user report 2026-07-24).
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
-                // Tapping Continue inside the 0.55s window used to fire the system prompt over the
-                // next beat, which reads as a random permission grab on a screen that says nothing
-                // about location. `vm.step` alone is no longer enough to detect that: since the
-                // rating beat was removed (2026-08-22) Continue raises the paywall as a COVER and
-                // leaves the step on `.primers`, so without `leftPrimers` the prompt would land on
-                // top of the checkout — the worst place in the app to interrupt.
-                guard vm.step == .primers, !leftPrimers else { return }
-                // The SHARED service (2026-08-28): the grant — and the fix it triggers — must
-                // reach Today's map, which reads `services.location`.
-                services.location.requestAuthorization()
-            }
-        }
     }
 
 
@@ -1695,15 +1714,14 @@ struct OnboardingFlow: View {
             })
     }
 
-    /// Where onboarding actually ends: the paywall gate (or straight through for entitled athletes),
-    /// then the account beat. Called straight from `primersStep`'s Continue.
+    /// Where onboarding actually ends: the showcase + paywall gate (or straight through for
+    /// entitled athletes), then the account beat. Called from the plan reveal's CTA.
     private func finishOnboarding() {
-        leftPrimers = true   // the delayed location prompt must not rise over what comes next
+        leftPrimers = true   // defensive for deep links that jump directly to the reveal
         if paywall.isPro { goToAccountBeat(); return }
-        // Arm the relaunch gate BEFORE presenting — not to wall anyone in (the gate is soft now),
-        // but so a force-quit mid-wall re-offers it once from RootView instead of dropping the
-        // athlete into the app with the account beat silently skipped. `setPro(true)` or the
-        // flow's X clears it.
+        // Arm the hard relaunch gate BEFORE presenting so a force-quit mid-wall re-opens checkout
+        // from RootView instead of dropping the athlete into the app. `setPro(true)` clears it;
+        // the narrow store-unreachable escape is intentionally only a one-launch deferral.
         paywall.onboardingGatePending = true
         showPaywall = true
     }
@@ -1732,7 +1750,7 @@ struct OnboardingFlow: View {
         onComplete()
     }
 
-    /// The paywall's exit (purchase or the X), sequenced so nothing stale peeks through: advance
+    /// The paywall's entitled exit (purchase or Restore), sequenced so nothing stale peeks through: advance
     /// to the account beat FIRST, under the still-presented cover, then dismiss — the dismissal
     /// reveals "Save your progress" directly instead of flashing the step underneath for the length
     /// of the animation. Signed-in athletes have no account beat to advance to, so the whole flow
@@ -1826,6 +1844,7 @@ struct OnboardingFlow: View {
             profile = vm.finish(in: context)
             OnboardingDraftStore.clear()   // onboarding succeeded — nothing left to resume
             services.analytics.log(.planGenerated(disciplines: profile?.disciplines.count ?? 0))
+            services.notifications.schedulePlannedReminders(profile?.plan)
             SKANConversion.record(.planBuilt)   // activation, for ad-campaign optimisation
         }
 

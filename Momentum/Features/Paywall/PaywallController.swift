@@ -73,10 +73,11 @@ struct PaywallOffering: Sendable, Equatable {
                       priceText: money(weeklyPrice), perWeekText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
-                      // No trial (owner call 2026-08-20: trial retired — the soft paywall IS the
-                      // trial; the yearly sells on the savings badge instead). The live path still
-                      // reads the store's intro offer, so this stays honest either way.
-                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 0))
+                      // Seven-day annual trial (owner call 2026-09-01). Weekly stays trial-less:
+                      // it is already the low-commitment entry plan, while a full week lets an
+                      // annual customer experience the adaptive loop before renewal. The live
+                      // path still reads StoreKit's intro offer, so eligibility stays store-authored.
+                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 7))
 
     /// Percent saved by paying yearly instead of 52× weekly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
@@ -117,6 +118,11 @@ final class PaywallController: PaywallServing {
     static let onboardingGateKey = "com.momentum.pro.onboardingGatePending"
 
     private(set) var isPro: Bool
+    /// Client analytics is directional; RevenueCat remains the ledger. Still, one successful store
+    /// callback must not become several conversion events when a paywall is rebuilt or two queued
+    /// button tasks resolve. Keep the claim on the shared controller, not one View's transient
+    /// `@State`, and key it by the store product for this app session.
+    @ObservationIgnored private var reportedPurchaseProducts: Set<String> = []
 
     /// When the billing identity last changed. Since 2026-07-27 the account is asked for at the END
     /// of onboarding, so **every** onboarding purchase is made by an anonymous RevenueCat customer
@@ -381,6 +387,13 @@ final class PaywallController: PaywallServing {
         #endif
     }
 
+    /// Returns true exactly once per purchased product for this controller's lifetime. This does
+    /// not grant entitlement and does not replace RevenueCat transaction accounting; it only makes
+    /// the privacy-preserving client funnel idempotent across SwiftUI view reconstruction.
+    func claimPurchaseConversion(for productID: String) -> Bool {
+        reportedPurchaseProducts.insert(productID).inserted
+    }
+
     /// Re-fetch the store's offering. The paywall calls this to retry after a pricing failure.
     func reloadPricing() async {
         #if canImport(RevenueCat)
@@ -531,6 +544,7 @@ final class PaywallController: PaywallServing {
 
     func resetForTesting() {
         isPro = false
+        reportedPurchaseProducts.removeAll()
         UserDefaults.standard.removeObject(forKey: Self.entitlementKey)
     }
     #endif

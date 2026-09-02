@@ -31,7 +31,13 @@ final class AwardsGalleryUITests: XCTestCase {
         // The pop must outlive the old 0.8s re-arm window — still on the profile 2.5s later.
         Thread.sleep(forTimeInterval: 2.5)
         XCTAssertFalse(masthead.exists, "back button bounced into the awards gallery again")
-        XCTAssertTrue(app.staticTexts["AWARDS"].waitForExistence(timeout: 3),
-                      "profile Awards shelf not visible after popping the gallery")
+        // The shelf itself can be below the fold on shorter devices. The selected Highlights
+        // control is the stable proof that the navigation pop returned to the intended profile
+        // face; asserting an off-screen child made this regression test depend on viewport size.
+        let highlights = app.buttons["Highlights"]
+        XCTAssertTrue(highlights.waitForExistence(timeout: 3),
+                      "profile Highlights face not visible after popping the gallery")
+        XCTAssertTrue(highlights.isSelected,
+                      "profile did not return to the selected Highlights face")
     }
 }

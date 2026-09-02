@@ -4,13 +4,13 @@ import SwiftData
 /// The awards ledger — the store-facing wrapper around the pure `AwardsEngine` (same split as
 /// `RecordsBook` over the record math). `sync` rebuilds the snapshot from the store, evaluates,
 /// and persists any newly-earned awards exactly once; call it wherever history changes (save
-/// flows, Health import, Progress/Profile visits). Idempotent two ways: earned rows are keyed by
+/// flows, account sync, and Progress/Profile visits). Idempotent two ways: earned rows are keyed by
 /// `awardID`, and the engine is deterministic over the same history.
 @MainActor
 enum AwardsBook {
 
     /// Awards earned before this window ago are backfill — persisted already-seen, so an athlete
-    /// updating the app (or importing years of Health history) isn't buried under a celebration
+    /// updating the app (or restoring older Momentum history) isn't buried under a celebration
     /// for every milestone they crossed months ago. Anything fresher celebrates normally.
     static let celebrationWindowS: TimeInterval = 48 * 3600
 

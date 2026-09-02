@@ -10,6 +10,7 @@ import XCTest
 /// API and opens it on the sim, which signs the athlete in and resumes the walk. Run the test
 /// deliberately (`-only-testing:MomentumUITests/EmailAuthUITests`) against a FRESH install
 /// (uninstall first — a stored session skips the gate), and clean up `e2e.*` users afterwards.
+@MainActor
 final class EmailAuthUITests: XCTestCase {
 
     func testEmailSignUpThroughOnboardingToReveal() throws {
@@ -125,16 +126,34 @@ final class EmailAuthUITests: XCTestCase {
         // WEEKS stat cell now); another literal that rotted unnoticed while this test couldn't run.
         let week1 = app.buttons["This looks great"]
         // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
-        // anymore) — it presents from com.apple.Health, so drive that process directly.
-        let health = XCUIApplication(bundleIdentifier: "com.apple.Health")
+        // anymore). On iOS 26 the authorization sheet moved out of Health.app into the dedicated
+        // HealthPrivacyService process; targeting Health.app leaves the visible sheet untouched
+        // and silently wedges the walk. Drive the actual owning process directly.
+        let health = XCUIApplication(bundleIdentifier: "com.apple.HealthPrivacyService")
         // 40, not 25: the "building your plan" beat and each step's entrance animation each burn
         // an iteration without advancing, and a runner+lifter answers more steps than a runner.
         for _ in 0..<40 {
             if week1.exists { break }
             grantHealthSheet(health)
-            if app.staticTexts["What do you want to do?"].exists,
+            // Notifications and location are true iOS prompts. The onboarding CTA intentionally
+            // stays in-flight until Core Location reports the athlete's answer, so leaving the
+            // SpringBoard sheet unanswered looks like a frozen Continue button even though the
+            // production handoff is behaving correctly.
+            for label in ["Allow While Using App", "Allow Once", "Allow", "OK"] {
+                let button = springboard.buttons[label]
+                if button.exists && button.isHittable { button.tap() }
+            }
+            if app.staticTexts["What supports your running?"].exists,
                !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Lift weights"].firstMatch.tap()
+            }
+            // Main goal became a required choice when the running-first onboarding shipped. The
+            // live auth walk used to sit here until XCTest's outer timeout because Continue is
+            // correctly disabled with no selection. Pick a neutral goal just as the other
+            // onboarding walkers do; this test is proving auth, not a specific plan shape.
+            if app.staticTexts["What's your main goal?"].exists,
+               !app.buttons["Continue"].isEnabled {
+                app.staticTexts["Stay consistent"].firstMatch.tap()
             }
             let maybeLater = app.buttons["Maybe later"]
             let cont = app.buttons["Continue"]
@@ -162,6 +181,16 @@ final class EmailAuthUITests: XCTestCase {
 
     /// Grant the HealthKit authorization sheet if it's up (same pattern as HealthImportUITests).
     private func grantHealthSheet(_ health: XCUIApplication) {
+        // iOS 26 exposes the all-categories affordance as a table cell, not a Button/Switch. Its
+        // stable accessibility identifier is the only lookup that crosses both compact and large
+        // simulators; the text fallback covers older OS versions.
+        let allCategories = health.cells["UIA.Health.AuthSheet.AllCategoryButton"]
+        if allCategories.exists && allCategories.isHittable {
+            allCategories.tap()
+        } else {
+            let allText = health.staticTexts["Turn On All"]
+            if allText.exists && allText.isHittable { allText.tap() }
+        }
         for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
             let sw = health.switches[label]
             if sw.exists && sw.isHittable { sw.tap() }

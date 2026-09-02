@@ -11,10 +11,13 @@ import XCTest
 /// The hold expires on its own, so a hung capture can never wedge the sim. Excluded from any
 /// release-gate meaning: it asserts nothing beyond the app reaching the foreground.
 final class CaptureRigUITests: XCTestCase {
-    func testHoldForCapture() {
+    func testHoldForCapture() throws {
         let env = ProcessInfo.processInfo.environment
+        guard let captureArguments = env["CAPTURE_ARGS"] else {
+            throw XCTSkip("Capture rig only; set TEST_RUNNER_CAPTURE_ARGS to run it")
+        }
         let app = XCUIApplication()
-        app.launchArguments = (env["CAPTURE_ARGS"] ?? "--seed-demo")
+        app.launchArguments = captureArguments
             .split(separator: " ").map(String.init)
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30), "app should reach foreground")

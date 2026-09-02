@@ -3,7 +3,7 @@ import SwiftData
 
 /// The athlete's record book (PRD §8.7) — reads the persisted `PersonalRecord` rows into the
 /// current-best-per-type shelf, and backfills rows from workout history so athletes whose runs
-/// predate record-persistence (or arrived via Health import) still own their bests.
+/// predate record-persistence still own their bests.
 ///
 /// Persist-on-save (`PersonalRecord.persist`, called from the save flows) remains the live path;
 /// backfill replays history through the same dedupe so the two can never double-log.
@@ -85,11 +85,9 @@ enum RecordsBook {
         }
     }
 
-    /// Persist any records ONE workout sets against the current shelf — the live path for
-    /// workouts that bypass the in-app save flows (HealthKit imports; the backfill is one-shot,
-    /// so without this every imported best after the first Progress visit was silently dropped).
-    /// Same `beats` filter + `PersonalRecord.persist` dedupe as the backfill, so the book stays
-    /// a true progression and a re-imported workout can't double-log.
+    /// Persist any records ONE workout sets against the current shelf. Same `beats` filter and
+    /// `PersonalRecord.persist` dedupe as the one-shot backfill, so save/recovery/sync paths cannot
+    /// double-log and the book remains a true progression.
     static func record(_ workout: Workout, in context: ModelContext) {
         let prs = (try? context.fetch(FetchDescriptor<PersonalRecord>())) ?? []
         var bests: [PRType: Double] = [:]

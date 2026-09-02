@@ -4,11 +4,12 @@ import FBSDKCoreKit
 #endif
 
 /// Meta (Facebook/Instagram) ads attribution — the second ad network, wired 2026-08-11 to the
-/// same doctrine as [`TikTokAdsService`]:
+/// same config-gated doctrine as [`TikTokAdsService`], with Meta's optional advertiser-ID path
+/// protected by App Tracking Transparency:
 ///
-///  - **SKAN-only, never ATT.** No tracking dialog, no IDFA (`FacebookAdvertiserIDCollectionEnabled`
-///    is false in Info.plist); install attribution rides SKAdNetwork (Meta's two IDs live there too)
-///    and Aggregated Event Measurement, both of which work without ATT.
+///  - **SKAN always, IDFA only after consent.** Install attribution rides SKAdNetwork and
+///    Aggregated Event Measurement without ATT; `AdTrackingConsent` enables advertiser-ID
+///    collection only after the athlete authorizes it.
 ///  - **Config-gated, dark by default**: `FacebookAppID`/`FacebookClientToken` are injected from the
 ///    untracked `Secrets.xcconfig`; either empty → `configure()` never initializes the SDK. Since
 ///    SDK v9 there is no auto-init, so an un-called SDK is genuinely inert.
@@ -44,7 +45,6 @@ enum MetaAdsService {
         // setting it explicitly is what an App Review pass should see, and it keeps the SDK honest
         // if Apple's own gate ever loosens.
         Settings.shared.isAdvertiserIDCollectionEnabled = false
-        Settings.shared.isAdvertiserTrackingEnabled = false
         ApplicationDelegate.shared.initializeSDK()
         isLive = true
         #endif

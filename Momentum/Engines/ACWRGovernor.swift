@@ -1,16 +1,16 @@
 import Foundation
 
-/// The plan-generation safety governor (ENDURANCE-FOCUS §6.2): a generated plan physically cannot
-/// ramp weekly running volume into the acute:chronic injury-risk zone. ACWR compares a week's load to
-/// the rolling 4-week average behind it; sustained ratios above ~1.5 correlate with injury spikes, so
-/// we cap planned weeks at a conservative 1.3× their own trailing average.
+/// The plan-generation workload progression governor (ENDURANCE-FOCUS §6.2). It compares each
+/// planned week's volume with the rolling four-week average behind it, then caps abrupt increases at
+/// a conservative product limit. The ratio is exposure context—not an injury prediction or a
+/// universal safe zone—and the 1.3 limit is an operational planning choice, not a medical threshold.
 ///
-/// The governor only ever *reduces* — deloads, tapers, and sane ramps pass through untouched. In
-/// normal operation it stays dormant (the intensity ramps are well inside the zone); it exists to
-/// catch the dangerous edges — a base seeded far above the athlete's reported current volume, or any
+/// The governor only ever *reduces* — deloads, tapers, and ordinary ramps pass through untouched. In
+/// normal operation it stays dormant (the intensity ramps are well inside the limit); it exists to
+/// catch abrupt edges — a base seeded far above the athlete's reported current volume, or any
 /// future engine change that accidentally spikes a week. Pure + deterministic.
 enum ACWRGovernor {
-    /// Conservative planned-ACWR ceiling (research danger zone starts ~1.5; plans shouldn't flirt with it).
+    /// Conservative internal progression ceiling. This is not an injury-risk or safety threshold.
     static let maxRatio = 1.3
 
     /// Per-week scale factors (0…1] that bring each week under the ceiling.

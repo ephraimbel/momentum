@@ -211,7 +211,7 @@ xcrun simctl launch <udid> com.ephraimbel.momentum.app --seed-demo --marketing-p
 **Two gotchas that make the shot non-deterministic:**
 
 1. **`WorkoutSnapshotHealer.sweep` renders only 12 snapshots per launch** (default `limit`, and `RootView` uses the default). On a fresh install the top rows come up as bare silhouettes. Relaunch 3–4× — snapshots persist to `gps.mapSnapshotData`, so they accumulate — then shoot.
-2. **PRs used to read 0.** `RecordsBook.backfillIfNeeded` was called from exactly one place, `ProgressView`, so the record book only existed if you'd visited Progress. Fixed 2026-07-28 — it now runs from `RootView`'s cold-launch block (one-shot, versioned flag, deduped per (type, workout)). The trio reads **32 PRS**. This was a real user-facing bug, not just a demo one: anyone importing history from Apple Health and going straight to Profile saw a flat zero.
+2. **PRs used to read 0.** `RecordsBook.backfillIfNeeded` was called from exactly one place, `ProgressView`, so the record book only existed if you'd visited Progress. Fixed 2026-07-28 — it now runs from `RootView`'s cold-launch block (one-shot, versioned flag, deduped per (type, workout)). The trio reads **32 PRS**. This was a real user-facing bug, not just a demo one: an athlete with older Momentum history who went straight to Profile could see a flat zero.
 
 ### Why the tiles are NOT varied basemaps
 

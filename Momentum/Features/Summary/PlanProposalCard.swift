@@ -2,8 +2,9 @@ import SwiftUI
 import SwiftData
 
 /// Post-workout apply-on-confirm (PRD §9.4 — the consent-required half of the adaptive loop). When
-/// the deterministic coach computes that you've earned more load (ACWR under-loaded), it offers a
-/// one-tap, bounded plan bump. `autoAdapt` already eases/rests on its own; raising load is the one
+/// the deterministic coach sees a lighter-than-recent week, it offers a one-tap, bounded plan review.
+/// The ratio is context rather than proof of readiness; the athlete confirms that the lighter week
+/// was intentional and landed well. `autoAdapt` already eases/rests on its own; raising load is the one
 /// direction that should never happen without a tap — so the athlete confirms it here. The numbers
 /// are the engine's (`PlanCoaching.apply`); the AI only narrates elsewhere.
 struct PlanProposalCard: View {

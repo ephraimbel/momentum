@@ -13,6 +13,10 @@ import CoreLocation
 struct WorkoutTileMedia: View {
     let workout: Workout
     var style: Style = .tile
+    /// Grid tiles follow the athlete's saved cover choice. The immersive pager's alternate
+    /// route/body slot opts out: once the photo is already the hero, asking this renderer to
+    /// honor `coverIsPhoto` would draw that same photo again instead of the workout visual.
+    var respectsPhotoCover: Bool = true
     /// Sets the immersive route map's mile/km milestone badges; tiles ignore it.
     var distanceUnit: DistanceUnit = .auto
     /// Immersive only: lets the pager page host the re-center control for the explorable map.
@@ -22,7 +26,7 @@ struct WorkoutTileMedia: View {
     /// media — a caller can't derive this itself, because "has a snapshot" changes underneath it.
     var onInkContext: ((InkContext) -> Void)? = nil
 
-    enum Style { case tile, immersive }
+    enum Style: String { case tile, immersive }
 
     /// What an overlay is sitting on.
     ///
@@ -50,6 +54,19 @@ struct WorkoutTileMedia: View {
     /// walks strength sets, and — for a snapshot-less GPS run — Kalman-smooths every GPS sample.
     /// Doing that on every scroll-invalidated `body` was the tile grid's main source of jank.
     @State private var resolved: Media?
+
+    private var mediaRevision: Int {
+        var h = Hasher()
+        h.combine(workout.type)
+        h.combine(workout.coverIsPhoto)
+        h.combine(MediaFingerprint.value(workout.heroPhotoData))
+        h.combine(MediaFingerprint.value(workout.gps?.mapSnapshotData))
+        h.combine(workout.gps?.mapSnapshotVersion)
+        h.combine(workout.gps?.mapStyleRaw)
+        h.combine(workout.strength?.totalSets)
+        h.combine(workout.strength?.totalVolumeKg)
+        return h.finalize()
+    }
 
     var body: some View {
         Group {
@@ -87,7 +104,8 @@ struct WorkoutTileMedia: View {
         // flips "Photo as cover", so the task never re-ran and the tile kept whatever it resolved
         // first — the toggle saved, and nothing on screen moved (owner report 2026-08-29). Anything
         // `computeMedia()` branches on belongs in this key.
-        .task(id: "\(workout.id)-\(workout.coverIsPhoto)") {
+        .task(id: "\(workout.id)-\(mediaRevision)-\(respectsPhotoCover)-\(style.rawValue)") {
+            resolved = nil
             let media = await computeMedia()
             resolved = media
             onInkContext?(inkContext(for: media))
@@ -117,7 +135,7 @@ struct WorkoutTileMedia: View {
         // The cover rule (owner call 2026-07-29): the activity's OWN visual leads — route map for
         // GPS, muscle map for lifts — and a photo covers only when the athlete flipped "Photo as
         // cover". Photos still outrank the generic glyph (they never beat the sport's real media).
-        if workout.coverIsPhoto, let ui = await decodedPhoto() { return .photo(ui) }
+        if respectsPhotoCover, workout.coverIsPhoto, let ui = await decodedPhoto() { return .photo(ui) }
         if workout.type.isStrengthStyle, let session = workout.strength {
             let activation = MuscleActivation.from(session: session)
             if activation.values.contains(where: { $0 > 0 }) { return .muscle(activation) }

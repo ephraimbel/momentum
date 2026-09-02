@@ -23,32 +23,45 @@ struct PlanRevealConfettiTests {
 
     // MARK: The scatter is deterministic
 
-    @Test func theScatterIsFixedAndModest() {
+    @Test func theScatterIsFixedAndCelebratory() {
         let pieces = RevealConfettiScatter.pieces
         #expect(pieces.count == RevealConfettiScatter.count)
-        // "A plan arriving, not a party." If this number climbs, someone reached for spectacle.
-        #expect(pieces.count == 26)
+        // A real burst, still rendered as one Canvas pass rather than one view per piece.
+        #expect(pieces.count == 72)
 
         // Built twice, identical both times — the whole point of the LCG over `Double.random`.
         let again = RevealConfettiScatter.pieces
         for (a, b) in zip(pieces, again) {
-            #expect(a.x == b.x)
+            #expect(a.originX == b.originX)
+            #expect(a.originY == b.originY)
             #expect(a.delay == b.delay)
+            #expect(a.velocityX == b.velocityX)
+            #expect(a.velocityY == b.velocityY)
             #expect(a.spin == b.spin)
         }
     }
 
     @Test func everyPieceStaysInsideItsStatedRange() {
         for (i, p) in RevealConfettiScatter.pieces.enumerated() {
-            #expect(p.x >= 0.04 && p.x <= 0.96, "piece \(i) x \(p.x) starts off-screen")
-            #expect(p.delay >= 0 && p.delay <= 0.34, "piece \(i) delay \(p.delay)")
-            #expect(p.speed >= 0.80 && p.speed <= 1.20, "piece \(i) speed \(p.speed)")
-            #expect(p.drift >= 0.02 && p.drift <= 0.07, "piece \(i) drift \(p.drift)")
-            #expect(p.length >= 7 && p.length <= 12, "piece \(i) length \(p.length)")
+            #expect(p.originX >= -0.04 && p.originX <= 1.04, "piece \(i) origin x \(p.originX)")
+            #expect(p.originY >= -0.08 && p.originY <= 0.30, "piece \(i) origin y \(p.originY)")
+            #expect(p.delay >= 0 && p.delay <= 0.15, "piece \(i) delay \(p.delay)")
+            #expect(p.velocityX >= -0.62 && p.velocityX <= 0.62, "piece \(i) vx \(p.velocityX)")
+            #expect(p.velocityY >= -0.80 && p.velocityY <= 0.17, "piece \(i) vy \(p.velocityY)")
+            #expect(p.gravity >= 1.55 && p.gravity <= 1.93, "piece \(i) gravity \(p.gravity)")
+            #expect(p.drift >= 0.008 && p.drift <= 0.036, "piece \(i) drift \(p.drift)")
+            #expect(p.length >= 8 && p.length <= 28, "piece \(i) length \(p.length)")
+            #expect(p.width >= 3 && p.width <= 7, "piece \(i) width \(p.width)")
+            #expect(p.depth >= 0.78 && p.depth <= 1.30, "piece \(i) depth \(p.depth)")
+            #expect(p.alpha >= 0.82 && p.alpha <= 1, "piece \(i) alpha \(p.alpha)")
             #expect((0..<5).contains(p.hue), "piece \(i) hue \(p.hue) is outside the aurora")
         }
-        // The hues cycle through the page's five aurora stops, so no single colour dominates.
+        // Both cannons and the crown must be populated, or the effect collapses into another rain.
+        #expect(RevealConfettiScatter.pieces.filter { $0.originX < 0 }.count >= 20)
+        #expect(RevealConfettiScatter.pieces.filter { $0.originX > 1 }.count >= 20)
+        #expect(RevealConfettiScatter.pieces.filter { (0...1).contains($0.originX) }.count >= 10)
         #expect(Set(RevealConfettiScatter.pieces.map(\.hue)).count == 5)
+        #expect(Set(RevealConfettiScatter.pieces.map(\.kind)) == Set(RevealConfettiScatter.Kind.allCases))
     }
 
     // MARK: Every piece is spent by the end
@@ -64,19 +77,26 @@ struct PlanRevealConfettiTests {
         }
     }
 
-    @Test func aPieceFallsAndNeverClimbs() {
+    @Test func theCannonsLaunchThenGravityClearsThePlan() {
         for (i, p) in RevealConfettiScatter.pieces.enumerated() {
-            var last = -Double.greatestFiniteMagnitude
+            var minimumY = CGFloat.greatestFiniteMagnitude
+            var last: RevealConfettiScatter.Placement?
             for step in 0...40 {
                 guard let at = RevealConfettiScatter.placement(p, progress: Double(step) / 40,
                                                                in: size) else { continue }
-                #expect(at.y >= last, "piece \(i) climbed at step \(step)")
-                last = at.y
+                minimumY = min(minimumY, at.y)
+                last = at
                 #expect(at.opacity <= RevealConfettiScatter.peakOpacity + 0.0001,
                         "piece \(i) is brighter than the ceiling")
+                #expect(at.foreshortening >= 0.22 && at.foreshortening <= 1.0001,
+                        "piece \(i) has an invalid paper flip")
             }
-            // It really did travel: a piece that never left the top would read as a dropped frame.
-            #expect(last > size.height * 0.5, "piece \(i) never crossed the page")
+            #expect(last != nil)
+            #expect(last!.y > size.height * 0.90, "piece \(i) did not clear the plan")
+            if p.originX < 0 || p.originX > 1 {
+                #expect(minimumY < p.originY * size.height,
+                        "side-cannon piece \(i) never launched upward")
+            }
         }
     }
 
@@ -100,20 +120,13 @@ struct PlanRevealConfettiTests {
     }
 
     @Test func theStillFrameStillReadsAsArrivingFromAbove() {
-        let pieces = RevealConfettiScatter.pieces
-        // A piece that would have waited longer in the fall sits higher in the still frame.
-        let earliest = pieces.min { $0.delay < $1.delay }!   // smallest delay
-        let latest = pieces.max { $0.delay < $1.delay }!     // largest delay
-        let a = RevealConfettiScatter.restingPlacement(earliest, in: size)
-        let b = RevealConfettiScatter.restingPlacement(latest, in: size)
-        #expect(b.y < a.y, "the later piece should sit higher, so the scatter reads as falling")
-
-        for (i, p) in pieces.enumerated() {
+        for (i, p) in RevealConfettiScatter.pieces.enumerated() {
             let at = RevealConfettiScatter.restingPlacement(p, in: size)
-            #expect(at.opacity == RevealConfettiScatter.peakOpacity,
-                    "piece \(i) fades on its own; the still's fade belongs to the layer")
-            #expect(at.y > -size.height, "piece \(i) is parked off the top of the page")
-            #expect(at.y < size.height, "piece \(i) is parked below the page")
+            #expect(at.opacity == RevealConfettiScatter.peakOpacity * p.alpha,
+                    "piece \(i) should keep its authored depth in the still treatment")
+            #expect(at.x > 0 && at.x < size.width, "piece \(i) is outside the still burst")
+            #expect(at.y > 0 && at.y < size.height * 0.60,
+                    "piece \(i) is outside the still burst's upper field")
         }
     }
 }

@@ -95,7 +95,7 @@ Five connected moments. If these feel magical, momentum wins.
 
 ### 3.1 MVP (v0) — the unified core
 Small but complete across disciplines. Do each better than anyone.
-- **Onboarding + unified plan reveal** (multi-discipline) → soft paywall + trial.
+- **Onboarding + unified plan reveal** (multi-discipline) → hard paywall; seven-day annual trial.
 - **Activity chooser**: run · ride · walk · strength.
 - **GPS tracking** (run/ride/walk): live monochrome map, discipline-correct metrics (pace vs speed), cadence (steps/rpm), optional HR, auto-pause, audio + haptic cues, Live Activity, GPS-strength indicator.
 - **Strength logging**: start empty or from a template/plan day; exercise library; set logging (weight×reps, RPE/RIR, set types); auto rest timer; supersets; plate calculator; inline previous-performance; finish summary (volume, sets, PRs, muscles).
@@ -710,20 +710,20 @@ GPS workouts via `HKWorkoutSession`; **on-wrist strength logging** (set/reps/wei
 Capabilities: Background Modes → **Location updates**; HealthKit; Sign in with Apple; (Push deferred). Info.plist usage strings (verbatim, brand = momentum):
 - `NSLocationWhenInUseUsageDescription` = "momentum uses your location to map your run, ride, or walk and measure distance, pace, and speed."
 - `NSMotionUsageDescription` = "momentum uses motion data to measure cadence and steps."
-- `NSHealthShareUsageDescription` = "momentum reads heart rate, body weight, and workout data to personalize your stats and coaching."
+- `NSHealthShareUsageDescription` = "momentum reads recovery signals and workout time windows to personalize coaching without importing workouts."
 - `NSHealthUpdateUsageDescription` = "momentum saves your completed workouts to Apple Health."
 - `UIBackgroundModes` = ["location"]
 
 ---
 
 ## 9. Coaching & plan engine (deterministic core + AI narration)
-**Architecture decision (safety + quality):** plan **structure and progression are rules-based and deterministic** (predictable, injury-safe, testable); the **LLM only authors rationale/narrative and may suggest bounded tweaks** — it never computes raw loads/volume/paces. *Not medical advice; include a disclaimer.*
+**Architecture decision (restraint + quality):** plan **structure and progression are rules-based and deterministic** (predictable, bounded, testable); the **LLM only authors rationale/narrative and may suggest bounded tweaks** — it never computes raw loads/volume/paces. *Not medical advice; include a disclaimer.*
 
 ### 9.1 Running (carried from v2.x)
 - Estimate 5k pace `P5k` via **Riegel** (`T5k = T·(5000/D)^1.06`) from a recent effort, else level defaults (sometimes 360, regularly 300 s/km), recalibrated from first runs.
 - **Training paces = Daniels/VDOT zones** (`DanielsPaces`, updated 2026-07-10 — supersedes the old fixed offsets): VDOT derived from `P5k` via the Daniels–Gilbert curves, then per-type paces at fractions of VO₂max — recovery 60%, long 64%, easy 66% (the E band), tempo = threshold (one-hour-race intensity, ~88.8%), intervals = vVO₂max (100%), marathon = the predicted marathon race pace at that VDOT (used by progression runs: E→M→T thirds). Curvilinear — the easy gap widens for slower runners. "@ 5K" reps carry a race-pace override; re-derivation preserves rep intent via `PlanEngine.sessionPace`. New runners use run/walk intervals.
 - **Volume & phases** (updated 2026-07-10, `PlanEngine.mesocycle`): start by level×days; progress ≤10%/week; deload (−30%) every 4th week. Full periodization base→build→peak→taper: base ≈ first quarter (pyramidal quality — tempo/hills/fartlek, no sharpening), build rotates race-specific quality with rep counts that **grow** week over week, peak = 1–2 weeks holding max volume with race-specific work, taper is **distance-specific** (5K/10K 1 wk, half 2, marathon+ 3, capped at ¼ of plan) and cuts volume to ~45–70% of the peak week while **keeping intensity** (one short race-pace touch per taper week — Bosquet 2007). No-race → one settling week + rolling build/deload.
-- **Injury history shapes generation** (2026-07-10, ENDURANCE-FOCUS §8.2): onboarding injury areas cap the weekly ramp and deload cadence at balanced (an aggressive pick can't stack volume on a previously hurt body), and steer quality selection away from each area's aggravating stimulus — lower-leg/knee/IT histories swap high-impact hill reps for tempo; hamstring/hip histories swap sprint-fast reps and strides for threshold cruise work. Every swap carries a one-line rationale on the session — personalization is visible, never silent.
+- **Prior-injury history modifies generation** (2026-07-10, ENDURANCE-FOCUS §8.2): selected areas conservatively cap the weekly ramp/deload cadence at balanced and steer quality selection away from previously aggravating stimulus. This is a bounded history modifier, not a diagnosis, injury prediction, or guarantee. Every swap carries a one-line rationale—personalization is visible, never silent.
 
 ### 9.2 Strength
 - **e1RM (Epley):** `weight·(1+reps/30)`; track per lift; drives progression + PRs.
@@ -760,8 +760,8 @@ Freemium subscription. Free fuels adoption + reviews + (future) virality; the AI
 **Free:** track all disciplines (run/ride/walk/strength), basic post-workout summaries, manual strength logging + full exercise library, limited history, a single plan glimpse, basic share card.
 **Pro:** the adaptive **AI coach** + full multi-discipline plans + programs + adaptation; **AI reads**; **advanced analytics** (working-sets-per-muscle, e1RM trends, training load, pace/speed trends); full history; all templates; all share templates; cadence metronome / voice coach; (v1) Watch premium.
 
-**Pricing (repriced 2026-07-29; previously $14.99/$109.99 from 2026-07-14):** **$9.99/mo** (no trial), **$59.99/yr** with a **7-day trial** (annual only — owner call 2026-07-30). Mass-market positioning — half Runna's annual (~$119.99), under Strava's ($79.99); annual < $5/mo (real ~50% off monthly, badge reads **save 50%**). The hard paywall makes the annual price the conversion funnel. A/B via Superwall. **Show renewal date plainly; one-tap cancel; reminder before renewal.**
-**RevenueCat:** entitlement `pro`; offering `default`; products `momentum_pro_monthly`, `momentum_pro_annual`. **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
+**Pricing (weekly/annual pair set 2026-08-28; annual trial restored 2026-09-01):** **$5.99/wk** with no trial and **$29.99/yr** with a **7-day introductory free trial** for eligible subscribers. The annual card compares at **$0.58/wk**; while eligible it foregrounds **7 DAYS FREE**, and otherwise its weekly-run-rate savings rounds to **SAVE 90%**. The retired **$9.99/mo** product remains live only so existing monthly subscribers can renew; it is not sold in the offering. Onboarding ends at the hard paywall, while contextual paywalls remain dismissible. **Show renewal terms plainly; one-tap cancel; reminder before renewal.**
+**RevenueCat:** entitlement `pro`; offering `default`; sold products `momentum_pro_weekly`, `momentum_pro_annual` (`momentum_pro_monthly` is legacy/unsold). **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
 
 ---
 

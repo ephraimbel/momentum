@@ -179,6 +179,181 @@ struct CommunitySurfacePerfTests {
         }
     }
 
+    // MARK: Remote refresh ordering + same-id edits
+
+    private final class ScopeRaceBackend: StubSocialBackend {
+        var everyone: CheckedContinuation<FeedPage?, Never>?
+        var following: CheckedContinuation<FeedPage?, Never>?
+        override var isAvailable: Bool { true }
+        override func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? {
+            await withCheckedContinuation { continuation in
+                if scope == .everyone { everyone = continuation }
+                else { following = continuation }
+            }
+        }
+        func finish(_ scope: FeedScope, page: FeedPage) {
+            if scope == .everyone { everyone?.resume(returning: page); everyone = nil }
+            else { following?.resume(returning: page); following = nil }
+        }
+    }
+
+    private final class QueueFeedBackend: StubSocialBackend {
+        var pages: [FeedPage] = []
+        var target: SocialSyncEngine.FeedRow?
+        var requestedTarget: UUID?
+        var available = true
+        override var isAvailable: Bool { available }
+        override func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? {
+            pages.isEmpty ? nil : pages.removeFirst()
+        }
+        override func feedPost(id: UUID) async -> SocialSyncEngine.FeedRow? {
+            requestedTarget = id
+            return target?.id == id ? target : nil
+        }
+    }
+
+    private func row(id: UUID = UUID(), title: String, handle: String) -> SocialSyncEngine.FeedRow {
+        SocialSyncEngine.FeedRow(
+            id: id, authorId: UUID(), authorName: handle.capitalized, authorHandle: handle,
+            authorLocation: "Austin, TX", avatarPath: nil, workoutType: "run",
+            startedAt: Date(), title: title, caption: nil, statLine: "5.0 mi · 42:00",
+            prBadge: nil, muscles: nil, route: nil, mapStyle: "standard", aiRead: nil,
+            photoPaths: [], reactionCount: 0, viewerReacted: false, createdAt: Date())
+    }
+
+    /// A slow Everyone response must never overwrite a newer Following response. This is the exact
+    /// fast-tab-switch race the store's former global `isLoading` guard lost.
+    @Test func newerScopeRefreshOwnsTheStore() async {
+        let backend = ScopeRaceBackend()
+        let store = RemoteFeedStore()
+        store.backend = backend
+        let everyonePage = FeedPage(rows: [row(title: "Everyone", handle: "global")], next: nil)
+        let followingPage = FeedPage(rows: [row(title: "Following", handle: "friend")], next: nil)
+
+        let old = Task { @MainActor in await store.refresh(scope: .everyone) }
+        for _ in 0..<100 where backend.everyone == nil { await Task.yield() }
+        #expect(backend.everyone != nil)
+
+        let newest = Task { @MainActor in await store.refresh(scope: .following) }
+        for _ in 0..<100 where backend.following == nil { await Task.yield() }
+        #expect(backend.following != nil)
+        backend.finish(.following, page: followingPage)
+        await newest.value
+        backend.finish(.everyone, page: everyonePage)
+        await old.value
+
+        #expect(store.items.map(\.title) == ["Following"])
+        #expect(store.items.first?.authorHandle == "friend")
+        #expect(!store.isLoading)
+    }
+
+    /// Same number and same id, different content: revision still advances and the new row lands.
+    @Test func sameSizedRemoteRefreshPublishesItsEdit() async {
+        let backend = QueueFeedBackend()
+        let id = UUID()
+        backend.pages = [
+            FeedPage(rows: [row(id: id, title: "Before", handle: "maya")], next: nil),
+            FeedPage(rows: [row(id: id, title: "After", handle: "maya")], next: nil),
+        ]
+        let store = RemoteFeedStore()
+        store.backend = backend
+        await store.refresh(scope: .everyone)
+        let firstRevision = store.revision
+        await store.refresh(scope: .everyone)
+
+        #expect(store.items.count == 1)
+        #expect(store.items.first?.title == "After")
+        #expect(store.revision > firstRevision)
+    }
+
+    @Test func notificationTargetResolvesWithoutPagingOrMutatingTheFeed() async throws {
+        let backend = QueueFeedBackend()
+        let id = UUID()
+        backend.target = row(id: id, title: "Older workout", handle: "maya")
+        // A different first page proves the target path does not depend on feed pagination.
+        backend.pages = [FeedPage(rows: [row(title: "New workout", handle: "maya")], next: nil)]
+        let store = RemoteFeedStore()
+        store.backend = backend
+
+        let resolved = try #require(await store.resolve(postID: id))
+
+        #expect(backend.requestedTarget == id)
+        #expect(resolved.id == id)
+        #expect(resolved.title == "Older workout")
+        #expect(store.items.isEmpty)
+        #expect(backend.pages.count == 1)
+    }
+
+    @Test func matchedRouteMutationInvalidatesTheLocalFeedSignature() {
+        let workout = Workout()
+        let gps = GPSDetail()
+        workout.gps = gps
+        let before = CommunityView.computeLocalFeedRevision(profile: nil, workouts: [workout])
+
+        gps.matchedRouteData = Data("[[37.0,-122.0],[37.1,-122.1]]".utf8)
+        let after = CommunityView.computeLocalFeedRevision(profile: nil, workouts: [workout])
+
+        #expect(after != before)
+    }
+
+    /// Scope is a presentation choice, not a network choice. Going offline while changing it must
+    /// clear the previous scope's remote rows instead of showing Global athletes under Following.
+    @Test func offlineScopeSwitchCannotLeakThePreviousScope() async {
+        let backend = QueueFeedBackend()
+        backend.pages = [FeedPage(rows: [row(title: "Everyone", handle: "global")], next: nil)]
+        let store = RemoteFeedStore()
+        store.backend = backend
+        await store.refresh(scope: .everyone)
+        #expect(store.items.count == 1)
+
+        backend.available = false
+        await store.refresh(scope: .following)
+
+        #expect(store.items.isEmpty)
+        #expect(!store.isLoading)
+    }
+
+    /// Superseding a pending request after sign-out/backend teardown must also supersede its
+    /// spinner ownership. The old completion is ignored and cannot leave or restore loading UI.
+    @Test func backendTeardownCannotStrandTheLoadingState() async {
+        let backend = ScopeRaceBackend()
+        let store = RemoteFeedStore()
+        store.backend = backend
+        let pending = Task { @MainActor in await store.refresh(scope: .everyone) }
+        for _ in 0..<100 where backend.everyone == nil { await Task.yield() }
+        #expect(store.isLoading)
+
+        store.backend = nil
+        await store.refresh(scope: .following)
+        #expect(!store.isLoading)
+        #expect(store.items.isEmpty)
+
+        backend.finish(.everyone, page: FeedPage(
+            rows: [row(title: "Stale", handle: "global")], next: nil))
+        await pending.value
+        #expect(!store.isLoading)
+        #expect(store.items.isEmpty)
+    }
+
+    /// A post id and JPEG length both survive replacement. The render signature must still move so
+    /// the grid remounts its media and `.task(id:)` decodes the new bytes.
+    @Test func sameIDSameLengthPhotoReplacementChangesRenderSignature() {
+        let id = UUID()
+        let first = Data(repeating: 7, count: 512)
+        var second = first
+        let sampleOffset = 8 * (second.count - 1) / 17
+        second[sampleOffset] = 42
+        var before = item("maya", at: Date(), id: id)
+        before.photosData = [first]
+        var after = before
+        after.photosData = [second]
+
+        #expect(first.count == second.count)
+        #expect(before.id == after.id)
+        #expect(MediaFingerprint.value(first) != MediaFingerprint.value(second))
+        #expect(before.renderSignature != after.renderSignature)
+    }
+
     // MARK: The route-snapshot cache
 
     /// A tile that scrolls away and comes back must REUSE its map. `LazyVGrid` discards the cell's

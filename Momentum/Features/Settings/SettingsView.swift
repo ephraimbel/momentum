@@ -587,12 +587,11 @@ struct SettingsView: View {
                     Task {
                         connectingHealth = true
                         healthDenied = false
-                        _ = await services.health.requestAuthorization()
-                        healthConnected = services.health.isAuthorized
+                        let connection = await services.health.connectForSignals()
+                        healthConnected = connection.workoutSharingAuthorized
                         if healthConnected, let profile = profiles.first {
-                            let metrics = await services.health.importedBodyMetrics()
-                            if let kg = metrics.bodyMassKg { profile.bodyMassKg = kg }
-                            if let rhr = metrics.restingHR { profile.restingHR = rhr }
+                            if let kg = connection.bodyMassKg { profile.bodyMassKg = kg }
+                            if let rhr = connection.restingHR { profile.restingHR = rhr }
                             try? context.save()
                             // Connecting is the whole action. Body mass and resting heart rate are
                             // current readings, not history; no workouts are pulled, then or ever.
@@ -639,8 +638,8 @@ struct SettingsView: View {
 
     private var healthFooter: String? {
         healthConnected
-            ? "New workouts save to Apple Health. Import brings in runs and rides from Apple Watch, Garmin, and anything else that syncs there."
-            : "Save your runs, rides, and lifts to Apple Health — and import from Apple Watch, Garmin, and more."
+            ? "Completed Momentum workouts save to Apple Health. Recovery signals begin contributing from connection onward; workout history is never imported."
+            : "Save completed Momentum workouts to Apple Health and use supported recovery signals from the moment you connect. Workout history stays in Momentum."
     }
 
     // MARK: Data & privacy

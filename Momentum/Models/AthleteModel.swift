@@ -44,14 +44,21 @@ final class AthleteModel {
 
     // Load / recovery
     var currentACWR: Double = 0
-    var overreachThresholdACWR: Double = 1.5   // learned ACWR where this user historically struggles
+    /// Legacy persisted field name retained to avoid an unsafe SwiftData migration. Semantically this
+    /// is low-confidence context: the lowest recent-to-usual ratio observed before at least three
+    /// high-RPE easy sessions. It is not an overtraining, injury, or personal-safety threshold.
+    var overreachThresholdACWR: Double = 1.5
+    var priorHighStrainLoadRatio: Double {
+        get { overreachThresholdACWR }
+        set { overreachThresholdACWR = newValue }
+    }
     var typicalRecoveryDays: Double = 1        // days after a hard session before quality returns
 
     // Achievement
     var prCountByMonth: [String: Int] = [:]    // "2026-06" -> count
     var lastPRAt: Date?
 
-    // Risk (churn / overtraining early-warning — used to soften coaching, never shamed)
+    // Continuity (training-disruption context — used to soften coaching, never shamed)
     var frequencyTrend28d: Double = 0          // sessions/wk delta; negative = fading
     var consecutiveMissed: Int = 0
 
@@ -103,7 +110,7 @@ enum MemoryCategory: String, Codable, Sendable, CaseIterable {
     case preference  // what you choose
     case response    // how your body reacts to load
     case motivation  // what keeps you going
-    case risk        // overtraining/fading — used gently
+    case risk        // training disruption/fading — raw value retained for storage compatibility
     case identity    // the one-line "who you are as an athlete"
 }
 
