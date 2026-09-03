@@ -390,4 +390,32 @@ struct PlanCoachAuditTests {
 
     private func catalogFixture() -> [ExerciseCatalogItem] { [] }
 
+    /// Two marathoners on identical mileage: the one whose long runs fade late is held, the one
+    /// who finishes every long run strong is let grow. Same caps, different Sundays (2026-09-03).
+    @Test func theLongRunHoldsForAFragileAthleteAndGrowsForAStrongOne() {
+        let base = inputs(goal: .raceDistance, disciplines: [.running], exp: .experienced, raceM: 42_195,
+                          weeksOut: 16, days: 5, intensity: .balanced, seedMi: 35)
+        func longRuns(_ durability: DurabilitySignal?) -> [Double] {
+            var seed = CalibrationSeed.none
+            seed.estimatedP5kSPerKm = 250
+            seed.durability = durability
+            let plan = PlanEngine.generate(profile: base, catalog: catalogFixture(), calibration: seed,
+                                           startDate: start, calendar: cal)
+            return plan.weeks.map { w in
+                w.sessions.filter { $0.runType == .long || $0.runType == .progression }
+                    .map { $0.targetDistanceM ?? 0 }.max() ?? 0
+            }
+        }
+        let fragile = longRuns(.fragile), steady = longRuns(.steady), strong = longRuns(.strong)
+        let buildWeeks = 2..<10   // past week one's seed, before the peak/taper
+        let fragileSum = buildWeeks.reduce(0.0) { $0 + fragile[$1] }
+        let steadySum = buildWeeks.reduce(0.0) { $0 + steady[$1] }
+        let strongSum = buildWeeks.reduce(0.0) { $0 + strong[$1] }
+        #expect(fragileSum < steadySum, "a fragile athlete's long runs should be held back through the build")
+        #expect(strongSum >= steadySum, "a strong athlete's long runs should not be smaller than a steady one's")
+        // The peak long run stays under the marathon cap for every read.
+        #expect((fragile.max() ?? 0) <= 32_000 && (strong.max() ?? 0) <= 32_000)
+        // The steady read is byte-identical to no read at all.
+        #expect(steady == longRuns(nil))
+    }
 }

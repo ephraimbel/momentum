@@ -30,12 +30,13 @@ final class PersistenceController {
 
     /// All persisted model types — forwards to the versioned schema, which is the canonical list.
     /// Kept as a name because tests and previews build containers from it.
-    static let models: [any PersistentModel.Type] = SchemaV2.models
+    static let models: [any PersistentModel.Type] = SchemaV3.models
 
     private init(inMemory: Bool = false) {
-        // V2 adds only the running planner's scalar-ID sidecars. `MomentumMigrationPlan` upgrades a
-        // released V1 store in place without changing the existing plan/workout object graph.
-        let schema = Schema(versionedSchema: SchemaV2.self)
+        // V2 adds only the running planner's scalar-ID sidecars, V3 the athlete-state sidecar.
+        // `MomentumMigrationPlan` upgrades a released store in place without changing the existing
+        // plan/workout object graph.
+        let schema = Schema(versionedSchema: SchemaV3.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         do {
             container = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,

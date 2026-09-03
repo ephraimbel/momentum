@@ -178,15 +178,66 @@ enum PlanService {
         inputs.currentWeeklyVolumeM = current.weeklyM
         inputs.longestRunM = current.longestM
         inputs.postRaceRecoveryWeeks = recoveryWeeks
+        // The athlete state (2026-09-03): threshold, personal fatigue curve and durability read
+        // off the same eight weeks of Momentum-logged runs. Fills only what the caller's seed left
+        // empty — an entered benchmark always outranks an estimate.
+        let state = athleteState(for: profile, calibration: calibration, on: startDate, in: context)
+        let seeded = AthleteStateEngine.seed(calibration, with: state)
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
-                                            calibration: calibration, startDate: startDate)
-        return try stagePersist(
+                                            calibration: seeded, startDate: startDate)
+        let replacedPlanID = profile.plan?.id
+        let plan = try stagePersist(
             generated,
             for: profile,
             startDate: startDate,
             blockIndex: blockIndex,
             in: context
         )
+        stampAthleteState(state, generated: generated, on: plan, replacing: replacedPlanID,
+                          at: startDate, in: context)
+        return plan
+    }
+
+    /// Derive the athlete state from the evidence window — pure once the rows are read.
+    static func athleteState(for profile: UserProfile, calibration: CalibrationSeed = .none,
+                             on date: Date = Date(), in context: ModelContext,
+                             calendar: Calendar = .current) -> RunningAthleteState {
+        let rows = (try? runEvidenceRows(endingAt: date, in: context, calendar: calendar)) ?? []
+        var stateProfile = AthleteStateProfile(maxHR: profile.maxHR, restingHR: profile.restingHR)
+        if let run = calibration.recentRun {
+            stateProfile.benchmarks.append(.init(distanceM: run.distanceM, timeS: run.timeS))
+        }
+        return AthleteStateEngine.derive(runs: rows, profile: stateProfile, asOf: date, calendar: calendar)
+    }
+
+    /// The compact snapshot the plan carries (`PlanAthleteStateRecord`): the reads the plan was
+    /// built with, and where the threshold came from and how sure the read is. Insert only — the
+    /// enclosing transaction owns the save. The replaced plan's record goes with the plan.
+    static func stampAthleteState(_ state: RunningAthleteState, generated: GeneratedPlan,
+                                  on plan: TrainingPlan, replacing replacedPlanID: UUID?,
+                                  at date: Date, in context: ModelContext) {
+        if let replacedPlanID, replacedPlanID != plan.id {
+            PlanAthleteStateRecord.remove(planID: replacedPlanID, in: context)
+        }
+        let record = PlanAthleteStateRecord.upsert(planID: plan.id, in: context)
+        record.computedAt = date
+        record.thresholdSPerKm = generated.thresholdSPerKm
+        record.riegelExponent = generated.riegelExponent
+        record.durabilitySignal = generated.durability?.rawValue
+        if let t = state.thresholdProxy, generated.thresholdSPerKm != nil {
+            record.thresholdMethod = t.value.method.rawValue
+            record.thresholdConfidence = t.confidence.rawValue
+            record.thresholdObservedAt = t.observedAt
+        } else if generated.thresholdSPerKm != nil {
+            // An entered threshold (no derived read behind it) is the athlete's own word.
+            record.thresholdMethod = RunningThresholdMethod.athleteEntry.rawValue
+            record.thresholdConfidence = RunningEvidenceConfidence.moderate.rawValue
+            record.thresholdObservedAt = date
+        } else {
+            record.thresholdMethod = nil
+            record.thresholdConfidence = nil
+            record.thresholdObservedAt = nil
+        }
     }
 
     /// Add tracked cross-training the engine doesn't program (swim/row/yoga…) as one recurring
@@ -449,6 +500,47 @@ enum PlanService {
                   distanceM.isFinite,
                   distanceM > 0 else { return nil }
             return PlanRunEvidence(startedAt: workout.startedAt, distanceM: distanceM)
+        }
+    }
+
+    /// The same window, flattened for `AthleteStateEngine`: distance, time, heart rate, splits,
+    /// effort and what the run was logged against. Momentum-logged runs only, never Health.
+    nonisolated static func runEvidenceRows(endingAt end: Date,
+                                            in context: ModelContext,
+                                            calendar: Calendar) throws -> [RunEvidenceRow] {
+        guard let cutoff = calendar.date(
+            byAdding: .day,
+            value: -AthleteStateEngine.windowDays,
+            to: end
+        ) else { return [] }
+        var descriptor = FetchDescriptor<Workout>(
+            predicate: #Predicate { workout in
+                workout.startedAt >= cutoff && workout.startedAt <= end
+            },
+            sortBy: [SortDescriptor(\.startedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1_000
+        return try context.fetch(descriptor).compactMap { workout in
+            guard workout.type.discipline == .running,
+                  let gps = workout.gps,
+                  gps.distanceM.isFinite, gps.distanceM > 0,
+                  workout.durationS > 0 else { return nil }
+            let planned = workout.plannedSession
+            let splits = gps.splits.sorted { $0.index < $1.index }.map {
+                RunEvidenceRow.SplitRow(distanceM: $0.distanceM, durationS: $0.durationS, avgHR: $0.avgHR)
+            }
+            return RunEvidenceRow(
+                startedAt: workout.startedAt,
+                distanceM: gps.distanceM,
+                durationS: workout.durationS,
+                avgHR: gps.avgHR,
+                splits: splits,
+                rpe: workout.perceivedEffort,
+                plannedRunType: planned?.runType,
+                plannedDistanceM: planned?.targetDistanceM,
+                planFit: workout.planFit,
+                isRace: planned?.runType == .race
+            )
         }
     }
 

@@ -40,6 +40,19 @@ struct RunningPerformanceCurve: Codable, Equatable, Sendable {
     /// Durations actually represented by the evidence. Extrapolations outside this range must carry
     /// `.outsideObservedDuration`.
     let observedDurationBoundsS: RunningValueRange
+    /// The athlete's own Riegel fatigue exponent (time ∝ distance^k), fitted across the curve's
+    /// points when they span enough distance to say anything (`AthleteStateEngine`). Nil = not
+    /// enough evidence; consumers fall back to the population 1.06. Bounded [1.03, 1.12]: below is
+    /// physiologically implausible, above says the short effort was not maximal, not that the
+    /// athlete fades that hard. Additive (2026-09-03): stored curves without it decode as nil.
+    var riegelExponent: Double? = nil
+
+    init(points: [RunningPerformancePoint], observedDurationBoundsS: RunningValueRange,
+         riegelExponent: Double? = nil) {
+        self.points = points
+        self.observedDurationBoundsS = observedDurationBoundsS
+        self.riegelExponent = riegelExponent
+    }
 }
 
 enum RunningThresholdMethod: String, Codable, CaseIterable, Sendable {

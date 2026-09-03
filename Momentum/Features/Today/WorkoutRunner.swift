@@ -366,6 +366,9 @@ enum WorkoutCompletion {
             // eased or rested — recorded inside autoAdapt
         } else if workout.type.discipline == .running {
             _ = PlanCoaching.recalibratePaces(from: workout, plan: plan, in: context)
+            // The threshold has its own ledger: a steady run that held pace sharpens the steady
+            // family even on a week the 5K read did not move.
+            PlanCoaching.recalibrateThreshold(from: workout, plan: plan, in: context)
         } else if workout.type.isStrengthStyle {
             _ = PlanCoaching.easeStrengthOnRPECreep(plan, workouts: recent, in: context)
         }

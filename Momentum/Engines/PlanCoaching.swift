@@ -210,6 +210,7 @@ enum PlanCoaching {
         if movedCount >= 3, !recentlyAdapted, !plan.isSelfCoached,
            let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
             let unit = displayUnit(in: context)
+            let athleteState = athleteState(of: plan, in: context)
             // Comeback paces: time away costs fitness, so the assumed 5k eases ~2% BEFORE the week
             // is softened (the converted easy sessions then price at the eased fitness). Recalibration
             // earns it back the first time a quality run proves the old level — paces only ever
@@ -236,7 +237,9 @@ enum PlanCoaching {
                 s.targetPaceSPerKm = RunRounding.snapPace(
                     sPerKm: PlanEngine.sessionPace(rt, p5k: plan.p5kSPerKm, intervals: s.intervals,
                                                    raceDistanceM: goalRaceDistanceM(in: context),
-                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
+                                                   goalRacePaceSPerKm: plan.goalRacePaceSPerKm,
+                                                   thresholdSPerKm: athleteState.thresholdSPerKm,
+                                                   riegelExponent: athleteState.riegelExponent ?? DanielsPaces.populationRiegelExponent),
                     unit: unit, type: rt)
             }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
@@ -434,6 +437,7 @@ enum PlanCoaching {
         plan.pendingP5kAt = nil
         plan.lastRecalibratedAt = today
         plan.p5kSPerKm = bounded
+        let athleteState = athleteState(of: plan, in: context)
 
         // Re-derive paces on future, still-open running sessions — `.moved` included, so the
         // athlete who slipped a day doesn't carry stale targets on exactly the sessions ahead.
@@ -445,7 +449,9 @@ enum PlanCoaching {
             s.targetPaceSPerKm = RunRounding.snapPace(
                 sPerKm: PlanEngine.sessionPace(runType, p5k: bounded, intervals: s.intervals,
                                                raceDistanceM: goalRaceDistanceM(in: context),
-                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm,
+                                               thresholdSPerKm: athleteState.thresholdSPerKm,
+                                               riegelExponent: athleteState.riegelExponent ?? DanielsPaces.populationRiegelExponent),
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }
@@ -459,6 +465,89 @@ enum PlanCoaching {
                                  detail: why, on: today, in: context, calendar: calendar)
         }
         return Recalibration(oldP5kSPerKm: current, newP5kSPerKm: bounded, sessionsUpdated: updated)
+    }
+
+    /// The plan's athlete-state reads (threshold, exponent), nil-safe when no record was written.
+    static func athleteState(of plan: TrainingPlan, in context: ModelContext)
+        -> (thresholdSPerKm: Double?, riegelExponent: Double?) {
+        let record = PlanAthleteStateRecord.fetch(planID: plan.id, in: context)
+        return (record?.thresholdSPerKm, record?.riegelExponent)
+    }
+
+    struct ThresholdRecalibration: Sendable, Equatable {
+        let oldThresholdSPerKm: Double?
+        let newThresholdSPerKm: Double
+        let sessionsUpdated: Int
+    }
+
+    /// Sharpen the plan's OBSERVED threshold from a run that demonstrated one: a completed steady
+    /// (tempo) session at a steady effort, or a race/all-out effort of roughly an hour. Same
+    /// discipline as the 5K path — only ever faster, ≤3 % per applied update, once a week — and it
+    /// re-derives only the steady/threshold family, since that is all the threshold anchors.
+    /// Easing stays consented (RUN-DEC-007): a slow steady run never lowers anything here.
+    @discardableResult
+    static func recalibrateThreshold(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
+                                     in context: ModelContext, calendar: Calendar = .current) -> ThresholdRecalibration? {
+        guard let plan, !plan.isSelfCoached, workout.type.discipline == .running,
+              let gps = workout.gps, gps.distanceM >= 3_000, workout.durationS > 0 else { return nil }
+        let planned = workout.plannedSession?.runType
+        let rpe = workout.perceivedEffort ?? 0
+        let minutes = workout.durationS / 60
+        let steadySession = planned == .tempo && (workout.perceivedEffort == nil || (6...8).contains(rpe))
+            && minutes >= 15
+        let hourEffort = (planned == .race || rpe >= 8) && (45...75).contains(minutes)
+        guard steadySession || hourEffort else { return nil }
+        let observed = workout.durationS / (gps.distanceM / 1000)
+        // The curve's T is the ceiling of what a threshold read may claim (+2 %), the same way the
+        // 5K path never lets one great day rewrite fitness. A first read is accepted as it is.
+        let curveT = DanielsPaces.trainingPace(.tempo, p5kSPerKm: plan.p5kSPerKm)
+        let record = PlanAthleteStateRecord.fetch(planID: plan.id, in: context)
+        let current = record?.thresholdSPerKm
+        let floor = max(curveT * 0.98, 120)
+        let candidate = max(observed, floor)
+        let newT: Double
+        if let current {
+            guard candidate < current else { return nil }
+            let bounded = max(candidate, current * 0.97)
+            guard current - bounded >= 0.5 else { return nil }
+            if let last = record?.lastThresholdRecalibratedAt,
+               (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
+            newT = bounded
+        } else {
+            guard candidate <= curveT * 1.08 else { return nil }   // slower than that was not a threshold
+            newT = candidate
+        }
+        let state = record ?? PlanAthleteStateRecord.upsert(planID: plan.id, in: context)
+        state.thresholdSPerKm = newT
+        state.lastThresholdRecalibratedAt = today
+        state.thresholdMethod = (planned == .race ? RunningThresholdMethod.raceResult : .workoutEstimate).rawValue
+        state.thresholdConfidence = (planned == .race ? RunningEvidenceConfidence.high : .moderate).rawValue
+        state.thresholdObservedAt = workout.startedAt
+
+        let todayStart = calendar.startOfDay(for: today)
+        var updated = 0
+        for s in plan.sessions where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
+            let steadyFamily = runType == .tempo
+                || (runType == .intervals && (s.intervals?.lowercased().contains("threshold") ?? false))
+            guard steadyFamily else { continue }
+            s.targetPaceSPerKm = RunRounding.snapPace(
+                sPerKm: PlanEngine.sessionPace(runType, p5k: plan.p5kSPerKm, intervals: s.intervals,
+                                               raceDistanceM: goalRaceDistanceM(in: context),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm,
+                                               thresholdSPerKm: newT,
+                                               riegelExponent: state.riegelExponent ?? DanielsPaces.populationRiegelExponent),
+                unit: displayUnit(in: context), type: runType)
+            updated += 1
+        }
+        try? context.save()
+        if updated > 0, let current {
+            let delta = Int((current - newT).rounded())
+            CoachingEvent.record(kind: .recalibrate, headline: "Your steady pace got faster",
+                                 detail: "You held a faster steady effort than your plan assumed, so your steady runs come down by about \(delta) s/km. Easy days stay easy.",
+                                 on: today, in: context, calendar: calendar)
+        }
+        return ThresholdRecalibration(oldThresholdSPerKm: current, newThresholdSPerKm: newT, sessionsUpdated: updated)
     }
 
     /// Whether a consented pace-ease is currently available — false inside the 7-day cooldown after
@@ -485,6 +574,7 @@ enum PlanCoaching {
         guard let plan, plan.p5kSPerKm > 0 else { return 0 }
         guard canEasePaces(plan, today: date, calendar: calendar) else { return 0 }
         let newP5k = plan.p5kSPerKm * 1.02
+        let athleteState = athleteState(of: plan, in: context)
         let todayStart = calendar.startOfDay(for: date)
         var updated = 0
         for s in plan.sessions
@@ -493,7 +583,9 @@ enum PlanCoaching {
             s.targetPaceSPerKm = RunRounding.snapPace(
                 sPerKm: PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
                                                raceDistanceM: goalRaceDistanceM(in: context),
-                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm),
+                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm,
+                                               thresholdSPerKm: athleteState.thresholdSPerKm,
+                                               riegelExponent: athleteState.riegelExponent ?? DanielsPaces.populationRiegelExponent),
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }

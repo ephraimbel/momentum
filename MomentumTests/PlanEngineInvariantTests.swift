@@ -228,6 +228,37 @@ struct PlanEngineInvariantTests {
         }
     }
 
+    @Test func athleteStateHoldsInvariantsAcrossDurabilityAndThreshold() {
+        // The three durability reads × an observed threshold either side of the curve × the
+        // race matrix that matters for the long run. Every invariant holds; the state moves
+        // growth and the steady family, never the caps.
+        let catalog = catalogFixture()
+        let races: [(Double?, Int?)] = [(nil, nil), (10_000, 8), (21_097, 12), (42_195, 16), (42_195, 30), (50_000, 20)]
+        for (raceM, weeksOut) in races {
+            for durability in [nil, DurabilitySignal.fragile, .steady, .strong] {
+                for thresholdDelta in [nil, -12.0, 18.0] as [Double?] {
+                    for days in [3, 5] {
+                        var inp = PlanInputs(disciplines: [.running], goal: raceM != nil ? .raceDistance : .endurance,
+                                             daysPerWeek: days, equipment: .fullGym, sessionMinutes: 60,
+                                             raceDate: weeksOut.map(race(weeksOut:)),
+                                             runningExperience: .experienced, liftingExperience: .some)
+                        inp.raceDistanceM = raceM
+                        inp.currentWeeklyVolumeM = 48_000
+                        inp.longestRunM = 18_000
+                        var seed = CalibrationSeed.none
+                        seed.estimatedP5kSPerKm = 250
+                        seed.durability = durability
+                        seed.thresholdSPerKm = thresholdDelta.map { DanielsPaces.trainingPace(.tempo, p5kSPerKm: 250) + $0 }
+                        seed.riegelExponent = durability == .fragile ? 1.10 : durability == .strong ? 1.03 : nil
+                        let plan = PlanEngine.generate(profile: inp, catalog: catalog, calibration: seed, startDate: start)
+                        assertInvariants(plan, inputs: inp,
+                                         label: "state \(durability.map { "\($0)" } ?? "nil") T\(thresholdDelta ?? 0) race \(raceM.map { Int($0) } ?? 0) \(days)d")
+                    }
+                }
+            }
+        }
+    }
+
     @Test func generationIsDeterministic() {
         // Identical inputs → byte-identical plans. Adaptation, sync, and honest explanations all
         // depend on this — no hidden randomness or date leakage.

@@ -26,6 +26,17 @@ struct CalibrationSeed: Sendable, Equatable {
     /// Known lift e1RMs by exercise name (kg).
     var lifts: [String: Double] = [:]
 
+    // The athlete state (2026-09-03, `AthleteStateEngine`): three reads derived from the athlete's
+    // own logged runs, each optional so a seed without evidence generates exactly what it always
+    // did. `PlanService` fills them on every (re)generation; onboarding never sets them.
+    /// Observed threshold pace (s/km): what the athlete has actually held for about an hour.
+    /// Anchors the steady/threshold family; easy stays derived from the 5K.
+    var thresholdSPerKm: Double?
+    /// The athlete's own Riegel fatigue exponent for race predictions. Nil = population 1.06.
+    var riegelExponent: Double?
+    /// How the athlete holds up late in long runs — shapes long-run growth, never its caps.
+    var durability: DurabilitySignal?
+
     static let none = CalibrationSeed()
 
     // Equatable can't synthesize for the tuple; compare fields explicitly.
@@ -34,6 +45,9 @@ struct CalibrationSeed: Sendable, Equatable {
             && a.recentRun?.timeS == b.recentRun?.timeS
             && a.estimatedP5kSPerKm == b.estimatedP5kSPerKm
             && a.lifts == b.lifts
+            && a.thresholdSPerKm == b.thresholdSPerKm
+            && a.riegelExponent == b.riegelExponent
+            && a.durability == b.durability
     }
 }
 
@@ -97,5 +111,10 @@ struct GeneratedPlan: Sendable, Equatable {
     /// The pace goal-pace sessions are set at (s/km): the athlete's goal, honesty-capped by the
     /// improvement model. nil without a goal time. Persisted so recalibration never re-stamps it.
     var goalRacePaceSPerKm: Double? = nil
+    /// The athlete-state reads the plan was built with (see `CalibrationSeed`), carried so the
+    /// persisted plan can re-derive paces the same way and explain where they came from.
+    var thresholdSPerKm: Double? = nil
+    var riegelExponent: Double? = nil
+    var durability: DurabilitySignal? = nil
     var weeks: [GeneratedWeek]
 }

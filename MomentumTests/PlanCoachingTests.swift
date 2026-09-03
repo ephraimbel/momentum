@@ -1166,4 +1166,87 @@ struct PlanCoachingTests {
         #expect(easy.status == .completed)
         #expect(long.status == .planned)
     }
+
+    // MARK: Threshold recalibration (the athlete state, 2026-09-03)
+
+    private func stateRecord(_ plan: TrainingPlan, _ ctx: ModelContext) -> PlanAthleteStateRecord? {
+        PlanAthleteStateRecord.fetch(planID: plan.id, in: ctx)
+    }
+
+    /// A future steady session and a future easy one, so a threshold read can move exactly one.
+    private func futureSteadyAndEasy(in ctx: ModelContext, p5k: Double) -> (steady: PlannedSession, easy: PlannedSession) {
+        let steady = PlannedSession()
+        steady.date = Calendar.current.date(byAdding: .day, value: 3, to: Date())!
+        steady.discipline = .running; steady.runType = .tempo; steady.status = .planned
+        steady.targetDistanceM = 8000
+        steady.targetPaceSPerKm = PlanEngine.pace(.tempo, p5k: p5k)
+        return (steady, futureEasyRun(in: ctx, p5k: p5k))
+    }
+
+    @Test func aCompletedSteadyRunSetsTheThresholdAndMovesOnlyTheSteadyFamily() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let (steady, easy) = futureSteadyAndEasy(in: ctx, p5k: 300)
+        let done = PlannedSession()
+        done.date = Calendar.current.startOfDay(for: Date())
+        done.discipline = .running; done.runType = .tempo; done.status = .planned
+        let plan = makePlan(in: ctx, sessions: [done, steady, easy]); plan.p5kSPerKm = 300
+        let curveT = DanielsPaces.trainingPace(.tempo, p5kSPerKm: 300)
+        let easyBefore = easy.targetPaceSPerKm
+
+        // A steady run held 6 s/km SLOWER than the curve's threshold: the honest read wins.
+        let w = run(in: ctx, distanceM: 8000, durationS: 8 * (curveT + 6), rpe: 7)
+        PlanCoaching.markComplete(done, with: w, in: ctx)
+        let rec = PlanCoaching.recalibrateThreshold(from: w, plan: plan, in: ctx)
+
+        #expect(rec != nil)
+        #expect(abs((stateRecord(plan, ctx)?.thresholdSPerKm ?? 0) - (curveT + 6)) < 0.01)
+        #expect(stateRecord(plan, ctx)?.thresholdMethod == RunningThresholdMethod.workoutEstimate.rawValue)
+        #expect(rec?.sessionsUpdated == 1)
+        #expect(abs((steady.targetPaceSPerKm ?? 0)
+                    - RunRounding.snapPace(sPerKm: curveT + 6, unit: .metric, type: .tempo)) < 1)
+        #expect(easy.targetPaceSPerKm == easyBefore, "easy days never move with the threshold")
+    }
+
+    @Test func thresholdSharpensAtMostThreePercentOnceAWeekAndNeverEases() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let (steady, _) = futureSteadyAndEasy(in: ctx, p5k: 300)
+        let plan = makePlan(in: ctx, sessions: [steady]); plan.p5kSPerKm = 300
+        let curveT = DanielsPaces.trainingPace(.tempo, p5kSPerKm: 300)
+        PlanAthleteStateRecord.upsert(planID: plan.id, in: ctx).thresholdSPerKm = curveT + 20
+
+        // A much faster steady run: bounded to 3 % of the current read.
+        let fast = run(in: ctx, distanceM: 8000, durationS: 8 * (curveT - 5), rpe: 7)
+        let s1 = PlannedSession(); s1.discipline = .running; s1.runType = .tempo; s1.date = Date()
+        ctx.insert(s1); PlanCoaching.markComplete(s1, with: fast, in: ctx)
+        let rec = PlanCoaching.recalibrateThreshold(from: fast, plan: plan, in: ctx)
+        #expect(rec != nil)
+        #expect(abs((stateRecord(plan, ctx)?.thresholdSPerKm ?? 0) - (curveT + 20) * 0.97) < 0.01)
+
+        // A second one the same week is refused by the weekly cap…
+        let again = run(in: ctx, distanceM: 8000, durationS: 8 * (curveT - 5), rpe: 7)
+        let s2 = PlannedSession(); s2.discipline = .running; s2.runType = .tempo; s2.date = Date()
+        ctx.insert(s2); PlanCoaching.markComplete(s2, with: again, in: ctx)
+        #expect(PlanCoaching.recalibrateThreshold(from: again, plan: plan, in: ctx) == nil)
+
+        // …and a slow steady run never lowers anything (easing is consented, elsewhere).
+        PlanAthleteStateRecord.fetch(planID: plan.id, in: ctx)?.lastThresholdRecalibratedAt = nil
+        let slow = run(in: ctx, distanceM: 8000, durationS: 8 * (curveT + 40), rpe: 7)
+        let s3 = PlannedSession(); s3.discipline = .running; s3.runType = .tempo; s3.date = Date()
+        ctx.insert(s3); PlanCoaching.markComplete(s3, with: slow, in: ctx)
+        let before = stateRecord(plan, ctx)?.thresholdSPerKm
+        #expect(PlanCoaching.recalibrateThreshold(from: slow, plan: plan, in: ctx) == nil)
+        #expect(stateRecord(plan, ctx)?.thresholdSPerKm == before)
+    }
+
+    @Test func easyRunsAndRepeatsNeverTouchTheThreshold() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let (steady, _) = futureSteadyAndEasy(in: ctx, p5k: 300)
+        let plan = makePlan(in: ctx, sessions: [steady]); plan.p5kSPerKm = 300
+        #expect(PlanCoaching.recalibrateThreshold(from: run(in: ctx, distanceM: 10_000, durationS: 3_400, rpe: 3),
+                                                  plan: plan, in: ctx) == nil)
+        #expect(stateRecord(plan, ctx)?.thresholdSPerKm == nil)
+    }
 }

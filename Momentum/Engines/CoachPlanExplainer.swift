@@ -18,6 +18,7 @@ enum CoachPlanExplainer {
     typealias Section = CoachSection
 
     static func sections(profile: UserProfile, workouts: [Workout], today: Date = Date(),
+                         athleteState: PlanAthleteStateRecord? = nil,
                          calendar: Calendar = .current) -> [Section] {
         guard let plan = profile.plan else { return [] }
         var out: [Section] = []
@@ -55,10 +56,28 @@ enum CoachPlanExplainer {
             out.append(Section(icon: "chart.bar", title: "The shape of your weeks", detail: line))
         }
 
-        // 3. Paces — where the numbers come from.
+        // 3. Paces — where the numbers come from. With an observed threshold (the athlete state),
+        // the steady family says which run it was read from; the rest still hangs off the 5K.
         if plan.p5kSPerKm > 0, plan.sessions.contains(where: { ($0.targetPaceSPerKm ?? 0) > 0 }) {
-            out.append(Section(icon: "speedometer", title: "Your paces",
-                               detail: "Every pace derives from your calibrated 5K fitness (\(Formatters.pace(secPerKm: plan.p5kSPerKm, unit: unit))). Show real fitness on a hard run and they sharpen automatically — a bad day never slows them down."))
+            var line = "Every pace derives from your calibrated 5K fitness (\(Formatters.pace(secPerKm: plan.p5kSPerKm, unit: unit)))."
+            if let t = athleteState?.thresholdSPerKm, t > 0 {
+                let tPace = Formatters.pace(secPerKm: t, unit: unit)
+                let when = athleteState?.thresholdObservedAt.map { " on \($0.formatted(.dateTime.month(.abbreviated).day()))" } ?? ""
+                switch athleteState?.method {
+                case .raceResult:
+                    line += " Steady runs are set from the threshold you held in a race\(when): \(tPace)."
+                case .workoutEstimate:
+                    line += " Steady runs are set from the threshold you held on a steady run\(when): \(tPace)."
+                case .fieldTest:
+                    line += " Steady runs are set from your field test\(when): \(tPace)."
+                case .athleteEntry:
+                    line += " Steady runs are set from the threshold you entered: \(tPace)."
+                case nil:
+                    line += " Steady runs are set from your observed threshold: \(tPace)."
+                }
+            }
+            line += " Show real fitness on a hard run and they sharpen automatically — a bad day never slows them down."
+            out.append(Section(icon: "speedometer", title: "Your paces", detail: line))
         }
 
         // 4. The schedule — their days, their say.
@@ -82,8 +101,16 @@ enum CoachPlanExplainer {
         // 6. The long run — capped progression toward the race.
         let longs = plan.sessions.filter { $0.runType == .long }.compactMap(\.targetDistanceM)
         if let peak = longs.max(), peak > 0 {
-            out.append(Section(icon: "arrow.up.right", title: "The long run",
-                               detail: "Builds gradually to \(Formatters.distance(meters: peak, unit: unit)) at peak — far enough to be ready, capped so it never outruns your recovery."))
+            var line = "Builds gradually to \(Formatters.distance(meters: peak, unit: unit)) at peak — far enough to be ready, capped so it never outruns your recovery."
+            switch athleteState?.durability {
+            case .fragile:
+                line += " Your last long runs faded late, so the long run grows on more Sundays and the rest of the week carries the volume."
+            case .strong:
+                line += " You have finished every long run strong, so it is allowed to grow a little further."
+            case .steady, nil:
+                break
+            }
+            out.append(Section(icon: "arrow.up.right", title: "The long run", detail: line))
         }
 
         // 7. Strength's role, when it's on the menu.

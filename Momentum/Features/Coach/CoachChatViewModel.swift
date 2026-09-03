@@ -403,7 +403,8 @@ final class CoachChatViewModel {
     func explainerSections() -> [CoachSection] {
         guard let profile = fetchProfile() else { return [] }
         let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-        return CoachPlanExplainer.sections(profile: profile, workouts: workouts)
+        let state = profile.plan.flatMap { PlanAthleteStateRecord.fetch(planID: $0.id, in: context) }
+        return CoachPlanExplainer.sections(profile: profile, workouts: workouts, athleteState: state)
     }
 
     /// Info-card sections by kind (weekRecap / racePlan / explainPlan share the same renderer).

@@ -112,4 +112,57 @@ struct DanielsPacesTests {
         }
         #expect(DanielsPaces.p5kSPerKm(fromPace: -1, type: .easy) == 330)
     }
+
+    // MARK: The athlete state (2026-09-03): observed threshold + personal fatigue exponent
+
+    @Test func observedThresholdAnchorsTheSteadyFamilyUnderTheTwoRules() {
+        let p5k = 240.0
+        let curveT = DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k)
+        // Slower than the curve: the athlete's own number wins outright…
+        #expect(DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k, thresholdSPerKm: curveT + 12) == (curveT + 12).rounded())
+        // …bounded at +8 % — past that it was not a threshold.
+        #expect(DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k, thresholdSPerKm: curveT * 1.5) == (curveT * 1.08).rounded())
+        // Faster than the curve: honoured only to 2 %.
+        #expect(DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k, thresholdSPerKm: curveT - 20) == (curveT * 0.98).rounded())
+        // Intervals and the 5K race pace never move with the threshold.
+        #expect(DanielsPaces.trainingPace(.intervals, p5kSPerKm: p5k, thresholdSPerKm: curveT + 12)
+                == DanielsPaces.trainingPace(.intervals, p5kSPerKm: p5k))
+        #expect(DanielsPaces.trainingPace(.race, p5kSPerKm: p5k, thresholdSPerKm: curveT + 12) == p5k)
+        // No threshold = byte-identical to the one-number path.
+        for t in RunType.allCases {
+            #expect(DanielsPaces.trainingPace(t, p5kSPerKm: p5k, thresholdSPerKm: nil)
+                    == DanielsPaces.trainingPace(t, p5kSPerKm: p5k))
+        }
+    }
+
+    @Test func easyNeverCrowdsAnObservedThreshold() {
+        // A slow observed threshold (curve + 8 %) pushes easy out to at least T + 25 s/km, so the
+        // zones stay ordered whatever the evidence said.
+        for p5k in [200.0, 260, 330, 420] {
+            let curveT = DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k)
+            let observed = curveT * 1.08
+            let t = DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k, thresholdSPerKm: observed)
+            for type in [RunType.easy, .long, .recovery, .progression] {
+                #expect(DanielsPaces.trainingPace(type, p5kSPerKm: p5k, thresholdSPerKm: observed) >= t + 25)
+            }
+        }
+    }
+
+    @Test func personalExponentShapesLongPredictionsButNeverBeatsTheCurve() {
+        let p5k = 240.0
+        let population = DanielsPaces.racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5k)
+        let vdotRaw = DanielsPaces.racePaceSPerKm(distanceM: 42_195, vdot: DanielsPaces.vdot(p5kSPerKm: p5k))!
+        // A fragile athlete (k = 1.10) predicts slower than the population.
+        let fragile = DanielsPaces.racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5k, riegelExponent: 1.10)
+        #expect(fragile > population)
+        // A durable athlete (k = 1.03) predicts faster than the population…
+        let durable = DanielsPaces.racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5k, riegelExponent: 1.03)
+        #expect(durable < population)
+        // …but never faster than the raw oxygen-cost curve.
+        #expect(Double(durable) >= vdotRaw.rounded() - 0.5)
+        // The population exponent is exactly today's path, and short distances are untouched.
+        #expect(DanielsPaces.racePaceSPerKm(distanceM: 42_195, p5kSPerKm: p5k, riegelExponent: 1.06) == population)
+        #expect(DanielsPaces.racePaceSPerKm(distanceM: 5_000, p5kSPerKm: p5k, riegelExponent: 1.10)
+                == DanielsPaces.racePaceSPerKm(distanceM: 5_000, p5kSPerKm: p5k))
+    }
 }

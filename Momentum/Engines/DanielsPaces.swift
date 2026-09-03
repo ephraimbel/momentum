@@ -105,17 +105,57 @@ enum DanielsPaces {
     /// Predicted race pace (s/km, whole seconds) at any goal distance from the athlete's 5K —
     /// powers goal-race-pace reps in peak/taper weeks, the race-day target, and every prediction
     /// surface. Endurance-corrected: beyond ~3 h the honest number is slower than the raw curve.
-    static func racePaceSPerKm(distanceM d: Double, p5kSPerKm: Double) -> Double {
+    static func racePaceSPerKm(distanceM d: Double, p5kSPerKm: Double,
+                               riegelExponent: Double = populationRiegelExponent) -> Double {
         guard d > 0 else { return clamped(p5kSPerKm) }
         let raw = racePaceSPerKm(distanceM: d, vdot: vdot(p5kSPerKm: p5kSPerKm)) ?? clamped(p5kSPerKm)
+        // The athlete's own fatigue curve, when the evidence fitted one (`AthleteStateEngine`):
+        // predict with THEIR exponent instead of the fixed decay, but never faster than the raw
+        // physiology — durability can cancel the pain tax, it cannot beat the oxygen-cost curve.
+        // At the population exponent this is byte-identical to the path below.
+        if riegelExponent.isFinite, abs(riegelExponent - populationRiegelExponent) > 0.0005, d > 5_000 {
+            let t5k = clamped(p5kSPerKm) * 5
+            let personal = t5k * pow(d / 5_000, riegelExponent) / (d / 1000)
+            return max(120, max(raw, personal).rounded())
+        }
         let corrected = enduranceCorrected(raceTimeS: raw * d / 1000) / (d / 1000)
         return max(120, corrected.rounded())
     }
 
+    /// Riegel's population fatigue exponent (time ∝ distance^1.06).
+    static let populationRiegelExponent = 1.06
+
     /// The training pace (s/km, whole seconds) for a run type at the athlete's calibrated 5K pace.
     /// `.race` is the 5K race pace itself (race-distance-specific pacing lives in `RacePredictor`).
-    static func trainingPace(_ type: RunType, p5kSPerKm: Double) -> Double {
-        max(120, rawTrainingPace(type, p5kSPerKm: p5kSPerKm).rounded())
+    ///
+    /// `thresholdSPerKm` is the athlete's OBSERVED threshold (what they have actually held for an
+    /// hour, `AthleteStateEngine`). With it, the steady/threshold family is anchored on the athlete
+    /// rather than on the curve, under two rules: an observed T slower than the curve's wins
+    /// outright (they demonstrably cannot hold the theoretical number; bounded at +8 %, past which
+    /// the "threshold" was not one), and an observed T faster than the curve's is honoured only
+    /// to 2 % — the same discipline `PlanCoaching.recalibratePaces` applies to the 5K. Easy
+    /// running stays derived from the 5K but never crowds the threshold: easy ≥ T + 25 s/km.
+    static func trainingPace(_ type: RunType, p5kSPerKm: Double, thresholdSPerKm: Double? = nil) -> Double {
+        let raw = rawTrainingPace(type, p5kSPerKm: p5kSPerKm)
+        guard let observed = thresholdSPerKm, observed.isFinite, observed > 0 else {
+            return max(120, raw.rounded())
+        }
+        let curveT = rawTrainingPace(.tempo, p5kSPerKm: p5kSPerKm)
+        let effectiveT = thresholdPace(curve: curveT, observed: observed)
+        switch type {
+        case .tempo:
+            return max(120, effectiveT.rounded())
+        case .easy, .freeRun, .fartlek, .hills, .strides, .recovery, .long, .progression:
+            return max(120, max(raw, effectiveT + 25).rounded())
+        case .intervals, .race:
+            return max(120, raw.rounded())
+        }
+    }
+
+    /// The threshold the plan trains at, given the curve's T and an observed one. See `trainingPace`.
+    static func thresholdPace(curve: Double, observed: Double) -> Double {
+        if observed >= curve { return min(observed, curve * 1.08) }
+        return max(observed, curve * 0.98)
     }
 
     private static func rawTrainingPace(_ type: RunType, p5kSPerKm: Double) -> Double {

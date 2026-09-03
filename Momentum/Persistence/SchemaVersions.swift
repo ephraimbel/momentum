@@ -93,9 +93,23 @@ enum SchemaV2: VersionedSchema {
 /// Ordered oldest → newest. The V1 → V2 path is covered by an on-disk fixture that verifies the
 /// completed-plan/workout relationship graph, GPS samples, external photo data, and athlete memory
 /// before and after the sidecar tables are written.
+/// V3 (2026-09-03) adds one more scalar-ID sidecar: the athlete state a plan was built with
+/// (`PlanAthleteStateRecord`). `TrainingPlan` itself is untouched — its released shape is the
+/// contract the archived-store test enforces — so this stays a purely additive step.
+enum SchemaV3: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
+
+    static var models: [any PersistentModel.Type] {
+        SchemaV2.models + [PlanAthleteStateRecord.self]
+    }
+}
+
 enum MomentumMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self] }
+    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self, SchemaV3.self] }
     static var stages: [MigrationStage] {
-        [.lightweight(fromVersion: SchemaV1.self, toVersion: SchemaV2.self)]
+        [
+            .lightweight(fromVersion: SchemaV1.self, toVersion: SchemaV2.self),
+            .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self),
+        ]
     }
 }

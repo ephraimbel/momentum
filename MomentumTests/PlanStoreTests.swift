@@ -742,7 +742,7 @@ struct PlanStoreTests {
     }
 
     private func diskContainer(at url: URL) throws -> ModelContainer {
-        let schema = Schema(versionedSchema: SchemaV2.self)
+        let schema = Schema(versionedSchema: SchemaV3.self)
         let configuration = ModelConfiguration(
             "PlanStoreTests",
             schema: schema,
