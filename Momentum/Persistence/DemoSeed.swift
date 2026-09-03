@@ -121,6 +121,7 @@ enum DemoSeed {
             try? context.delete(model: PlannedSessionIntentRecord.self)
             try? context.delete(model: PlannedSession.self);     try? context.delete(model: TrainingPlan.self)
             try? context.delete(model: PlanMetadataRecord.self); try? context.delete(model: RunningEventRecord.self)
+            try? context.delete(model: PlanAthleteStateRecord.self)
             try? context.delete(model: RunningSeasonRecord.self); try? context.delete(model: PlanDecisionRecord.self)
             try? context.delete(model: MemoryNote.self);         try? context.delete(model: FitnessSnapshot.self)
             try? context.delete(model: AthleteModel.self);       try? context.delete(model: PersonalRecord.self)

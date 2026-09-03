@@ -44,6 +44,13 @@ struct PlanSettingsSheet: View {
     @State private var currentWeeklyM: Double?
     @State private var currentLongestM: Double?
     @State private var baselineUsesLoggedRuns = false
+    /// The season's tune-up races (B/C), buffered like everything else; `loadedTuneUps` is what
+    /// the records held when the sheet opened, so `structural` can tell an edit from a look.
+    @State private var tuneUps: [TuneUpEvent] = []
+    @State private var loadedTuneUps: [TuneUpEvent] = []
+    @State private var tuneUpsLoaded = false
+    @State private var editingTuneUp: TuneUpEvent?
+    @State private var addingTuneUp = false
 
     init(profile: UserProfile, mode: Mode = .adjust, onDone: @escaping () -> Void) {
         self.profile = profile
@@ -115,6 +122,29 @@ struct PlanSettingsSheet: View {
             || targetWeekly != profile.targetWeeklyRunVolumeM
             || (hybrid && hybridPriority.rawValue != (profile.hybridPriority ?? HybridPriority.balanced.rawValue))
             || (lifting && strengthSplit.rawValue != profile.strengthSplit)
+            || tuneUpsChanged
+    }
+
+    private var tuneUpsChanged: Bool {
+        tuneUpsLoaded && Set(activeTuneUps) != Set(loadedTuneUps)
+    }
+
+    /// The tune-ups that reach the plan: only while racing, and only the ones before the goal race.
+    private var activeTuneUps: [TuneUpEvent] {
+        guard racing else { return [] }
+        let goalDate = newRaceDate
+        return tuneUps.filter { event in goalDate.map { event.date < $0 } ?? true }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// Where a new tune-up may land: a week out at the earliest, three days before the goal race
+    /// at the latest (the command enforces the same rules on Save).
+    private var tuneUpDateRange: ClosedRange<Date> {
+        let cal = Calendar.current
+        let earliest = cal.date(byAdding: .day, value: 7, to: cal.startOfDay(for: Date())) ?? Date()
+        let latest = newRaceDate.flatMap { cal.date(byAdding: .day, value: -3, to: $0) }
+            ?? cal.date(byAdding: .year, value: 1, to: earliest) ?? earliest
+        return earliest...max(earliest, latest)
     }
 
     private var newRaceDistanceM: Double? { racing ? raceDistance?.meters : nil }
@@ -170,6 +200,7 @@ struct PlanSettingsSheet: View {
                     nameSection
                     goalSection
                     if racing { raceSection }
+                    if racing { tuneUpSection }
                     startingPointSection
                     if hybrid { balanceSection }
                     intensitySection
@@ -216,13 +247,31 @@ struct PlanSettingsSheet: View {
                 }
             }
             .task {
+                loadTuneUps()
                 await refreshStartingPoint()
+            }
+            .sheet(isPresented: $addingTuneUp) {
+                TuneUpEditorSheet(event: nil, range: tuneUpDateRange, others: activeTuneUps) { saved in
+                    withAnimation(Motion.standard) { tuneUps.append(saved) }
+                }
+            }
+            .sheet(item: $editingTuneUp) { editing in
+                TuneUpEditorSheet(event: editing, range: tuneUpDateRange,
+                                  others: activeTuneUps.filter { $0.id != editing.id }) { saved in
+                    withAnimation(Motion.standard) {
+                        if let i = tuneUps.firstIndex(where: { $0.id == saved.id }) { tuneUps[i] = saved }
+                    }
+                }
             }
             .onAppear {
                 #if DEBUG
                 // --race-picker: open the catalog directly (screenshot verification; sim can't tap).
                 if ProcessInfo.processInfo.arguments.contains("--race-picker") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showRacePicker = true }
+                }
+                // --tuneup-editor: open the tune-up editor directly (screenshot verification).
+                if ProcessInfo.processInfo.arguments.contains("--tuneup-editor") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { addingTuneUp = true }
                 }
                 #endif
             }
@@ -418,6 +467,110 @@ struct PlanSettingsSheet: View {
                 }
             }
         }
+    }
+
+    // MARK: Tune-up races (2026-09-03)
+
+    /// The season's other races. A B race is raced (two easy days in, the race in place of that
+    /// week's quality, easy days out); a C race is trained through. Neither touches the block
+    /// toward the goal race — only the week it lands in bends.
+    private var tuneUpSection: some View {
+        section("TUNE-UP RACES") {
+            VStack(spacing: Theme.Space.sm) {
+                ForEach(activeTuneUps) { event in
+                    // Two buttons side by side, never nested: the row edits, the cross removes.
+                    HStack(spacing: Theme.Space.sm) {
+                        Button { editingTuneUp = event } label: {
+                            HStack(spacing: Theme.Space.md) {
+                                Image(systemName: event.priority == .b ? "flag.fill" : "flag")
+                                    .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                                    .frame(width: 22)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(tuneUpTitle(event))
+                                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                                    Text(tuneUpSubtitle(event))
+                                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("tuneup-row")
+                        Button {
+                            withAnimation(Motion.standard) { tuneUps.removeAll { $0.id == event.id } }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 18)).foregroundStyle(Theme.inkTertiary)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Remove \(tuneUpTitle(event))")
+                    }
+                    .padding(Theme.Space.md)
+                    .background(cardBackground)
+                }
+                if activeTuneUps.count < 4 {
+                    Button { addingTuneUp = true } label: {
+                        HStack(spacing: Theme.Space.md) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Add a tune-up race")
+                                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                                Text(activeTuneUps.isEmpty
+                                     ? "A shorter race on the way to the goal. Race it, or train through it."
+                                     : "Up to four on a season.")
+                                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        .padding(Theme.Space.md)
+                        .background(cardBackground)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("add-tuneup")
+                }
+            }
+        }
+    }
+
+    private func tuneUpTitle(_ event: TuneUpEvent) -> String {
+        let distance = RaceDistance.nearest(toMeters: event.distanceM).label
+        let name = event.name.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? distance : "\(name) · \(distance)"
+    }
+
+    private func tuneUpSubtitle(_ event: TuneUpEvent) -> String {
+        let when = event.date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        return "\(when) · \(event.priority == .b ? "Race it" : "Train through")"
+    }
+
+    /// The season's planned B/C events, once, when the sheet opens.
+    private func loadTuneUps() {
+        guard !tuneUpsLoaded else { return }
+        tuneUpsLoaded = true
+        guard mode == .adjust, let season = PlanService.activeSeason(for: profile, in: context) else {
+            loadedTuneUps = []
+            return
+        }
+        let seasonID = season.id
+        let records = (try? context.fetch(FetchDescriptor<RunningEventRecord>(
+            predicate: #Predicate { $0.seasonID == seasonID }))) ?? []
+        let loaded = records.compactMap { record -> TuneUpEvent? in
+            guard record.statusRaw == RunningEventStatus.planned.rawValue,
+                  let priority = RunningEventPriority(rawValue: record.priorityRaw), priority != .a,
+                  let distance = record.distanceM, distance > 0 else { return nil }
+            return TuneUpEvent(id: record.id, name: record.name, date: record.date, distanceM: distance,
+                               priority: priority, goalTimeS: record.durationS)
+        }
+        .sorted { $0.date < $1.date }
+        loadedTuneUps = loaded
+        tuneUps = loaded
     }
 
     /// The same honesty moment as onboarding — verdict first, never a fantasy.
@@ -736,8 +889,10 @@ struct PlanSettingsSheet: View {
                 raceDate: newRaceDate,
                 raceDistanceM: newRaceDistanceM,
                 goalFinishTimeS: newGoalFinishTimeS,
+                tuneUps: tuneUpsLoaded ? activeTuneUps : nil,
                 in: context
             )
+            try configuration.preflightValidation()
         } catch {
             saveFailed = true
             return
@@ -762,7 +917,14 @@ struct PlanSettingsSheet: View {
             if hybrid { profile.hybridPriority = hybridPriority.rawValue }
             if lifting { profile.strengthSplit = strengthSplit.rawValue }
             if rebuild {
-                _ = try PlanService.stageRebuild(for: profile, in: context)
+                // The buffered tune-ups reach the generator directly: the records are written by
+                // the command AFTER the rebuild (the season keeps its identity that way), so the
+                // engine would otherwise bend the weeks around last time's list.
+                let events = activeTuneUps.map {
+                    PlanRaceEvent(id: $0.id, date: $0.date, distanceM: $0.distanceM,
+                                  priority: $0.priority, goalTimeS: $0.goalTimeS)
+                }
+                _ = try PlanService.stageRebuild(for: profile, tuneUps: tuneUpsLoaded ? events : nil, in: context)
             }
             _ = try configuration.apply(in: context, now: Date())
             if rebuild {

@@ -18,6 +18,21 @@ enum PlanConfigurationCommandError: Error, Equatable {
     case ambiguousActiveSeason(UUID)
     case invalidPersistedSeason(UUID)
     case invalidPersistedEvent(UUID)
+    // Tune-up races (2026-09-03): a week can bend around one only when there is a week to bend.
+    case tuneUpTooSoon(UUID)          // in the past, or inside the next seven days
+    case tuneUpAfterGoalRace(UUID)
+    case tuneUpTooClose(UUID)         // B within 7 days of the goal race or another B; C within 3
+    case tuneUpInvalid(UUID)          // no distance, or a priority that is not B/C
+}
+
+/// One tune-up race as the athlete configures it in Plan Settings: B = race it, C = train through.
+struct TuneUpEvent: Sendable, Equatable, Hashable, Identifiable {
+    var id: UUID = UUID()
+    var name: String = ""
+    var date: Date
+    var distanceM: Double
+    var priority: RunningEventPriority
+    var goalTimeS: Double? = nil
 }
 
 /// The compatibility write boundary while `UserProfile` goal fields and the running-domain season
@@ -36,6 +51,10 @@ struct PlanConfigurationCommand: Sendable {
     let raceDate: Date?
     let raceDistanceM: Double?
     let goalFinishTimeS: Double?
+    /// Planned tune-ups the athlete removed: marked withdrawn (never deleted) by `apply`.
+    let withdrawnEventIDs: [UUID]
+    /// "Now" for the tune-up timing rules — injected so validation is deterministic in tests.
+    let referenceDate: Date
 
     init(id: UUID,
          profileID: UUID,
@@ -44,7 +63,9 @@ struct PlanConfigurationCommand: Sendable {
          legacyGoal: Goal,
          raceDate: Date?,
          raceDistanceM: Double?,
-         goalFinishTimeS: Double?) {
+         goalFinishTimeS: Double?,
+         withdrawnEventIDs: [UUID] = [],
+         referenceDate: Date = Date()) {
         self.id = id
         self.profileID = profileID
         self.season = season
@@ -53,6 +74,8 @@ struct PlanConfigurationCommand: Sendable {
         self.raceDate = raceDate
         self.raceDistanceM = raceDistanceM
         self.goalFinishTimeS = goalFinishTimeS
+        self.withdrawnEventIDs = withdrawnEventIDs
+        self.referenceDate = referenceDate
     }
 
     struct Result: Equatable, Sendable {
@@ -64,7 +87,9 @@ struct PlanConfigurationCommand: Sendable {
 
     /// Builds the one compatibility command used by the legacy create/adjust UI. Adjustments keep
     /// the current season identity; "New plan" starts a new season and lets execution archive the
-    /// old one. Existing B/C and completed events survive an adjustment unchanged.
+    /// old one. Completed events survive an adjustment unchanged. `tuneUps` nil leaves the planned
+    /// B/C events exactly as they are; a list REPLACES them — anything planned that the list no
+    /// longer carries is withdrawn (visibly, never deleted).
     @MainActor
     static func legacyUICommand(id: UUID,
                                 profile: UserProfile,
@@ -74,6 +99,8 @@ struct PlanConfigurationCommand: Sendable {
                                 raceDate: Date?,
                                 raceDistanceM: Double?,
                                 goalFinishTimeS: Double?,
+                                tuneUps: [TuneUpEvent]? = nil,
+                                now: Date = Date(),
                                 in context: ModelContext) throws -> PlanConfigurationCommand {
         let allSeasons = try context.fetch(FetchDescriptor<RunningSeasonRecord>())
         let allEvents = try context.fetch(FetchDescriptor<RunningEventRecord>())
@@ -114,6 +141,8 @@ struct PlanConfigurationCommand: Sendable {
 
         var events: [RunningSeasonEvent] = []
         var priorPrimary: RunningSeasonEvent?
+        var withdrawn: [UUID] = []
+        let desiredTuneUpIDs = tuneUps.map { Set($0.map(\.id)) }
         if reused != nil {
             for record in allEvents where record.seasonID == seasonID {
                 guard let event = domainEvent(record) else {
@@ -124,9 +153,37 @@ struct PlanConfigurationCommand: Sendable {
                         throw PlanConfigurationCommandError.multiplePrimaryEvents(seasonID)
                     }
                     priorPrimary = event
+                } else if event.priority != .a, event.status == .planned, let desiredTuneUpIDs {
+                    // The list is the truth for planned tune-ups: kept ones are re-appended from
+                    // the list below, dropped ones are withdrawn.
+                    if !desiredTuneUpIDs.contains(event.id) { withdrawn.append(event.id) }
                 } else {
                     events.append(event)
                 }
+            }
+        }
+        if let tuneUps {
+            for tuneUp in tuneUps {
+                var eventID = tuneUp.id
+                while allEvents.contains(where: { $0.id == eventID && $0.seasonID != seasonID }) {
+                    eventID = UUID()
+                }
+                let prior = allEvents.first { $0.id == tuneUp.id && $0.seasonID == seasonID }.flatMap(domainEvent)
+                events.append(RunningSeasonEvent(
+                    id: eventID,
+                    name: tuneUp.name,
+                    date: tuneUp.date,
+                    distanceM: tuneUp.distanceM,
+                    durationS: tuneUp.goalTimeS,
+                    priority: tuneUp.priority == .a ? .b : tuneUp.priority,
+                    surface: prior?.surface ?? .road,
+                    ascentM: prior?.ascentM,
+                    descentM: prior?.descentM,
+                    altitude: prior?.altitude ?? .unknown,
+                    technicality: prior?.technicality ?? .unknown,
+                    climate: prior?.climate ?? .unknown,
+                    status: .planned
+                ))
             }
         }
 
@@ -178,7 +235,9 @@ struct PlanConfigurationCommand: Sendable {
             legacyGoal: goal,
             raceDate: normalizedDate,
             raceDistanceM: normalizedDistance,
-            goalFinishTimeS: normalizedTime
+            goalFinishTimeS: normalizedTime,
+            withdrawnEventIDs: withdrawn,
+            referenceDate: now
         )
     }
 
@@ -348,6 +407,14 @@ extension PlanConfigurationCommand {
             changed = true
         }
 
+        for dropped in withdrawnEventIDs {
+            guard let existing = eventsByID[dropped]?.first, existing.seasonID == season.id,
+                  existing.priorityRaw != RunningEventPriority.a.rawValue,
+                  existing.statusRaw == RunningEventStatus.planned.rawValue else { continue }
+            existing.statusRaw = RunningEventStatus.withdrawn.rawValue
+            changed = true
+        }
+
         var appliedEventIDs: [UUID] = []
         for desired in season.events {
             appliedEventIDs.append(desired.id)
@@ -443,6 +510,7 @@ private extension PlanConfigurationCommand {
         if let goalFinishTimeS, !goalFinishTimeS.isFinite || goalFinishTimeS <= 0 {
             throw PlanConfigurationCommandError.invalidGoalTime
         }
+        try validateTuneUps()
         guard legacyGoal == .raceDistance else {
             if raceDate != nil || raceDistanceM != nil || goalFinishTimeS != nil {
                 throw PlanConfigurationCommandError.staleRaceFields
@@ -464,6 +532,45 @@ private extension PlanConfigurationCommand {
             }
         default:
             throw PlanConfigurationCommandError.primaryEventMismatch
+        }
+    }
+
+    /// The tune-up timing rules: at least a week out (a week bends around a race only when there is
+    /// a week to bend), before the goal race, and spaced so no two race efforts collide — a B race
+    /// keeps seven days from the goal race and from any other B, a C race keeps three from anything.
+    func validateTuneUps() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let planned = season.events.filter { $0.status == .planned && $0.priority != .a }
+        guard !planned.isEmpty else { return }
+        let earliest = calendar.date(byAdding: .day, value: 7, to: calendar.startOfDay(for: referenceDate)) ?? referenceDate
+        let goal = season.primaryEvent
+        func days(_ a: Date, _ b: Date) -> Int {
+            abs(calendar.dateComponents([.day], from: calendar.startOfDay(for: a), to: calendar.startOfDay(for: b)).day ?? 0)
+        }
+        for event in planned {
+            guard let distance = event.distanceM, distance.isFinite, distance > 0,
+                  event.priority == .b || event.priority == .c else {
+                throw PlanConfigurationCommandError.tuneUpInvalid(event.id)
+            }
+            // A tune-up already behind the athlete is history for `settleRaces`, not a rule
+            // violation on an unrelated edit.
+            if calendar.startOfDay(for: event.date) < calendar.startOfDay(for: referenceDate) { continue }
+            if calendar.startOfDay(for: event.date) < earliest {
+                throw PlanConfigurationCommandError.tuneUpTooSoon(event.id)
+            }
+            if let goal, calendar.startOfDay(for: event.date) >= calendar.startOfDay(for: goal.date) {
+                throw PlanConfigurationCommandError.tuneUpAfterGoalRace(event.id)
+            }
+            let minimum = event.priority == .b ? 7 : 3
+            if let goal, days(event.date, goal.date) < minimum {
+                throw PlanConfigurationCommandError.tuneUpTooClose(event.id)
+            }
+            for other in planned where other.id != event.id {
+                let required = (event.priority == .b && other.priority == .b) ? 7 : 3
+                if days(event.date, other.date) < required {
+                    throw PlanConfigurationCommandError.tuneUpTooClose(event.id)
+                }
+            }
         }
     }
 

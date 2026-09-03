@@ -67,9 +67,12 @@ final class RacePickerUITests: XCTestCase {
         XCTAssertTrue(disney.waitForExistence(timeout: 5), "Search didn't surface Disney.")
         disney.tap()
 
-        // Pick the half from the weekend's chips, then lock it in.
-        let half = app.buttons["Half marathon"]
-        XCTAssertTrue(half.waitForExistence(timeout: 5), "Weekend sub-distances didn't appear.")
+        // Pick the half from the weekend's chips, then lock it in. The settings sheet behind the
+        // picker carries its own "Half marathon" distance card whenever the athlete is racing, so
+        // the chip is the HITTABLE match, never the first one.
+        let halves = app.buttons.matching(identifier: "Half marathon")
+        XCTAssertTrue(halves.firstMatch.waitForExistence(timeout: 5), "Weekend sub-distances didn't appear.")
+        let half = halves.allElementsBoundByIndex.first { $0.isHittable } ?? halves.firstMatch
         half.tap()
         let lockIn = app.buttons["Lock in Walt Disney World Marathon"]
         XCTAssertTrue(lockIn.waitForExistence(timeout: 5))

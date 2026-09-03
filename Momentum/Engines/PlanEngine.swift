@@ -147,9 +147,25 @@ enum PlanEngine {
         // an athlete with a base to measure.
         let weeklyForTest = profile.currentWeeklyVolumeM
             ?? (profile.runningExperience == .new ? 14_000 : profile.runningExperience == .some ? 26_000 : 42_000)
+        // Tune-up races (2026-09-03): each lands on its own day inside the window, before the
+        // goal race. A week with one is never a cutback (a race is not absorption, and a deload
+        // must never carry a hard run), and the synthetic time trial stands down — a real race is
+        // the checkpoint.
+        let placedTuneUps: [PlacedTuneUp] = profile.tuneUpRaces
+            .sorted { $0.date < $1.date }
+            .compactMap { event in
+                let dayCount = calendar.dateComponents([.day], from: calendar.startOfDay(for: startDate),
+                                                       to: calendar.startOfDay(for: event.date)).day ?? -1
+                guard dayCount >= 0, dayCount / 7 < totalWeeks, event.distanceM > 0 else { return nil }
+                if let raceDate = profile.raceDate,
+                   calendar.startOfDay(for: event.date) >= calendar.startOfDay(for: raceDate) { return nil }
+                return PlacedTuneUp(event: event, week: dayCount / 7, day: dayCount % 7)
+            }
+        let tuneUpWeeks = Set(placedTuneUps.map(\.week))
         let wantsTimeTrial = cardio == .running && raceInWindow && totalWeeks >= 8
             && (profile.raceDistanceM ?? 0) >= 10_000 && runDays >= 3
             && profile.runningExperience != .new && weeklyForTest >= 30_000
+            && placedTuneUps.isEmpty
         var timeTrialPlaced = false
 
         // Build ceiling: volume grows toward the GOAL's peak and then HOLDS — a year-long marathon
@@ -248,7 +264,7 @@ enum PlanEngine {
             // cutback, or the plan has no peak at all. With two or more peak weeks the cadence may
             // claim the first; the last always peaks.
             let peakIsSacred = isPeak && (meso.peakWeeks <= 1 || w == totalWeeks - meso.taperWeeks - 1)
-            let isDeload = !isTaper && !peakIsSacred
+            let isDeload = !isTaper && !peakIsSacred && !tuneUpWeeks.contains(w)
                 && (isLeadIn || (w >= leadIn && loadingRun >= buildWeeks && w < lastLoadingWeek))
             let phase: PlanPhase = isTaper ? .taper
                 : isDeload ? .recovery
@@ -415,6 +431,16 @@ enum PlanEngine {
                     weeks[w].sessions[i].targetDurationS = (dur * factor).rounded()
                 }
             }
+        }
+
+        // Tune-up races bend their week (2026-09-03). Placed after the governor for the same reason
+        // the goal race is: a race is its distance. B races it: two easy days in, the race in place
+        // of the week's quality (and of the long run when it is a half or longer), one to four easy
+        // days out by distance, and the next week's long run held to 75 % after a half or longer.
+        // C trains through: the race stands in for the quality session and the next day is easy.
+        // Either way the week never carries a second hard day, and the phases are not touched.
+        for placed in placedTuneUps {
+            bendWeek(&weeks, for: placed, p5k: p5k, threshold: threshold, exponent: exponent)
         }
 
         // Race day itself — the season's crown, placed on the exact race date with the goal distance
@@ -671,6 +697,110 @@ enum PlanEngine {
         case 2: return [0.65, 0.5]
         case 3: return [0.7, 0.55, 0.45]
         default: return [0.75, 0.65, 0.55, 0.45]      // ultra — a gentler, longer glide to the start
+        }
+    }
+
+
+    /// A tune-up race pinned to its week and day inside the generated window.
+    struct PlacedTuneUp: Sendable, Equatable {
+        let event: PlanRaceEvent
+        let week: Int
+        let day: Int
+    }
+
+    /// Easy days after a tune-up, by distance: one under 10 km, two under a half, four from a half.
+    static func tuneUpRecoveryDays(forRaceM m: Double) -> Int {
+        switch m {
+        case ..<10_000: 1
+        case ..<25_000: 2
+        default: 4
+        }
+    }
+
+    /// The week a tune-up lands in, bent around it. See the call site for the coaching rules.
+    static func bendWeek(_ weeks: inout [GeneratedWeek], for placed: PlacedTuneUp,
+                         p5k: Double, threshold: Double?, exponent: Double) {
+        let w = placed.week, off = placed.day, event = placed.event
+        guard weeks.indices.contains(w) else { return }
+        let racesIt = event.racesIt
+        var sessions = weeks[w].sessions
+
+        // The race takes its day outright.
+        sessions.removeAll { $0.dayOffset == off }
+        // …and the week's quality: the race IS this week's hard day. A tune-up week never carries
+        // a second one, so every other hard run goes; the long run stays unless a B race is long
+        // enough to be one (a half or longer replaces it).
+        sessions.removeAll {
+            $0.discipline == .running && $0.isHardRun && $0.runType != .long && $0.runType != .progression
+        }
+        if racesIt, event.distanceM >= 15_000 {
+            sessions.removeAll { $0.discipline == .running && ($0.runType == .long || $0.runType == .progression) }
+        } else {
+            // A race-pace finish on the long run is a second hard day in disguise.
+            for i in sessions.indices where sessions[i].discipline == .running
+                && (sessions[i].runType == .long || sessions[i].runType == .progression) && sessions[i].isHardRun {
+                sessions[i].isHardRun = false
+                sessions[i].intervals = nil
+                sessions[i].runType = .long
+                sessions[i].rationale = nil
+            }
+        }
+
+        // In: two easy days before a B race (60 % of themselves, no lift the day before).
+        if racesIt {
+            sessions.removeAll { $0.dayOffset == off - 1 && $0.discipline == .strength }
+            for i in sessions.indices where sessions[i].discipline == .running
+                && (sessions[i].dayOffset == off - 1 || sessions[i].dayOffset == off - 2) {
+                sessions[i].runType = .easy
+                sessions[i].isHardRun = false
+                sessions[i].intervals = nil
+                sessions[i].targetDistanceM = sessions[i].targetDistanceM.map { ($0 * 0.6).rounded() }
+                sessions[i].targetPaceSPerKm = pace(.easy, p5k: p5k, threshold: threshold)
+                sessions[i].rationale = "Easy into your tune-up. Fresh legs make the result mean something."
+            }
+        }
+
+        // The race itself.
+        var race = GeneratedSession(dayOffset: off, discipline: .running)
+        race.runType = .race
+        race.targetDistanceM = event.distanceM
+        race.targetPaceSPerKm = event.goalTimeS.map { $0 / (event.distanceM / 1000) }
+            ?? DanielsPaces.racePaceSPerKm(distanceM: event.distanceM, p5kSPerKm: p5k, riegelExponent: exponent)
+        race.isHardRun = true
+        race.intervals = racesIt ? "Tune-up · Race it" : "Tune-up · Train through"
+        race.rationale = racesIt
+            ? "Tune-up you race. Two easy days in, then an honest effort. Your paces recalibrate from the result."
+            : "Tune-up you train through. A hard session with a bib on, not a peak. Nothing else changes this week."
+        sessions.append(race)
+        sessions.sort { $0.dayOffset < $1.dayOffset }
+        weeks[w].sessions = sessions
+
+        // Out: easy days after, spilling into the next week when the race sits late in its own.
+        let recoveryDays = racesIt ? tuneUpRecoveryDays(forRaceM: event.distanceM) : 1
+        for d in 1...recoveryDays {
+            let absolute = off + d
+            let wk = w + absolute / 7, dayOff = absolute % 7
+            guard weeks.indices.contains(wk) else { continue }
+            for i in weeks[wk].sessions.indices where weeks[wk].sessions[i].discipline == .running
+                && weeks[wk].sessions[i].dayOffset == dayOff && weeks[wk].sessions[i].runType != .race {
+                weeks[wk].sessions[i].runType = racesIt ? .recovery : .easy
+                weeks[wk].sessions[i].isHardRun = false
+                weeks[wk].sessions[i].intervals = nil
+                if racesIt {
+                    weeks[wk].sessions[i].targetDistanceM = weeks[wk].sessions[i].targetDistanceM.map { ($0 * 0.6).rounded() }
+                }
+                weeks[wk].sessions[i].targetPaceSPerKm = pace(racesIt ? .recovery : .easy, p5k: p5k, threshold: threshold)
+                weeks[wk].sessions[i].rationale = racesIt
+                    ? "Easy out of your tune-up. The race was the work; this is the absorbing."
+                    : "Easy the day after a hard one."
+            }
+        }
+        // A half or longer is a real dent: the next week's long run is held to three quarters.
+        if racesIt, event.distanceM >= 21_000, weeks.indices.contains(w + 1) {
+            for i in weeks[w + 1].sessions.indices where weeks[w + 1].sessions[i].discipline == .running
+                && (weeks[w + 1].sessions[i].runType == .long || weeks[w + 1].sessions[i].runType == .progression) {
+                weeks[w + 1].sessions[i].targetDistanceM = weeks[w + 1].sessions[i].targetDistanceM.map { ($0 * 0.75).rounded() }
+            }
         }
     }
 
@@ -1825,4 +1955,7 @@ struct PlanInputs: Equatable, Sendable {
     /// The athlete's display unit — prescriptions snap to clean values in it (`RunRounding`), so a
     /// coach's "run 4 miles / a 5K" reads clean instead of "3.73 mi". Storage stays SI.
     var distanceUnit: DistanceUnit = .metric
+    /// Tune-up races on the season (2026-09-03): B (race it) and C (train through) events before
+    /// the goal race. They bend the week they land in, never the block.
+    var tuneUpRaces: [PlanRaceEvent] = []
 }

@@ -302,6 +302,33 @@ enum CoachResponder {
             return LocalTurn(text: "Here's today, step by step. I'll be there when you start.", card: card)
         }
 
+        // A tune-up (2026-09-03): "add the Turkey Trot as a tune-up", "tune-up 10K in 4 weeks".
+        // A B/C race on the season, never a change of goal — the card says which week bends.
+        if has(["tune-up", "tune up", "tuneup", "b race", "c race", "train through"]) {
+            let racesIt = !has(["train through", "c race"])
+            if let m = RaceCatalog.match(freeText: message, calendar: ctx.calendar) {
+                var card = CoachCardPayload(kind: .addTuneUp, label: "Add \(m.race.name) as a tune-up")
+                card.raceName = message
+                card.tuneUpPriority = racesIt ? "b" : "c"
+                let dateStr = m.date.formatted(.dateTime.month(.wide).day())
+                return LocalTurn(
+                    text: "\(m.race.name), \(dateStr). I can add it as a tune-up: \(racesIt ? "you race it, with easy days either side" : "you train through it as that week's hard session"). Your goal race and the block toward it stay exactly as they are. Want me to?",
+                    card: card)
+            }
+            if let dist = raceDistanceFromText(q) {
+                var card = CoachCardPayload(kind: .addTuneUp, label: "Add a \(dist.label.lowercased()) tune-up")
+                card.raceDistanceM = dist.meters
+                card.tuneUpPriority = racesIt ? "b" : "c"
+                if let date = relativeFutureDate(q, calendar: ctx.calendar) {
+                    card.raceDateISO = isoDay(date, calendar: ctx.calendar)
+                    return LocalTurn(text: "A \(dist.label.lowercased()) tune-up on \(date.formatted(.dateTime.month(.wide).day())). Say go and that week bends around it; the block keeps building toward your goal.",
+                                     card: card)
+                }
+                return LocalTurn(text: "A \(dist.label.lowercased()) tune-up. Tell me the date (\"in 4 weeks\", or the day) and I will add it. Only that week bends; the block keeps pointing at your goal race.",
+                                 card: nil)
+            }
+        }
+
         // A named race from our catalog → resolve it and offer to point the whole plan at it, the
         // same deterministic catalog onboarding uses. Gated on a race/plan intent word so a passing
         // mention of a city ("Boston is a great town") never triggers a plan change.

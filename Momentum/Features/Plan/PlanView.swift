@@ -13,6 +13,10 @@ struct PlanView: View {
     @Environment(AppRouter.self) private var router   // workoutLaunch — the shell-level recorder
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
+    // The season sidecars, live: a few rows each, so the next tune-up is a filter, not a fetch
+    // in the body (2026-09-03).
+    @Query private var seasonRecords: [RunningSeasonRecord]
+    @Query private var eventRecords: [RunningEventRecord]
     /// Coach-button badge. Newest coach turn only — "any coach message newer than lastSeen" is
     /// decided entirely by the newest one, and an unbounded ChatMessage query materialized the
     /// whole thread on the Plan tab AND re-rendered the board on every user keystroke-send.
@@ -457,6 +461,29 @@ struct PlanView: View {
         return name == "Plan" ? "plan" : name
     }
 
+    /// The soonest planned tune-up on the athlete's active season, off the live `@Query` rows.
+    private var nextTuneUp: PlanRaceEvent? {
+        guard let profile = profiles.first else { return nil }
+        let mine = seasonRecords.filter { $0.profileID == profile.id }
+        let season = mine.first { $0.activePlanID == profile.plan?.id }
+            ?? mine.first { $0.statusRaw == RunningSeasonStatus.active.rawValue }
+        guard let season else { return nil }
+        return eventRecords
+            .filter {
+                $0.seasonID == season.id && $0.statusRaw == RunningEventStatus.planned.rawValue
+                    && $0.priorityRaw != RunningEventPriority.a.rawValue && ($0.distanceM ?? 0) > 0
+                    && $0.date > Date()
+            }
+            .sorted { $0.date < $1.date }
+            .first
+            .flatMap { record in
+                RunningEventPriority(rawValue: record.priorityRaw).map {
+                    PlanRaceEvent(id: record.id, date: record.date, distanceM: record.distanceM ?? 0,
+                                  priority: $0, goalTimeS: record.durationS)
+                }
+            }
+    }
+
     /// One quiet line of what this plan is FOR — the race and its countdown when one is set, else
     /// the goal. The plan page should never make you wonder what it's building toward.
     private var planContextLine: String? {
@@ -467,6 +494,16 @@ struct PlanView: View {
             let label = RaceDistance.nearest(toMeters: raceM).label
             let goalLabel = profile.goalFinishTimeS.map { "\(PlanFeasibility.hms($0)) \(label)" } ?? label
             let cal = Calendar.current
+            // A tune-up nearer than the goal race is the next start line (2026-09-03): say it, and
+            // keep the goal's countdown behind it so the block's destination never disappears.
+            if let next = nextTuneUp, next.date > Date(), next.date < raceDate {
+                let tuneLabel = RaceDistance.nearest(toMeters: next.distanceM).label
+                let tuneDays = cal.dateComponents([.day], from: cal.startOfDay(for: Date()),
+                                                  to: cal.startOfDay(for: next.date)).day ?? 0
+                let goalDays = cal.dateComponents([.day], from: cal.startOfDay(for: Date()),
+                                                  to: cal.startOfDay(for: raceDate)).day ?? 0
+                return "Tune-up \(tuneLabel) · \(Formatters.raceCountdown(days: tuneDays)) · \(goalLabel) \(Formatters.raceCountdown(days: goalDays))"
+            }
             // Count actual days-to-race (not `.weekOfYear`, which crosses week boundaries and mislabels
             // a race 8–13 days out as "race week"). ≤7 days = race week; otherwise weeks, rounded up.
             let days = cal.dateComponents([.day], from: cal.startOfDay(for: Date()),

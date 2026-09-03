@@ -65,6 +65,13 @@ enum CoachActions {
             if let t = goalTime { lines.append("Goal time: \(PlanFeasibility.hms(t))") }
             lines.append(rebuildLine)
             return lines
+        case .addTuneUp(let name, let distanceM, let date, let racesIt, let goalTime):
+            let label = RaceDistance.nearest(toMeters: distanceM).label
+            var lines = ["Tune-up: \(name.isEmpty ? label : "\(name) · \(label)") on \(day(date))",
+                         racesIt ? "Race it: two easy days in, easy days out" : "Train through it: a hard day with a bib on"]
+            if let t = goalTime { lines.append("Target: \(PlanFeasibility.hms(t))") }
+            lines.append("The block toward your goal race stays as it is")
+            return lines
         case .changeDays(let days, let preferred):
             var lines: [String] = []
             if let days { lines.append("Training days: \(profile.daysPerWeek) → \(days) per week") }
@@ -152,6 +159,61 @@ enum CoachActions {
                 detail = "\(label) on \(day(date)) — \(check.headline.lowercased()). I rebuilt your upcoming weeks to point at it."
             }
             return notify(Receipt(headline: "Race locked in", detail: detail), today: today, in: context)
+
+        case .addTuneUp(let name, let distanceM, let date, let racesIt, let goalTime):
+            guard profile.goal == .raceDistance, let goalDate = profile.raceDate, date < goalDate else {
+                return .declined(reason: "A tune-up needs a goal race to sit in front of. Point the plan at your race first, then add the tune-up.")
+            }
+            let existing = PlanService.tuneUpRaces(for: profile, in: context)
+            guard existing.count < 4 else {
+                return .declined(reason: "Four tune-ups is the most a season carries. Remove one in Plan settings to make room.")
+            }
+            var tuneUps = existing.map {
+                TuneUpEvent(id: $0.id, name: "", date: $0.date, distanceM: $0.distanceM,
+                            priority: $0.priority, goalTimeS: $0.goalTimeS)
+            }
+            tuneUps.append(TuneUpEvent(name: name, date: calendar.startOfDay(for: date), distanceM: distanceM,
+                                       priority: racesIt ? .b : .c, goalTimeS: goalTime))
+            let label = RaceDistance.nearest(toMeters: distanceM).label
+            do {
+                let command = try PlanConfigurationCommand.legacyUICommand(
+                    id: UUID(), profile: profile, startsNewSeason: false,
+                    planName: profile.plan?.name ?? "", goal: profile.goal,
+                    raceDate: profile.raceDate, raceDistanceM: profile.raceDistanceM,
+                    goalFinishTimeS: profile.goalFinishTimeS, tuneUps: tuneUps, now: today, in: context)
+                try command.preflightValidation()
+                let previousAutosave = context.autosaveEnabled
+                context.autosaveEnabled = false
+                defer { context.autosaveEnabled = previousAutosave }
+                do {
+                    let events = tuneUps.map {
+                        PlanRaceEvent(id: $0.id, date: $0.date, distanceM: $0.distanceM,
+                                      priority: $0.priority, goalTimeS: $0.goalTimeS)
+                    }
+                    _ = try PlanService.stageRebuild(for: profile, tuneUps: events, in: context)
+                    _ = try command.apply(in: context, now: today)
+                    _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    throw error
+                }
+            } catch let error as PlanConfigurationCommandError {
+                switch error {
+                case .tuneUpTooClose:
+                    return .declined(reason: "That \(label) sits too close to another race. A raced tune-up keeps a week from the goal race and from another tune-up; anything keeps three days.")
+                case .tuneUpTooSoon:
+                    return .declined(reason: "That is inside the next week, and a week can only bend around a race when there is a week to bend. Pick a date at least seven days out.")
+                default:
+                    return .declined(reason: "I could not add that tune-up. Try it from Plan settings.")
+                }
+            } catch {
+                return .declined(reason: "I could not add that tune-up. Try it from Plan settings.")
+            }
+            let detail = racesIt
+                ? "\(label) on \(day(date)), raced. That week bends around it: easy days in, an honest effort, easy days out. The block toward your goal race is untouched."
+                : "\(label) on \(day(date)), trained through. It stands in for that week's hard session and nothing else moves."
+            return notify(Receipt(headline: "Tune-up added", detail: detail), today: today, in: context)
 
         case .changeDays(let days, let preferred):
             if let days { profile.daysPerWeek = days }

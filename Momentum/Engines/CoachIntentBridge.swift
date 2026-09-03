@@ -15,6 +15,9 @@ struct CoachCardPayload: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case none, nav
         case changeGoal, changeRace, changeDays, changeSessionLength
+        /// A tune-up race added to the season (2026-09-03): raced (B) or trained through (C). The
+        /// goal race and the block are untouched; only the week it lands in bends.
+        case addTuneUp
         case moveSession, skipSession
         case easeWeek, bumpLoad, easePaces
         case changeEquipment, injuryReport, pausePlan, resumePlan
@@ -43,6 +46,8 @@ struct CoachCardPayload: Codable, Equatable, Sendable {
     /// over raceDistanceM/raceDateISO for any race the catalog knows.
     var raceName: String?
     var goalFinishTimeS: Double?
+    /// addTuneUp: "b" (race it) or "c" (train through). Missing = race it.
+    var tuneUpPriority: String?
     var daysPerWeek: Int?
     var preferredDays: [Int]?
     var sessionMinutes: Int?
@@ -91,6 +96,7 @@ enum CoachIntent: Equatable, Sendable {
     case navigate(CoachDestination)
     case changeGoal(Goal)
     case changeRace(distanceM: Double, date: Date, goalFinishTimeS: Double?)
+    case addTuneUp(name: String, distanceM: Double, date: Date, racesIt: Bool, goalFinishTimeS: Double?)
     case changeDays(daysPerWeek: Int?, preferredDays: [Int]?)   // at least one is non-nil
     case changeSessionLength(minutes: Int)
     case moveSession(id: UUID, to: Date)
@@ -164,6 +170,25 @@ enum CoachIntentBridge {
                   let date = parseDay(payload.raceDateISO, snapshot: snapshot),
                   date > snapshot.today, withinHorizon(date, snapshot: snapshot) else { return nil }
             return .changeRace(distanceM: distance, date: date, goalFinishTimeS: goalTime)
+
+        case .addTuneUp:
+            var goalTime = payload.goalFinishTimeS
+            if let t = goalTime, !(8 * 60...24 * 3600).contains(t) { goalTime = nil }
+            let racesIt = (payload.tuneUpPriority ?? "b").lowercased() != "c"
+            // A week can bend around a race only when there is a week to bend: seven days out at least.
+            let earliest = snapshot.calendar.date(byAdding: .day, value: 7,
+                                                  to: snapshot.calendar.startOfDay(for: snapshot.today)) ?? snapshot.today
+            if let name = payload.raceName,
+               let m = RaceCatalog.match(freeText: name, after: snapshot.today, calendar: snapshot.calendar),
+               m.date >= earliest, withinHorizon(m.date, snapshot: snapshot) {
+                return .addTuneUp(name: m.race.name, distanceM: m.distance.meters, date: m.date,
+                                  racesIt: racesIt, goalFinishTimeS: goalTime)
+            }
+            guard let distance = payload.raceDistanceM, (1_000...100_000).contains(distance),
+                  let date = parseDay(payload.raceDateISO, snapshot: snapshot),
+                  date >= earliest, withinHorizon(date, snapshot: snapshot) else { return nil }
+            return .addTuneUp(name: payload.raceName ?? "", distanceM: distance, date: date,
+                              racesIt: racesIt, goalFinishTimeS: goalTime)
 
         case .changeDays:
             let days = payload.daysPerWeek.map { min(7, max(1, $0)) }

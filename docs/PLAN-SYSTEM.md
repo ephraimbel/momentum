@@ -70,6 +70,30 @@ the asked-for week. The aggression recommendation follows the CALENDAR verdict o
 gap isn't closed by pushing harder on fewer days). Surfaces: onboarding intensity-step banner + an
 inline note on the days picker, plan settings (live against the buffered days), coach feasibility.
 
+## 2b. The athlete state (`AthleteStateEngine` — 2026-09-03)
+
+Three reads off the athlete's own Momentum-logged runs (eight-week window, `RunningEvidence`
+envelopes), filled into `CalibrationSeed` by `PlanService.stageRegenerate` when onboarding left
+them empty: a **performance curve** with the personal Riegel exponent (races and hard efforts, one
+best per distance band, bounded [1.03, 1.12]); a **threshold proxy** by method (an hour race
+outright → a race moved along the curve → a 20-minute block at 86–92 % HRR → the median of
+completed steady sessions); **durability** (longest continuous run, planned-long-run completion,
+late-run cardiac drift) summarised as fragile/steady/strong. Consumed as: personal exponent in
+`DanielsPaces.racePaceSPerKm` (never faster than the raw curve); observed T anchoring the
+steady/threshold family (slower wins, bounded +8 %; faster honoured to 2 %; easy ≥ T + 25); the
+long run's share ±3 points, a strong athlete's peak +5 % under the same caps, a fragile athlete's
+growth halved on two of three build weeks. `PlanCoaching.recalibrateThreshold` sharpens T from a
+completed steady run or hour effort under the 5K's discipline. Snapshot: `PlanAthleteStateRecord`
+(SchemaV3 sidecar). RUN-DEC-010.
+
+## 2c. Tune-up races (2026-09-03)
+
+`PlanInputs.tuneUpRaces` (from the season's planned B/C `RunningEventRecord`s) bend their week in
+`PlanEngine.bendWeek` after the governor and before the goal race is injected — see RUN-DEC-011 for
+the exact rules. Plan Settings owns entry (`TuneUpEditorSheet`), `PlanConfigurationCommand`
+validates timing and withdraws removed ones, `PlanService.settleRaces` runs the day-after pass
+(tune-ups first, then the goal race, which now promotes the next planned race).
+
 ## 3. Adaptation (bounded, throttled, explained)
 
 All writes in `PlanCoaching`; only future open sessions; race day never touched. Three independent

@@ -168,6 +168,7 @@ enum PlanService {
                                 startDate: Date = Date(),
                                 blockIndex: Int = 0,
                                 recoveryWeeks: Int = 0,
+                                tuneUps: [PlanRaceEvent]? = nil,
                                 in context: ModelContext) throws -> TrainingPlan {
         let catalogItems = catalog(in: context)
         var inputs = planInputs(from: profile, startDate: startDate)
@@ -178,6 +179,7 @@ enum PlanService {
         inputs.currentWeeklyVolumeM = current.weeklyM
         inputs.longestRunM = current.longestM
         inputs.postRaceRecoveryWeeks = recoveryWeeks
+        inputs.tuneUpRaces = tuneUps ?? tuneUpRaces(for: profile, in: context)
         // The athlete state (2026-09-03): threshold, personal fatigue curve and durability read
         // off the same eight weeks of Momentum-logged runs. Fills only what the caller's seed left
         // empty — an entered benchmark always outranks an estimate.
@@ -300,6 +302,7 @@ enum PlanService {
     /// back profile edits, plan replacement, and sidecars as one unit.
     static func stageRebuild(for profile: UserProfile, calibration: CalibrationSeed? = nil,
                              startDate: Date = Date(), blockIndex: Int = 0, recoveryWeeks: Int = 0,
+                             tuneUps: [PlanRaceEvent]? = nil,
                              in context: ModelContext) throws -> TrainingPlan {
         // Every coached plan in Momentum is a RUNNING plan. Strength is programmed in support;
         // cycling/walking remain useful cross-training the athlete can track, but cannot silently
@@ -337,6 +340,7 @@ enum PlanService {
             startDate: startDate,
             blockIndex: blockIndex,
             recoveryWeeks: recoveryWeeks,
+            tuneUps: tuneUps,
             in: context
         )
         profile.daysPerWeek = userDays   // restore before cross-training applies the full day budget
@@ -344,6 +348,116 @@ enum PlanService {
             addCrossTraining(extras, to: plan, startDate: startDate, in: context, totalDaysPerWeek: userDays)
         }
         return plan
+    }
+
+    // MARK: The season's other races (2026-09-03)
+
+    /// The athlete's active season record: the one pointing at the current plan, else the one
+    /// marked active. Nil for a profile the backfill has not reached yet.
+    static func activeSeason(for profile: UserProfile, in context: ModelContext) -> RunningSeasonRecord? {
+        let seasons = ((try? context.fetch(FetchDescriptor<RunningSeasonRecord>())) ?? [])
+            .filter { $0.profileID == profile.id }
+        if let planID = profile.plan?.id, let exact = seasons.first(where: { $0.activePlanID == planID }) {
+            return exact
+        }
+        return seasons.first { $0.statusRaw == RunningSeasonStatus.active.rawValue }
+    }
+
+    /// The season's planned tune-ups (B/C), soonest first — what the engine bends weeks around.
+    static func tuneUpRaces(for profile: UserProfile, in context: ModelContext) -> [PlanRaceEvent] {
+        guard let season = activeSeason(for: profile, in: context) else { return [] }
+        let seasonID = season.id
+        let events = (try? context.fetch(FetchDescriptor<RunningEventRecord>(
+            predicate: #Predicate { $0.seasonID == seasonID }))) ?? []
+        return events.compactMap { record -> PlanRaceEvent? in
+            guard record.statusRaw == RunningEventStatus.planned.rawValue,
+                  let priority = RunningEventPriority(rawValue: record.priorityRaw), priority != .a,
+                  let distance = record.distanceM, distance > 0 else { return nil }
+            return PlanRaceEvent(id: record.id, date: record.date, distanceM: distance,
+                                 priority: priority, goalTimeS: record.durationS)
+        }
+        .sorted { $0.date < $1.date }
+    }
+
+    /// The day-after pass for every race on the season: tune-ups settle first (they never rebuild),
+    /// then the goal race (which does). One call from Today, idempotent on both.
+    @discardableResult
+    static func settleRaces(for profile: UserProfile, today: Date = Date(),
+                            in context: ModelContext, calendar: Calendar = .current) -> String? {
+        var headline: String?
+        for event in tuneUpRaces(for: profile, in: context) {
+            if let line = completeTuneUp(event, for: profile, today: today, in: context, calendar: calendar) {
+                headline = line
+            }
+        }
+        return completeRace(for: profile, today: today, in: context, calendar: calendar) ?? headline
+    }
+
+    /// A tune-up the day after it was run: the event is marked completed, and a logged result
+    /// sharpens the paces the way any race does. No rebuild and no goal change — the week already
+    /// bent around it, and the block still points at the goal race.
+    @discardableResult
+    static func completeTuneUp(_ event: PlanRaceEvent, for profile: UserProfile, today: Date = Date(),
+                               in context: ModelContext, calendar: Calendar = .current) -> String? {
+        guard let dayAfter = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: event.date)),
+              calendar.startOfDay(for: today) >= calendar.startOfDay(for: dayAfter) else { return nil }
+        let eventID = event.id
+        guard let record = (try? context.fetch(FetchDescriptor<RunningEventRecord>(
+            predicate: #Predicate { $0.id == eventID })))?.first,
+              record.statusRaw == RunningEventStatus.planned.rawValue else { return nil }
+        record.statusRaw = RunningEventStatus.completed.rawValue
+        let plan = profile.plan
+        let raceSession = plan?.sessions.first {
+            $0.runType == .race && calendar.isDate($0.date, inSameDayAs: event.date)
+        }
+        var detail = "Your tune-up is behind you. The block still points at the goal race; the next few days stay easy."
+        if let workout = raceSession?.completedWorkout, let plan {
+            let sharpened = PlanCoaching.recalibratePaces(from: workout, plan: plan, today: today,
+                                                          in: context, calendar: calendar)
+            let threshold = PlanCoaching.recalibrateThreshold(from: workout, plan: plan, today: today,
+                                                              in: context, calendar: calendar)
+            if sharpened != nil || threshold != nil {
+                detail = "A race is the truest fitness test there is, so your paces sharpened from it. The block still points at the goal race."
+            }
+        }
+        let headline = "Tune-up done"
+        CoachingEvent.record(kind: .recover, headline: headline, detail: detail,
+                             on: today, in: context, calendar: calendar)
+        try? context.save()
+        return headline
+    }
+
+    /// After the goal race, the next planned race on the season (A or B, soonest first) becomes
+    /// the goal: the profile's race fields move to it and its record is promoted. Nil when the
+    /// season holds nothing further, in which case the block rolls undated as it always did.
+    private static func promoteNextRace(for profile: UserProfile, after raceDate: Date,
+                                        in context: ModelContext, calendar: Calendar) -> RunningEventRecord? {
+        guard let season = activeSeason(for: profile, in: context) else { return nil }
+        let seasonID = season.id
+        let events = (try? context.fetch(FetchDescriptor<RunningEventRecord>(
+            predicate: #Predicate { $0.seasonID == seasonID }))) ?? []
+        // The race just run is history now.
+        for finished in events where finished.priorityRaw == RunningEventPriority.a.rawValue
+            && finished.statusRaw == RunningEventStatus.planned.rawValue
+            && calendar.startOfDay(for: finished.date) <= calendar.startOfDay(for: raceDate) {
+            finished.statusRaw = RunningEventStatus.completed.rawValue
+        }
+        let next = events.filter {
+            $0.statusRaw == RunningEventStatus.planned.rawValue
+                && ($0.priorityRaw == RunningEventPriority.a.rawValue || $0.priorityRaw == RunningEventPriority.b.rawValue)
+                && calendar.startOfDay(for: $0.date) > calendar.startOfDay(for: raceDate)
+                && ($0.distanceM ?? 0) > 0
+        }
+        .sorted { $0.date < $1.date }
+        guard let promoted = next.first else { return nil }
+        promoted.priorityRaw = RunningEventPriority.a.rawValue
+        // The season is the athlete's again, not the backfill's, from here on.
+        season.backfillVersion = 0
+        season.updatedAt = Date()
+        profile.raceDate = promoted.date
+        profile.raceDistanceM = promoted.distanceM
+        profile.goalFinishTimeS = promoted.durationS
+        return promoted
     }
 
     /// The post-race continuation (the coaching arc's close): once race day has passed, the season
@@ -384,11 +498,16 @@ enum PlanService {
             }
         }
 
-        // 2 + 3) Clear the finished goal and roll into the next block, recovery lead-in first.
+        // 2 + 3) Roll into the next block, recovery lead-in first. If the season holds another
+        // race (2026-09-03, owner call), it becomes the goal and the block builds toward it after
+        // the recovery; otherwise the finished goal clears and the block rolls undated.
         let recovery = raced ? PlanEngine.postRaceRecoveryWeeks(forRaceM: raceM ?? 5_000) : 0
-        profile.raceDate = nil
-        profile.raceDistanceM = nil
-        profile.goalFinishTimeS = nil
+        let promoted = promoteNextRace(for: profile, after: raceDate, in: context, calendar: calendar)
+        if promoted == nil {
+            profile.raceDate = nil
+            profile.raceDistanceM = nil
+            profile.goalFinishTimeS = nil
+        }
         guard let replacement = rebuild(
             for: profile,
             calibration: CalibrationSeed(estimatedP5kSPerKm: seedP5k),
@@ -397,12 +516,24 @@ enum PlanService {
             recoveryWeeks: recovery,
             in: context
         ) else { return nil }
-        replacement.name = ""   // the season was named for the race that's now behind them
+        // The season was named for the race that's now behind them; a promoted race brings its own.
+        replacement.name = promoted?.name ?? ""
 
-        let headline = raced ? "Race done — recovery block first" : "Race week's behind you"
-        let detail = raced
-            ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy — the fitness you built gets locked in by the recovery, not the next hard run. Then we roll."
-            : "Your plan rolled into a fresh block. Whenever the next start line calls, set it and the season builds toward it."
+        let headline: String
+        let detail: String
+        if let promoted, let distance = promoted.distanceM {
+            let label = RaceDistance.nearest(toMeters: distance).label
+            let when = promoted.date.formatted(.dateTime.month(.abbreviated).day())
+            headline = raced ? "Race done. Recovery first, then your \(label)" : "On to your \(label)"
+            detail = raced
+                ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy so the fitness locks in. Then the block builds toward your \(label) on \(when)."
+                : "Your plan now builds toward your \(label) on \(when)."
+        } else {
+            headline = raced ? "Race done — recovery block first" : "Race week's behind you"
+            detail = raced
+                ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy — the fitness you built gets locked in by the recovery, not the next hard run. Then we roll."
+                : "Your plan rolled into a fresh block. Whenever the next start line calls, set it and the season builds toward it."
+        }
         CoachingEvent.record(kind: .recover, headline: headline, detail: detail,
                              on: today, in: context, calendar: calendar)
         try? context.save()

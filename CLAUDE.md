@@ -17,12 +17,14 @@ One-liner: **keep moving.**
 - **No-shame coaching.** Never a red "failed" state; missed sessions move with a one-line rationale.
 - **Deterministic plan engine, AI only narrates.** Loads/volumes/paces are rules-based and testable (§9). The LLM authors rationale text and bounded tweaks only — never computes raw numbers. No medical claims.
 - **SI units stored everywhere** (m, s, m/s, kg, bpm); convert only at display time.
+- **The released store shape is a contract.** `Persistence/SchemaVersions.swift` freezes each shipped schema; never add a property to a released `@Model` (it orphans every shipped store — `RunningSchemaMigrationSpikeTests` opens an archived build-36 store to prove it). New per-plan data goes in a scalar-keyed sidecar under a new `SchemaVN` with a lightweight stage (`PlanAthleteStateRecord` in V3 is the pattern).
+- **Tune-up races bend the week, never the block** (RUN-DEC-011): B/C events live on the season sidecars, are added in Plan Settings only, and `PlanEngine.bendWeek` reshapes their week after the governor; the macrocycle toward the goal race is untouched.
 
 ## Stack & architecture
 - SwiftUI + MVVM + Observation (`@Observable`); Swift Concurrency (`actor`s for engines, `@MainActor` for UI).
 - **SwiftData** local store → **Supabase** (Postgres/Auth/Storage/Edge Functions) sync, owner-only RLS on every table.
 - Two capture engines — `GPSTrackingEngine` (actor) and `StrengthSessionEngine` (actor) — feed one unified `Workout` model. Everything downstream is discipline-agnostic.
-- **The adaptive layer is ~20 pure, tested engines** in `Momentum/Engines/` (`PlanFeasibility`, `BaselineEstimator`, `ACWRGovernor`, `InjuryResponse`, `RecoveryAdaptation`, `HRZones`, `IntensityMix`, `FuelingGuide`, `RaceBriefing`, …) — every number deterministic and unit-testable; adaptation is bounded, throttled (one structural change/week), and explained in plain words.
+- **The adaptive layer is ~20 pure, tested engines** in `Momentum/Engines/` (`PlanFeasibility`, `BaselineEstimator`, `AthleteStateEngine` (threshold / personal Riegel exponent / durability from logged runs → `CalibrationSeed`, 2026-09-03), `ACWRGovernor`, `InjuryResponse`, `RecoveryAdaptation`, `HRZones`, `IntensityMix`, `FuelingGuide`, `RaceBriefing`, …) — every number deterministic and unit-testable; adaptation is bounded, throttled (one structural change/week), and explained in plain words.
 - AI via server-side Supabase **Edge Functions** (`workout-analysis`, `plan-generate`, `plan-narrate`), `ANTHROPIC_API_KEY` in env, strict-JSON responses, templated fallback so the post-workout moment never blocks.
 - Folder layout: see PRD §17. App / DesignSystem / Models / Persistence / Engines / Features/* / Services / Resources.
 

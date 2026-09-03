@@ -11,11 +11,30 @@ enum RaceBriefing {
 
     /// A briefing for `daysOut` (0 = race day, 1 = eve, 2–3 = final approach); nil outside the window.
     /// The fueling plan is sized from the *predicted* finish (Riegel off current fitness), in race mode.
-    static func build(distanceM: Double, p5kSPerKm: Double, daysOut: Int) -> Briefing? {
+    /// `tuneUp`: the race is a B/C event on the season, not the goal — the briefing says so, keeps
+    /// the fueling, and drops the taper talk (a tune-up week bends, the block does not taper).
+    static func build(distanceM: Double, p5kSPerKm: Double, daysOut: Int, tuneUp: Bool = false) -> Briefing? {
         guard (0...3).contains(daysOut), distanceM > 0, p5kSPerKm > 0 else { return nil }
         let label = RaceDistance.nearest(toMeters: distanceM).label
         let predicted = PlanFeasibility.predictedFinishS(distanceM: distanceM, p5kSPerKm: p5kSPerKm)
         let fuel = FuelingGuide.guidance(durationS: predicted, isRace: true)
+
+        if tuneUp {
+            switch daysOut {
+            case 0:
+                return Briefing(
+                    title: "Tune-up day: your \(label)",
+                    body: "An honest effort, not a peak. Start controlled and let the second half decide. \(fuel.during) Your paces recalibrate from the result.")
+            case 1:
+                return Briefing(
+                    title: "Tune-up tomorrow",
+                    body: "\(fuel.before) Easy today, nothing new tomorrow. This is a checkpoint on the way to the goal race, so run it and learn from it.")
+            default:
+                return Briefing(
+                    title: "\(daysOut) days to your tune-up \(label)",
+                    body: "The block keeps building; only this week bends. Easy running into it, then a real effort with a bib on.")
+            }
+        }
 
         switch daysOut {
         case 0:

@@ -51,6 +51,21 @@ struct CalibrationSeed: Sendable, Equatable {
     }
 }
 
+/// A race on the season that is NOT the goal: a tune-up the athlete races (B) or trains through (C).
+/// Read from the season's `RunningEventRecord`s by `PlanService`; the engine bends the week it
+/// falls in and leaves the macrocycle toward the goal race untouched.
+struct PlanRaceEvent: Sendable, Equatable, Hashable {
+    var id: UUID
+    var date: Date
+    var distanceM: Double
+    /// `.b` = race it (mini-taper in, short recovery out); `.c` = train through (a hard day with a
+    /// bib on). `.a` never appears here — the goal race is `PlanInputs.raceDate`.
+    var priority: RunningEventPriority
+    var goalTimeS: Double? = nil
+
+    var racesIt: Bool { priority == .b }
+}
+
 struct GeneratedExercise: Sendable, Equatable {
     var exerciseName: String
     var targetSets: Int

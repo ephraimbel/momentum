@@ -79,8 +79,18 @@ struct PlanEngineInvariantTests {
                 #expect(week.sessions.count <= min(7, inputs.daysPerWeek) + 1,
                         "\(label) w\(week.index): race week overfilled")
                 let raceDay = week.sessions[raceIdx].dayOffset
-                #expect(!week.sessions.contains { $0.runType != .race && $0.dayOffset >= raceDay },
-                        "\(label) w\(week.index): training scheduled on/after race day")
+                let isTuneUp = week.sessions[raceIdx].intervals?.hasPrefix("Tune-up") == true
+                if isTuneUp {
+                    // A tune-up bends its week: training may follow it, but never a hard day, and
+                    // the race is the week's only hard run (2026-09-03).
+                    #expect(!week.sessions.contains { $0.discipline == .running && $0.isHardRun && $0.runType != .race },
+                            "\(label) w\(week.index): a second hard run beside a tune-up")
+                    #expect(!week.sessions.contains { $0.runType != .race && $0.dayOffset == raceDay },
+                            "\(label) w\(week.index): a session shares the tune-up's day")
+                } else {
+                    #expect(!week.sessions.contains { $0.runType != .race && $0.dayOffset >= raceDay },
+                            "\(label) w\(week.index): training scheduled on/after race day")
+                }
             } else {
                 // Podium training weeks carry one extra OPTIONAL shakeout on a rest day (never on
                 // deload/taper/lead-in weeks) — the one sanctioned exception to the exact day budget.
@@ -98,7 +108,9 @@ struct PlanEngineInvariantTests {
                 if let prev = lastBuildVol, hasRunning, prev > 0 {
                     #expect(week.runVolumeM < prev, "\(label) w\(week.index): down week didn't dip")
                 }
-            } else if hasRunning {
+            } else if hasRunning, !week.sessions.contains(where: { $0.runType == .race }) {
+                // A race week is not the reference a cutback is measured against — the engine's
+                // own down-week passes skip it the same way.
                 lastBuildVol = week.runVolumeM
             }
 
@@ -254,6 +266,37 @@ struct PlanEngineInvariantTests {
                         assertInvariants(plan, inputs: inp,
                                          label: "state \(durability.map { "\($0)" } ?? "nil") T\(thresholdDelta ?? 0) race \(raceM.map { Int($0) } ?? 0) \(days)d")
                     }
+                }
+            }
+        }
+    }
+
+    @Test func tuneUpRacesHoldInvariantsAcrossTheRaceMatrix() {
+        // Every goal distance and runway that can hold a tune-up, with a B and a C dropped on
+        // arbitrary weeks (cutback collisions included) — every invariant still holds.
+        let catalog = catalogFixture()
+        let races: [(Double, Int)] = [(10_000, 10), (21_097, 12), (42_195, 16), (42_195, 30), (50_000, 20)]
+        for (raceM, weeksOut) in races {
+            for days in [3, 4, 5, 6] {
+                for exp in [ExperienceLevel.some, .experienced] {
+                    var inp = PlanInputs(disciplines: [.running], goal: .raceDistance,
+                                         daysPerWeek: days, equipment: .fullGym, sessionMinutes: 60,
+                                         raceDate: race(weeksOut: weeksOut),
+                                         runningExperience: exp, liftingExperience: .some)
+                    inp.raceDistanceM = raceM
+                    inp.currentWeeklyVolumeM = 40_000
+                    inp.longestRunM = 14_000
+                    let bWeek = weeksOut / 2, cWeek = max(2, weeksOut / 3)
+                    inp.tuneUpRaces = [
+                        PlanRaceEvent(id: UUID(), date: cal.date(byAdding: .day, value: bWeek * 7 + 6, to: start)!,
+                                      distanceM: raceM >= 40_000 ? 21_097 : 10_000, priority: .b),
+                        PlanRaceEvent(id: UUID(), date: cal.date(byAdding: .day, value: cWeek * 7 + 3, to: start)!,
+                                      distanceM: 5_000, priority: .c),
+                    ]
+                    let plan = PlanEngine.generate(profile: inp, catalog: catalog, startDate: start)
+                    assertInvariants(plan, inputs: inp, label: "tune-ups race \(Int(raceM))@\(weeksOut)wk \(exp) \(days)d")
+                    let tuneUps = plan.weeks.flatMap(\.sessions).filter { $0.intervals?.hasPrefix("Tune-up") == true }
+                    #expect(tuneUps.count == 2, "tune-ups race \(Int(raceM))@\(weeksOut)wk \(days)d: both tune-ups should land")
                 }
             }
         }

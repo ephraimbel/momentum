@@ -571,6 +571,7 @@ struct CoachCardView: View {
             }
         case .changeGoal: "target"
         case .changeRace: "flag.checkered"
+        case .addTuneUp: "flag"
         case .changeDays, .changeSessionLength: "calendar"
         case .moveSession: "arrow.left.arrow.right"
         case .skipSession: "xmark.circle"

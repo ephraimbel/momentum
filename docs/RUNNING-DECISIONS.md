@@ -148,6 +148,48 @@ pilot.
 - **Reversal:** named legal/product/advisory authority defines the exact claim; relevant policy passes
   expert review and prospective validation in that population; the claim is added to the allow-list.
 
+### RUN-DEC-010 — The athlete state feeds the planner, bounded
+
+- **Date/status:** 2026-09-03; active.
+- **Accountable roles:** owner (product); engineering.
+- **Decision:** `AthleteStateEngine` derives a threshold proxy, a personal Riegel exponent and a
+  durability read from Momentum-logged runs only (eight-week window, evidence envelopes with source,
+  sample count, confidence and limitations). The planner consumes them through `CalibrationSeed`:
+  the observed threshold anchors the steady family (slower than the curve wins, bounded +8 %; faster
+  is honoured to 2 %); the exponent shapes race predictions but never beats the raw oxygen-cost
+  curve; durability moves the long run's growth, never its caps. Every field is optional and an
+  empty seed generates exactly the one-number plan. The snapshot lives in the `PlanAthleteStateRecord`
+  sidecar (SchemaV3), never on `TrainingPlan`.
+- **Rationale:** two runners with the same 5K are not the same runner; §3 of ELITE-RUNNING-SYSTEM
+  names the reads, and the released store shape is a contract the archived-store test enforces.
+- **Alternative rejected:** a readiness/injury score; automatic pace easing from a slow steady run
+  (RUN-DEC-007 stands); fields on the released `TrainingPlan` class.
+- **Affected:** PlanEngine, DanielsPaces, PlanCoaching (threshold recalibration), the plan explainer.
+- **Reversal:** owner call; nil the seed fields in `PlanService.stageRegenerate` and the engine is
+  byte-identical to before.
+
+### RUN-DEC-011 — Tune-up races bend the week, never the block
+
+- **Date/status:** 2026-09-03; active.
+- **Accountable roles:** owner (product); engineering.
+- **Decision:** a season carries up to four tune-up races before the goal race, added in Plan
+  Settings (never onboarding). B = race it: two easy days in, the race in place of the week's
+  quality (and of the long run from 15 km), one/two/four easy days out by distance, the next long
+  run held to 75 % after a half or longer. C = train through: the race stands in for the quality
+  session and the next day is easy. A tune-up week is never a cutback and never carries a second
+  hard day; the synthetic time trial stands down. The macrocycle toward the goal race is untouched.
+  Rules: at least a week out, before the goal, a B keeps seven days from the goal and other Bs, a C
+  keeps three from anything. The day after, a tune-up settles without a rebuild; after the goal race
+  the next planned race (A or B) is promoted and the block rebuilds toward it after the recovery
+  lead-in.
+- **Rationale:** serious runners race on the way to the race; a coach bends a week for it and does
+  not rebuild the season.
+- **Alternative rejected:** tune-ups in onboarding (shifts the funnel under an A/B test); treating
+  a B like a C; resetting the goal after the A race when the season holds another.
+- **Affected:** PlanEngine.bendWeek, PlanConfigurationCommand, PlanService.settleRaces,
+  Plan Settings, the Plan page context line, RaceBriefing, the coach's addTuneUp card.
+- **Reversal:** owner call; an empty `tuneUpRaces` list is exactly the single-race engine.
+
 ## Pending decisions
 
 These remain blocked on named owners; the conservative default in the corresponding decision applies:

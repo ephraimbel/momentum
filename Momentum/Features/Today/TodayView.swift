@@ -495,7 +495,7 @@ struct TodayView: View {
         // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
         // These two stay SYNCHRONOUS: `refreshPendingToday` runs right after this and must see the
         // reconciled plan, or the deck's row shows a session that has already been moved.
-        if let p = profiles.first { PlanService.completeRace(for: p, today: Date(), in: context) }
+        if let p = profiles.first { PlanService.settleRaces(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Everything below is observational (notifications, widget snapshot, inbox posts, proactive
         // coach, cloud sync, Health signal refresh, recovery adaptation) — nothing on screen waits for it,
@@ -546,6 +546,20 @@ struct TodayView: View {
                                                  p5kSPerKm: plan?.p5kSPerKm ?? 0, daysOut: daysOut) {
                 AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
                                      in: context, dedupeToken: "race-briefing-\(daysOut)", daily: false)
+            }
+            // Tune-up races get the same three-day briefing in their own words (2026-09-03).
+            if let profile = profiles.first {
+                for event in PlanService.tuneUpRaces(for: profile, in: context) {
+                    guard let daysOut = Calendar.current.dateComponents(
+                        [.day], from: Calendar.current.startOfDay(for: Date()),
+                        to: Calendar.current.startOfDay(for: event.date)).day,
+                          let briefing = RaceBriefing.build(distanceM: event.distanceM,
+                                                            p5kSPerKm: plan?.p5kSPerKm ?? 0,
+                                                            daysOut: daysOut, tuneUp: true) else { continue }
+                    AppNotification.post(kind: .coaching, title: briefing.title, body: briefing.body,
+                                         in: context, dedupeToken: "tuneup-briefing-\(event.id.uuidString)-\(daysOut)",
+                                         daily: false)
+                }
             }
             // Back up any never-synced workouts to the cloud (no-op until Supabase is configured).
             Task { await services.sync.sync(workouts, in: context) }
