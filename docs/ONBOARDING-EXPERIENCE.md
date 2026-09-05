@@ -28,7 +28,7 @@ This supersedes the longer quiz / commitment-beat proposals in ONBOARDING-MOTION
    recommending intensity. Preserve the reminder and route iPhone previews, with system prompts
    resolved before generation. These pages demonstrate capabilities and change the visual rhythm.
 6. **Build and reveal: ownership.** Preserve the animated build and named plan arrival. Show the
-   training briefing, complete first week with every session open, volume curve, statistics, and
+   volume curve, training briefing, complete first week with every session open, statistics, and
    later weeks on one scrollable page. The membership CTA stays pinned; no extra details sheet.
    The curve animates when reached. A finite, multicolored paper burst marks the named arrival;
    Reduce Motion uses a short static crossfade.
@@ -146,7 +146,10 @@ Adding a country requires running `swift scripts/render_race_flags.swift` and pa
 ### Complete plan reveal — 2026-09-04
 
 - Replaced the compact first-session preview and Explore sheet with one scrollable reveal:
-  briefing, every first-week session open, training curve, statistics, personal inputs, and later weeks.
+  training curve, briefing, every first-week session open, statistics, personal inputs, and later weeks.
+- Chart placement updated 2026-09-05: directly below the plan headline and above the training
+  briefing. Its entrance waits for the opening title to clear and for the chart to be visible;
+  Reduce Motion shows the finished chart immediately.
 - Kept the membership CTA pinned. Session details have no expanding layout; sections enter once
   when reached. The chart now waits until visible, and interrupted arrival state settles on exit.
 - The reveal stays restrained: the named arrival, plan-ready seal, earned aurora, and scroll-led
