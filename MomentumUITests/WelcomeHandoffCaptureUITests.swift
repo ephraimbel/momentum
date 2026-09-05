@@ -62,4 +62,27 @@ final class WelcomeHandoffCaptureUITests: XCTestCase {
         if allow.waitForExistence(timeout: 2) { snap("alert"); allow.tap() }
         XCTAssertGreaterThan(frames, 6)
     }
+
+    /// The paywall tour's departure: "Try now" flares the deck's glass to white and checkout
+    /// dissolves in beneath (paywall re-cast 2026-09-05).
+    func testCaptureTourDeparture() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CAPTURE_HANDOFF"] == "1",
+                          "capture harness — opt in with TEST_RUNNER_CAPTURE_HANDOFF=1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--paywall-onboarding"]
+        app.launch()
+        let tryNow = app.buttons["Try now"]
+        XCTAssertTrue(tryNow.waitForExistence(timeout: 20))
+        Thread.sleep(forTimeInterval: 2.5)
+        let t0 = Date()
+        var frames = 0
+        func snap(_ tag: String) {
+            let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            a.name = String(format: "%@_%05.2f", tag, Date().timeIntervalSince(t0)); a.lifetime = .keepAlways; add(a); frames += 1
+        }
+        snap("tour")
+        tryNow.tap()
+        while Date().timeIntervalSince(t0) < 2.6 { snap("depart") }
+        XCTAssertGreaterThan(frames, 6)
+    }
 }

@@ -48,19 +48,11 @@ struct PaywallView: View {
             // opens straight onto the headline and spends the saved height on FEATURES, which is
             // what a paywall is actually selling. Everything here is sized to give the marquee
             // its rows back.
+            // The welcome's own type (paywall re-cast 2026-09-05): black Space Grotesk semibold,
+            // no gradient line, no glow behind it. Purple is spent on the chosen plan alone.
             headline(s)
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, 30 * s)
-                // The type sits IN light rather than on a flat field. The frame must be SQUARE and
-                // wider than `endRadius` on every side, or the gradient is still coloured when it
-                // meets the box and the "glow" renders as a hard-edged rectangle — which is
-                // exactly what a background sized to the text's own bounds did.
-                .background {
-                    RadialGradient(colors: [Theme.purple.opacity(0.07), Theme.purple.opacity(0.02), .clear],
-                                   center: .center, startRadius: 4, endRadius: 150)
-                        .frame(width: 340, height: 340)
-                        .allowsHitTesting(false)
-                }
                 .reveal(revealed, delay: 0.03, reduceMotion: reduceMotion)
 
             goalPromise
@@ -137,7 +129,7 @@ struct PaywallView: View {
             .padding(.horizontal, Theme.Space.md)
         } else {
             Text("A plan that adapts to you, every week.")
-                .font(.rounded(15, weight: .medium))
+                .font(.rounded(15, weight: .regular))
                 .foregroundStyle(Theme.inkSecondary)
         }
     }
@@ -146,33 +138,13 @@ struct PaywallView: View {
     /// Every stop stays in the saturated mid band: an earlier ramp ended on a pale sky stop, so
     /// "faster." washed out against white exactly where the line should land hardest.
     private func headline(_ s: CGFloat) -> some View {
-        // STATIC gradient (perf, 2026-08-28). The drifting ramp re-rastered the largest element
-        // on the page 12 times a second for the paywall's whole life and was, measured alone,
-        // ~8% of a core on the sim — for a 7s drift nobody noticed. The tiles are the show; the
-        // headline stands still. (Reduce Motion needs no branch any more for the same reason.)
-        headlineText(s, shift: 0)
+        Text(personalizedOutcome != nil ? "Your goal.\nBuilt into every week." : "Run smarter.\nRace faster.")
+            .font(.display(32 * s, weight: .semibold)).tracking(-0.4)
+            .foregroundStyle(Theme.ink)
             .multilineTextAlignment(.center)
-            .lineSpacing(-4)
+            .lineSpacing(-2)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityAddTraits(.isHeader)
-    }
-
-    /// Font and tracking are applied per RUN rather than to the composed view, so the result stays
-    /// a `Text` — the gradient beat needs its own `foregroundStyle`, which only runs can carry.
-    private func headlineText(_ s: CGFloat, shift: Double) -> Text {
-        let f: Font = .display(34 * s, weight: .bold)
-        let x: CGFloat = 0.28 * CGFloat(shift)
-        let g = LinearGradient(
-            // Lavender only (2026-09-05) — the sweep stays, the drift into blue is gone: purple is
-            // the paywall's one accent, and it should read as the brand's, not a rainbow.
-            colors: [Theme.purpleDeep, Theme.purple, Color(hex: "A896F6"), Theme.purple],
-            startPoint: UnitPoint(x: -0.35 + x, y: 0), endPoint: UnitPoint(x: 1.15 + x, y: 0.9))
-        if personalizedOutcome != nil {
-            return Text("Your goal.\n").font(f).tracking(-1.2).foregroundStyle(Theme.ink)
-                + Text("Built into every week.").font(f).tracking(-1.2).foregroundStyle(g)
-        }
-        return Text("Run smarter.\n").font(f).tracking(-1.2).foregroundStyle(Theme.ink)
-            + Text("Race faster.").font(f).tracking(-1.2).foregroundStyle(g)
     }
 
     // MARK: Plan cards — the yearly staged to win

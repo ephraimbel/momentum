@@ -33,6 +33,9 @@ struct OnboardingPaywallFlow: View {
     @State private var restoring = false
     @State private var nothingToRestore = false
     @State private var revealed = false
+    /// The departure from the tour: the deck's glass flares from its centre and the page whitens
+    /// beneath the arriving checkout — the welcome's own hand-off, not a slide (2026-09-05).
+    @State private var flare = 0.0
 
     private var offering: PaywallOffering { paywall.offering }
 
@@ -86,10 +89,12 @@ struct OnboardingPaywallFlow: View {
     // MARK: Navigation
 
     private var pageTransition: AnyTransition {
-        if reduceMotion { return .opacity }
+        // Forward is a dissolve (the tour has already flared to white beneath it); back keeps the
+        // slide so the athlete feels the tour return from the left.
+        if reduceMotion || !goingBack { return .opacity }
         return .asymmetric(
-            insertion: .move(edge: goingBack ? .leading : .trailing).combined(with: .opacity),
-            removal: .move(edge: goingBack ? .trailing : .leading).combined(with: .opacity))
+            insertion: .move(edge: .leading).combined(with: .opacity),
+            removal: .move(edge: .trailing).combined(with: .opacity))
     }
 
     // `Motion.travel` (the onboarding step spring, damping 0.86), not `Motion.lively`: lively's
@@ -153,21 +158,38 @@ struct OnboardingPaywallFlow: View {
             // The display sans, not the serif: the tour is the first page of the same flow as
             // onboarding and the paywall, and both set their headlines in Space Grotesk. One
             // heavy black line, tight tracking, and the deck below does the talking.
-            Text("Welcome to momentum.")
-                .font(.display(30 * s, weight: .bold)).tracking(-0.9 * s)
-                .foregroundStyle(Theme.ink)
-                .multilineTextAlignment(.center)
-                .lineLimit(1).minimumScaleFactor(0.85)
-                .fixedSize(horizontal: false, vertical: true)
+            // The welcome's heading, verbatim in type: Space Grotesk semibold in black over an
+            // Inter line. The tour is the welcome's next page, and it should read as one.
+            OnboardingHeading(title: "Welcome to momentum.",
+                              subtitle: "From your first 5K to your first marathon, in one app.",
+                              size: 30 * s, alignment: .center)
                 .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.05, reduceMotion: reduceMotion)
             Spacer(minLength: Theme.Space.lg)
-            PaywallShowcase(height: 500 * s)
+            PaywallShowcase(height: 500 * s, flare: reduceMotion ? 0 : flare)
                 .reveal(revealed, delay: 0.15, reduceMotion: reduceMotion)
             Spacer(minLength: Theme.Space.lg)
-            footer(cta: showcaseCTA, s: s) { advance() }
+            footer(cta: showcaseCTA, s: s) { depart() }
                 .padding(.horizontal, Theme.Space.xl)
                 .reveal(revealed, delay: 0.25, reduceMotion: reduceMotion)
+        }
+        // The page whitens as the glass flares, so checkout arrives on the welcome's own ground.
+        .overlay { Color.white.opacity(flare).ignoresSafeArea().allowsHitTesting(false) }
+    }
+
+    /// Tour → checkout: the deck's glass flares to white over 0.5 s, and checkout is swapped in
+    /// while the veil is still rising, so it dissolves in THROUGH the white rather than after it
+    /// (a later swap left a blank white beat between the two — captured 2026-09-05).
+    private func depart() {
+        guard flare == 0 else { return }
+        if reduceMotion { advance(); return }
+        withAnimation(.easeInOut(duration: 0.5)) { flare = 1 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.22))
+            goingBack = false
+            withAnimation(.easeInOut(duration: 0.45)) { step += 1 }
+            try? await Task.sleep(for: .seconds(0.6))
+            flare = 0
         }
     }
 

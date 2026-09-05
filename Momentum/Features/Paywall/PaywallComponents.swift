@@ -163,6 +163,8 @@ private struct AutoPlayTick: Equatable {
 struct PaywallShowcase: View {
     /// Device height in points; everything else scales off it.
     var height: CGFloat = 440
+    /// 0…1: the welcome's glass flaring from the deck's centre — the tour's departure.
+    var flare: Double = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The centered card, fed by `scrollPosition` — nil only before first layout.
     @State private var slide: Int? = nil
@@ -232,6 +234,7 @@ struct PaywallShowcase: View {
     /// half-off the edge.
     private var deck: some View {
         let h = height
+        let flare = flare   // a local for the `visualEffect` closure, which must not capture self
         let w = h * (300.0 / 640.0)
         // One card-to-card distance. The fan math normalizes by THIS, not the screen width, so a
         // card one slot out lands at exactly t = ±1 on every phone — the deck reads identically
@@ -257,6 +260,16 @@ struct PaywallShowcase: View {
                                 // 0 at dead center, ±1 by the time a card sits one slot out.
                                 let t = max(-1, min(1, (mid - container / 2) / slot))
                                 return content
+                                    // The welcome's bounded glass, one card at a time (paywall
+                                    // re-cast 2026-09-05): evaluated in deck space, so a card is
+                                    // pulled outward as it nears the screen's edge and the
+                                    // departure flare lights the centre — the same pane the
+                                    // photographs crossed. The whole deck cannot be rasterised
+                                    // (a UIScrollView sits under it), hence per card.
+                                    .layerEffect(ShaderLibrary.deckRefraction(
+                                                    .float2(proxy.size.width, proxy.size.height),
+                                                    .float(Float(t)), .float(flare)),
+                                                 maxSampleOffset: CGSize(width: 26, height: 10))
                                     // The fan: neighbors pivot around a point just below the
                                     // deck (like cards held in a hand), sink a touch, shrink,
                                     // and fade — the centered card alone stands full and bright.

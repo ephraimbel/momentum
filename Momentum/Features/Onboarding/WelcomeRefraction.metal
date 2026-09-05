@@ -36,3 +36,31 @@ using namespace metal;
     color = mix(color, half3(1.0), half(max(touchLight, edgeLight)));
     return half4(color, 1.0h);
 }
+
+// The same pane, one card at a time. The paywall's device deck cannot be rasterised whole (it is
+// a UIScrollView underneath), so each card is refracted on its own layer. The lens is keyed off
+// `t`, the card's signed distance from the deck's centre in slots (0 centred, ±1 one slot out —
+// the same number that tilts and sinks it), with only a local gradient inside the card, so the
+// centred device stays crisp and a neighbour is pulled outward, harder on its far edge. Alpha is
+// kept (the cards overlap in their fan), so nothing is composited to white here.
+[[ stitchable ]] half4 deckRefraction(float2 p, SwiftUI::Layer layer, float2 card, float t,
+                                      float contact) {
+    float2 uv = clamp(p / max(card, float2(1)), 0.0, 1.0);
+    float outward = sign(t) * (uv.x - 0.5) + 0.5;            // 0 on the inner edge, 1 on the outer
+    float side = smoothstep(0.30, 1.0, abs(t));
+    float pull = pow(side, 1.5) * (0.35 + 0.65 * outward);
+    // Softer than the welcome's pane (14 px, not 22; a 1.6 px split): a device is a hard-edged
+    // object and its rail carries the pull already — the photographs were soft discs.
+    float2 warp = float2(sign(t) * 14.0, 0.0) * pull;
+    float2 samplePoint = p - warp;
+    float2 split = float2(1.6, 0.5) * pull;
+    half4 r = layer.sample(samplePoint + split);
+    half4 g = layer.sample(samplePoint);
+    half4 b = layer.sample(samplePoint - split);
+    half4 color = half4(r.r, g.g, b.b, g.a);
+    float2 c = (uv - 0.5) / float2(0.55, 0.45);
+    float touchLight = exp(-dot(c, c) * 2.5) * contact * (1.0 - side) * 0.22;
+    float edgeLight = pow(max(0.0, 1.0 - abs(side - 0.70) / 0.22), 3.0) * 0.10 * outward;
+    half light = half(max(touchLight, edgeLight)) * color.a;
+    return half4(min(color.rgb + light, color.a), color.a);
+}

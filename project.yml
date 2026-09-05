@@ -12,7 +12,7 @@ settings:
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.7.5"      # 2026-09-05: welcome gallery + white onboarding + review beat + $99.99 yearly / 3-day trial ship as 1.7.5. Must match the ASC version record EXACTLY.
-    CURRENT_PROJECT_VERSION: "39"   # build 39 (v1.7.5): review page trimmed, notifications denied→Settings. Builds 1–38 consumed on ASC.
+    CURRENT_PROJECT_VERSION: "40"   # build 40 (v1.7.5): the paywall re-cast in the welcome's aesthetic. Builds 1–39 consumed on ASC.
     # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 SHIFTS 33's step order: a `units` beat was inserted after `disciplines`, so index 4 is UNITS and everything from there on moves up one (33: 24 = account; 34: 25 = account). The funnel view groups by build precisely so the two never average together, which is why this number had to move before upload. Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
