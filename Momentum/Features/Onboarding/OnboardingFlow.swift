@@ -8,10 +8,33 @@ import UIKit   // UIAccessibility.isReduceMotionEnabled in the building beat
 /// Continue, an anticipation "building" beat, a celebratory reveal) rendered in momentum's
 /// monochrome + earned-iridescence identity.
 struct OnboardingFlow: View {
-    /// Called when the flow ends and the app takes over. Onboarding no longer asks for a rating —
-    /// guideline 5.6.3 forbids the ask on first launch / during onboarding, so it moved to the
-    /// finished-workout moment (see `AppReview` + `WorkoutRunner`).
+    /// Called when the flow ends and the app takes over.
+    ///
+    /// Onboarding DOES carry a review ask again: the `.review` beat between the plan reveal and
+    /// checkout (owner call 2026-09-05, asked with the 2026-07 guideline-5.6.3 rejection spelled
+    /// out — do not revert it on the strength of an older comment or an older memory). What keeps
+    /// it out of the rejected shape is written on `OnboardingReviewView` and pinned by
+    /// `OnboardingReviewUITests`. The engagement-gated in-app cards are unchanged
+    /// (`AppReview` + `WorkoutRunner` + `FuelView`).
+    /// True only when raised from the welcome, mid-hand-off (`WelcomeGalleryView.Handoff`): the
+    /// cover then plays the tail of the welcome's exit itself — the landed icon holding, then its
+    /// burst (`WelcomeHandoffBurst`) — and the content surfaces beneath it a third of the way
+    /// into that burst. False through every other door.
+    var arrivingFromWelcome = false
     var onComplete: () -> Void
+    /// Seconds to stay invisible after presentation before the content is inserted and fades up.
+    private var revealDelay: Double { arrivingFromWelcome ? WelcomeGalleryView.Handoff.revealDelayS : 0 }
+
+    /// Through every door but the welcome the flow is fully present on its FIRST frame. The
+    /// flags start true when there is no arrival to stage: a first frame rendered at opacity 0
+    /// and then switched on was enough to break the paywall cover presented later from inside
+    /// this view (bisected 2026-09-05) — the hierarchy has to be born visible, not turned on.
+    init(arrivingFromWelcome: Bool = false, onComplete: @escaping () -> Void) {
+        self.arrivingFromWelcome = arrivingFromWelcome
+        self.onComplete = onComplete
+        _revealed = State(initialValue: !arrivingFromWelcome)
+        _burstSpent = State(initialValue: !arrivingFromWelcome)
+    }
 
     @Environment(\.modelContext) private var context
     @ReducedMotionPreference private var reduceMotion
@@ -20,6 +43,9 @@ struct OnboardingFlow: View {
     @Environment(AuthController.self) private var auth
     @Environment(PaywallController.self) private var paywall
     @Environment(\.scenePhase) private var scenePhase
+    /// The native App Store sheet, raised by the review beat after the reveal (owner call
+    /// 2026-09-05). Held here so the page stays a plain previewable view.
+    @Environment(\.requestReview) private var requestReview
     /// The athlete left the location primer. Anything the beat scheduled can't key off `vm.step`
     /// alone — without this latch a fast Continue can put the system prompt on top of plan building.
     @State private var leftPrimers = false
@@ -57,10 +83,25 @@ struct OnboardingFlow: View {
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
     @State private var completedOnce = false         // the completion hand-off ran — never twice
     @State private var lastLoggedStep: OnboardingViewModel.Step? // `.onChange` cannot see screen one
+    /// The arrival out of the welcome: the whole flow fades up from the white it was handed.
+    /// The welcome's burst has finished playing on this cover and its landing layer is gone.
+    @State private var burstSpent = false
+    /// Content is inserted only at the reveal, so its entrance cascades play when they can be seen.
+    @State private var revealed = false
 
     var body: some View {
         ZStack {
+            // The arrival out of the welcome fades each layer INSIDE the hierarchy — canvas,
+            // content, continue bar — and never the root chain: an animated `.opacity` on the
+            // root silently broke the paywall cover presented from `finishOnboarding` (a nested
+            // cover raised from beneath a compositing modifier never appeared; bisected 2026-09-05).
+            // The canvas is there from the FIRST frame, through every door: the cover keeps the
+            // system presentation backdrop (a custom one, even opaque white, swallowed taps on
+            // content still at opacity 0 — the reveal's CTA in its overture; 2026-09-05), and
+            // that backdrop follows the device appearance, so the canvas is what keeps a dark
+            // device from flashing charcoal under the light flow.
             OnboardingCanvas()
+            if revealed { Group {
             if vm.step == .building {
                 // A calm, centered loader — renders full-bleed so it escapes the flow's padding.
                 // `buildPlan` paces it (and slots the real generation behind the "Finalizing" line).
@@ -70,7 +111,9 @@ struct OnboardingFlow: View {
             } else if vm.step == .reveal {
                 // Full-bleed too: the reveal's scroll runs under the status bar (its aurora crown
                 // and a top scrim live there), so it escapes the question column's padding.
-                PlanRevealView(vm: vm, profile: profile) { finishOnboarding() }
+                // The reveal hands FORWARD, like any other step: one beat stands between it and
+                // checkout now (`.review`), which is what then calls `finishOnboarding`.
+                PlanRevealView(vm: vm, profile: profile) { goNext() }
                     .transition(.opacity)
             } else {
                 VStack(spacing: 12) {
@@ -86,12 +129,34 @@ struct OnboardingFlow: View {
                 .padding(.horizontal, Theme.Space.lg)
                 .padding(.top, Theme.Space.sm)
             }
+            }
+            // Inserted with a TRANSITION rather than driven by a persistent `.opacity`: a
+            // state-driven opacity anywhere in this tree left the reveal's continue button deaf
+            // to taps and the paywall cover never presented (bisected 2026-09-05). A transition
+            // animates the same fade and leaves no modifier behind once it lands.
+            // Opacity ONLY. A transition carrying `.offset` — even one that never plays, on a
+            // deep-linked reveal — left the reveal's ScrollView un-hittable under motion
+            // (`OnboardingNoRatingUITests`, 2026-09-05); the Reduce Motion path, which had no
+            // offset, was fine. The 12 pt rise is not worth a dead page.
+            .transition(.opacity)
+            }
         }
         .safeAreaInset(edge: .bottom) {
-            if isQuestion { continueBar }
+            if revealed, isQuestion { continueBar.transition(.opacity) }
+        }
+        // The welcome's burst, finished HERE (`WelcomeGalleryView.Handoff`): the landed icon on
+        // its glow, centred where the welcome left it, then the burst over the arriving question.
+        // Applied after the inset so its centre is the full safe area's — the continue bar
+        // arriving mid-burst must not shift it. A conditional that empties, never a persistent
+        // compositing modifier on this chain (see the note in `body`).
+        .overlay {
+            if !burstSpent {
+                WelcomeHandoffBurst(onReveal: { revealNow() }, onSpent: { burstSpent = true })
+            }
         }
         .animation(jumpCut ? nil : (reduceMotion ? Motion.crossfade : OnboardingStyle.pageTransition), value: vm.step)
         .onAppear {
+            reveal()
             // A returning athlete who came in through "I already have an account" shouldn't retype
             // what they just told us — prefill the name. The guest-first path (2026-07-27) has no
             // identity yet, so this is quietly a no-op there and the name step opens clean; the
@@ -189,6 +254,9 @@ struct OnboardingFlow: View {
             }
             // Full-coverage step jumps so every screen is screenshot-verifiable (sim can't tap).
             if args.contains("--onboarding-account") { vm.step = .account }
+            // The review beat. The native sheet is a system surface the sim renders unreliably
+            // (StoreKit rate-limits it), so this verifies the PAGE; check the sheet on device.
+            if args.contains("--onboarding-review") { vm.name = "Maya"; vm.step = .review }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-units") { vm.name = "Maya"; vm.activities = [.run]; vm.step = .units }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
@@ -254,8 +322,8 @@ struct OnboardingFlow: View {
                     .accessibilityHidden(!vm.canGoBack)
                 Spacer(minLength: Theme.Space.xs)
                 Text(vm.chapterTitle)
-                    .font(.rounded(10, weight: .semibold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkSecondary)
+                    .font(.rounded(10, weight: .semibold)).tracking(1.4)
+                    .foregroundStyle(Theme.purple)
                     .contentTransition(.opacity)
                     .animation(Motion.crossfade, value: vm.chapterTitle)
                 Spacer(minLength: Theme.Space.xs)
@@ -267,7 +335,7 @@ struct OnboardingFlow: View {
                 } label: {
                     Text(distanceUnitLabel)
                         .font(.rounded(13, weight: .semibold))
-                        .foregroundStyle(Theme.purple)
+                        .foregroundStyle(Theme.ink)
                         .frame(width: 46, height: 46)
                 }
                 .accessibilityLabel("Distance units, \(distanceUnitLabel)")
@@ -279,7 +347,9 @@ struct OnboardingFlow: View {
             Capsule().fill(Theme.hairline)
                 .overlay(alignment: .leading) {
                     Capsule()
-                        .fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
+                        // Plain brand purple (owner call 2026-09-05): progress is "happening now",
+                        // which is exactly what lavender means app-wide. No gradient on the line.
+                        .fill(Theme.purple)
                         .scaleEffect(x: vm.progress, y: 1, anchor: .leading)
                         .animation(reduceMotion ? nil : OnboardingStyle.progress, value: vm.progress)
                 }
@@ -287,7 +357,8 @@ struct OnboardingFlow: View {
                 .overlay {
                     GeometryReader { geometry in
                         Circle().fill(Theme.purple)
-                            .frame(width: 7, height: 7)
+                            .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+                            .frame(width: 9, height: 9)
                             .offset(x: max(0, min(geometry.size.width - 7,
                                                 geometry.size.width * vm.progress - 3.5)), y: -2)
                             .animation(reduceMotion ? nil : OnboardingStyle.progress, value: vm.progress)
@@ -326,6 +397,14 @@ struct OnboardingFlow: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         vm.advance()
     }
+    /// The flow moving ITSELF — the build handing to the reveal. It must not arm the double-tap
+    /// guard: under Reduce Motion the reveal's CTA is live on its first frame, and once the
+    /// reveal handed forward through `goNext` (the review beat, 2026-09-05) a tap inside the
+    /// 0.45 s window after arrival was silently dropped. The guard is for a finger, not a timer.
+    private func advanceAutomatically() {
+        goingBack = false
+        vm.advance()
+    }
     private func goBack() {
         guard Date().timeIntervalSince(lastStepChangeAt) > 0.45 else { return }
         lastStepChangeAt = Date()
@@ -351,6 +430,11 @@ struct OnboardingFlow: View {
     /// starts (perf audit 2026-08-13). The arguments scan is cached for the same reason.
     private static let deepLinkDriven =
         ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--onboarding-") })
+    /// `--review-no-ask`: hold the review beat's native sheet so a UI test can read the page
+    /// underneath it (a system surface answers no queries and covers every one of ours). Read once
+    /// — the router would otherwise scan the argument list on every body pass.
+    static let reviewAskSuppressed =
+        ProcessInfo.processInfo.arguments.contains("--review-no-ask")
     private func saveDraftIfEnabled() {
         guard !Self.deepLinkDriven else { return }
         let draft = vm.draft()
@@ -384,10 +468,11 @@ struct OnboardingFlow: View {
         case .health: healthStep
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
-        case .reveal: PlanRevealView(vm: vm, profile: profile) {
-            // Keep the athlete's own plan in view all the way into checkout.
-            finishOnboarding()
-        }
+        case .reveal: EmptyView()      // rendered full-bleed in `body`, like `.building`
+        // Keeps the athlete's own plan in view all the way into checkout, with one beat between:
+        // the ask, which raises the native sheet on arrival and then hands on to the paywall.
+        case .review: OnboardingReviewView(ask: { requestReview() },
+                                           raisesAsk: !Self.reviewAskSuppressed) { finishOnboarding() }
         case .notifications: notificationsStep
         case .primers: primersStep
         case .account: accountStep
@@ -790,9 +875,9 @@ struct OnboardingFlow: View {
                     } label: {
                         Text(area.label)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .foregroundStyle(on ? .white : Theme.ink)
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 48)
-                            .background(Capsule().fill(on ? Theme.purple : (colorScheme == .dark ? Theme.surface : .white)))
+                            .background(Capsule().fill(on ? Theme.ink : (colorScheme == .dark ? Theme.surface : .white)))
                             .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 0.5))
                             .animation(Motion.crossfade, value: on)
                             .contentShape(Capsule())
@@ -847,7 +932,7 @@ struct OnboardingFlow: View {
             HealthTile()
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Train around your recovery",
-                              subtitle: "Share Apple Health signals to help your plan respond to recovery. Tracking starts when you connect. You choose what to share; workout history is never imported.")
+                              subtitle: "Share Apple Health signals to help your plan respond to recovery. Tracking starts when you connect. You choose what to share; workout history is never imported.", alignment: .center)
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)
@@ -909,7 +994,7 @@ struct OnboardingFlow: View {
                             .font(.rounded(13, weight: .regular)).foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Text("View training assessment").font(.rounded(12, weight: .medium)).foregroundStyle(Theme.purple)
+                    Text("View training assessment").font(.rounded(12, weight: .medium)).foregroundStyle(Theme.ink)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).padding(16).onboardingCard()
             }
@@ -920,7 +1005,10 @@ struct OnboardingFlow: View {
             .onboardingEntrance(cascade(0))
             ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
                 ChoiceCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
-                              isSelected: vm.intensity == tier) {
+                              isSelected: vm.intensity == tier,
+                              // Podium wears the earned iridescent ring here exactly as it does in
+                              // Plan Settings — the one sanctioned exception to earned-only.
+                              iridescent: tier == .podium) {
                     pick {
                         vm.intensity = tier
                         // Podium's structure needs the week to hold it — lift the day count to the
@@ -979,7 +1067,7 @@ struct OnboardingFlow: View {
                     ForEach(f.options, id: \.self) { opt in
                         HStack(alignment: .top, spacing: 8) {
                             Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(Theme.purple).padding(.top, 2)
+                                .foregroundStyle(Theme.ink).padding(.top, 2)
                             Text(opt).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -1019,8 +1107,8 @@ struct OnboardingFlow: View {
                         Text(b.label).font(.rounded(Theme.FontSize.label, weight: .bold))
                             .lineLimit(1).minimumScaleFactor(0.9)
                             .frame(maxWidth: .infinity).frame(height: 40)
-                            .foregroundStyle(on ? .white : Theme.ink)
-                            .background { if on { Capsule().fill(Theme.purple) } }
+                            .foregroundStyle(on ? Theme.background : Theme.ink)
+                            .background { if on { Capsule().fill(Theme.ink) } }
                             .modifier(ChipRaise(on: on))
                     }
                     .buttonStyle(.plain)
@@ -1449,9 +1537,9 @@ struct OnboardingFlow: View {
                     Text(option)
                         .font(.rounded(10, weight: .bold))
                         .lineLimit(1).fixedSize()
-                        .foregroundStyle(on ? .white : Theme.inkTertiary)
+                        .foregroundStyle(on ? Theme.background : Theme.inkTertiary)
                         .padding(.horizontal, 7).padding(.vertical, 4)
-                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.purple) : AnyShapeStyle(.clear)))
+                        .background(Capsule().fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(.clear)))
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -1557,7 +1645,7 @@ struct OnboardingFlow: View {
             GlowGlyph(systemName: "bell.fill", tint: Theme.iridescent[1])
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "A nudge before each run",
-                              subtitle: "One reminder ahead of every planned session, and a heads-up when your week adapts. Nothing else.")
+                              subtitle: "One reminder ahead of every planned session, and a heads-up when your week adapts. Nothing else.", alignment: .center)
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)
@@ -1633,7 +1721,9 @@ struct OnboardingFlow: View {
             .init(color: Color(red: 0.12, green: 0.11, blue: 0.10), location: 0.0),
             .init(color: Color(red: 0.24, green: 0.23, blue: 0.22), location: 0.30),
             .init(color: Color(red: 0.52, green: 0.51, blue: 0.50), location: 0.62),
-            .init(color: Color(hex: "F5F5F7"), location: 1.0),
+            // Ends on the canvas itself (white since the 2026-09-05 palette pass; it was the old
+            // F5F5F7 grey), so the phone dissolves into the page with no tinted seam.
+            .init(color: .white, location: 1.0),
         ], startPoint: .top, endPoint: .bottom)
         return DeviceFrame {
             Rectangle().fill(wallpaper)
@@ -1703,7 +1793,7 @@ struct OnboardingFlow: View {
             GlowGlyph(systemName: "location.north.fill", tint: Theme.iridescent[0])
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Map your runs",
-                              subtitle: "Your location traces every route and opens the map right where you are. Only while you're recording.")
+                              subtitle: "Your location traces every route and opens the map right where you are. Only while you're recording.", alignment: .center)
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)
@@ -1831,6 +1921,28 @@ struct OnboardingFlow: View {
     // MARK: Scaffolding
 
     @ViewBuilder
+    /// Insert the content and fade the flow up after the welcome's cue — or, through every
+    /// other door, arrive at once.
+    ///
+    /// The fade is reserved for the hand-off from the welcome, where it plays under the burst and
+    /// nothing is tappable yet. Everywhere else the content must be hittable the instant it exists:
+    /// UIKit delivers no touches to a layer whose alpha is near zero, so a fade-from-nothing on a
+    /// deep-linked reveal swallowed the tap on its own continue button (bisected 2026-09-05).
+    private func reveal() {
+        guard !revealed else { return }
+        // Arriving from the welcome under motion, the burst's own frames call `revealNow` and
+        // then clear `burstSpent` (`WelcomeHandoffBurst`) — never a timer of this view's own.
+        guard reduceMotion || revealDelay <= 0 else { return }
+        revealed = true
+        burstSpent = true
+    }
+
+    /// The first question surfaces beneath the burst.
+    private func revealNow() {
+        guard !revealed else { return }
+        withAnimation(.easeOut(duration: 0.6)) { revealed = true }
+    }
+
     private func questionScaffold<C: View>(_ title: String, subtitle: String? = nil,
                                            @ViewBuilder _ content: () -> C) -> some View {
         // Primary questions fit a compact phone at standard text size. Retain overflow scrolling
@@ -1904,7 +2016,7 @@ struct OnboardingFlow: View {
             generate()
             buildCompleted = n; buildRing = 1
             guard await wait(0.5) else { return }
-            goNext(); return
+            advanceAutomatically(); return
         }
 
         let tick = 0.5
@@ -1924,12 +2036,12 @@ struct OnboardingFlow: View {
         Haptics.success()
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.4)) { buildCompleted = n; buildRing = 1 }
         guard await wait(0.85) else { return }
-        goNext()
+        advanceAutomatically()
     }
 }
 
 
-/// Injury chips: raised white at rest; the lavender fill when on carries its own weight.
+/// Chips (benchmarks): raised white at rest; the ink fill when on carries its own weight.
 private struct ChipRaise: ViewModifier {
     let on: Bool
     func body(content: Content) -> some View {

@@ -182,6 +182,10 @@ struct OnboardingFlowTests {
         #expect(try idx(.notifications) < idx(.primers))     // reminders → location
         #expect(try idx(.primers) < idx(.building))          // permissions settle before generation
         #expect(try idx(.building) < idx(.reveal))           // anticipation → personalized payoff
+        // The review beat sits BETWEEN the payoff and checkout (2026-09-05) — never before the
+        // plan exists, and never as the last thing standing between the athlete and the app.
+        #expect(try idx(.reveal) < idx(.review))             // payoff → the ask
+        #expect(try idx(.review) < idx(.account))            // the ask → checkout + account
         #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
         #expect(steps.contains(.session))                    // …but session length is everyone's
 
@@ -219,20 +223,21 @@ struct OnboardingFlowTests {
         #expect(easy.recommended == .gentle)
     }
 
-    /// There is NO rating beat in onboarding (removed 2026-08-22). It shipped from 2026-07-26 as the
-    /// last screen before the checkout, which is both an App Review 5.6.3 risk this app was already
-    /// rejected under and the worst seat in the funnel — spending the athlete's patience immediately
-    /// before asking for money. The only rating ask left is the engagement-gated one after a first
-    /// saved workout. The permission beats
-    /// precede plan generation; reveal then raises showcase + checkout and advances to account.
-    @Test func onboardingHasNoRatingBeat() {
-        let all = OnboardingViewModel.Step.allCases
-        #expect(!all.contains { "\($0)".localizedCaseInsensitiveContains("rate") },
-                "no rating step may exist in the onboarding flow")
+    /// Where the review beat may sit (owner call 2026-09-05, reversing the 2026-08-22 removal).
+    ///
+    /// A rating ask shipped from 2026-07-26 as the last screen before checkout and this app was
+    /// rejected under App Review 5.6.3 with it in place. It is back, but only in one position: it
+    /// follows the reveal, so the plan exists before anything is asked for, and it precedes the
+    /// paywall + account beats, so it is never the last thing between the athlete and the app.
+    /// `OnboardingReviewUITests` pins the page's own shape; this pins its seat in the flow.
+    @Test func theReviewBeatSitsBetweenTheRevealAndCheckout() {
         let steps = OnboardingViewModel().steps
         #expect(steps.firstIndex(of: .primers)! < steps.firstIndex(of: .building)!)
-        #expect(steps.firstIndex(of: .account)! == steps.firstIndex(of: .reveal)! + 1,
-                "the reveal raises showcase + checkout, which advances to account")
+        #expect(steps.firstIndex(of: .review)! == steps.firstIndex(of: .reveal)! + 1,
+                "the ask follows the plan and nothing comes between them")
+        #expect(steps.firstIndex(of: .account)! == steps.firstIndex(of: .review)! + 1,
+                "the review beat raises checkout, which advances to account")
+        #expect(steps.last == .account, "the ask is never the last beat")
     }
 
     /// The account beat is the LAST step, AFTER the paywall (owner call 2026-07-27 — the sign-in
@@ -243,16 +248,20 @@ struct OnboardingFlowTests {
         let vm = OnboardingViewModel()
         let all = vm.steps
         #expect(all.last == .account, "account must be the last step — nothing follows it")
-        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .reveal)! + 1,
-                "the showcase/paywall is raised from reveal, then advances to account")
+        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .review)! + 1,
+                "the paywall is raised from the review beat, then advances to account")
 
         vm.step = .account
         #expect(!vm.isQuestionStep, "no header, no Continue bar, no progress notch")
         #expect(vm.progress == 1, "every question is long since answered")
 
-        // `advance()` from the reveal lands here — that is how the paywall's onDismiss reaches
-        // it (`goToAccountBeat` → `goNext`), since the wall never changed the step underneath it.
+        // `advance()` from the REVIEW beat lands here — that is how the paywall's onDismiss
+        // reaches it (`goToAccountBeat` → `goNext`), since the wall never changed the step
+        // underneath it. The wall is now raised one beat later than it used to be (the review
+        // page's Continue calls `finishOnboarding`), so this is the step it returns to.
         vm.step = .reveal
+        vm.advance()
+        #expect(vm.step == .review)
         vm.advance()
         #expect(vm.step == .account)
         // And it is a genuine terminus: advancing off the end must not wrap or stall elsewhere.

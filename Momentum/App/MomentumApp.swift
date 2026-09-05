@@ -175,8 +175,10 @@ struct MomentumApp: App {
             // preference writer at all (so no invalidation loop), and the window override is what
             // UIKit itself honors — status bar, sheets, and covers all follow.
             root.background {
-                AppearanceApplicator(style: AppAppearance(rawValue: appearanceRaw)?.interfaceStyle
-                                            ?? .unspecified)
+                // The white welcome needs dark system chrome. Resume the athlete's saved
+                // appearance as soon as they leave the entry gate; onboarding stays unchanged.
+                AppearanceApplicator(style: !auth.isSignedIn ? .light
+                    : (AppAppearance(rawValue: appearanceRaw)?.interfaceStyle ?? .unspecified))
                     .frame(width: 0, height: 0)
                     .allowsHitTesting(false)
             }

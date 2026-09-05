@@ -46,7 +46,7 @@ struct SignInView: View {
 
     var body: some View {
         ZStack {
-            if !presentedAsSheet { welcome }
+            if !presentedAsSheet { entryWelcome }
             if showingSignIn {
                 AccountOptionsView(presentation: presentedAsSheet ? .sheet : .gate,
                                    hasLocalProfile: hasLocalProfile,
@@ -60,6 +60,27 @@ struct SignInView: View {
     }
 
     // MARK: Beat 1 — the welcome (brand film → personal setup)
+
+    private var entryWelcome: some View {
+        WelcomeGalleryView(primaryTitle: primaryTitle, onStart: {
+            services.analytics.log(.welcomeAction(action: hasLocalProfile ? "resume" : "get_started"))
+            if hasLocalProfile { auth.continueAsGuest(celebrate: false) }
+            else { auth.beginFreshLocalSession() }
+        }, onSignIn: {
+            Haptics.light()
+            services.analytics.log(.welcomeAction(action: "have_account"))
+            showingSignIn = true
+        }, isActive: !showingSignIn)
+        .allowsHitTesting(!showingSignIn)
+        .accessibilityHidden(showingSignIn)
+        .onAppear {
+            if hasLocalProfile, !AuthController.wasExplicitlySignedOut,
+               !ProcessInfo.processInfo.arguments.contains("--reset-auth") {
+                services.analytics.log(.welcomeAction(action: "auto_resume"))
+                auth.continueAsGuest(celebrate: false)
+            }
+        }
+    }
 
     /// Named after the profile when there is one, so a second person on a hand-me-down phone can
     /// see whose data they'd be picking up — and "I already have an account" is right underneath.
@@ -378,7 +399,7 @@ struct AccountOptionsView: View {
                         .shadow(color: Theme.iridescent[0].opacity(0.6), radius: 26, y: 10)
                         .padding(.top, isBeat ? Theme.Space.sm : Theme.Space.xxl + Theme.Space.md)
 
-                    OnboardingHeading(title: title, subtitle: subtitle)
+                    OnboardingHeading(title: title, subtitle: subtitle, size: 30, alignment: .center)
                         .contentTransition(.opacity)
                         .padding(.top, Theme.Space.lg)
 
@@ -477,9 +498,8 @@ struct AccountOptionsView: View {
                             } label: {
                                 Text(isCreatingAccount ? "Have an account? Sign in" : "New here? Create an account")
                                     .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                    // Lavender = "tappable", the app-wide rule. These read as two
-                                    // more labels in ink; as links they have to look like links.
-                                    .foregroundStyle(Theme.purple)
+                                    // The account palette follows the welcome; keep the existing link treatment.
+                                    .foregroundStyle(Theme.ink)
                             }
                             .buttonStyle(.plain)
                             Spacer(minLength: 0)
@@ -496,7 +516,7 @@ struct AccountOptionsView: View {
                                     } else {
                                         Text("Forgot password?")
                                             .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                                            .foregroundStyle(Theme.purple)
+                                            .foregroundStyle(Theme.ink)
                                     }
                                 }
                                 .buttonStyle(.plain)

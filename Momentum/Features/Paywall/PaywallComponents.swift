@@ -14,14 +14,12 @@ import UserNotifications
 /// rises from the very bottom so the canvas has depth behind the CTA. `IridescentView` freezes
 /// itself under Reduce Motion; the bloom is otherwise motion-free (opacity-static, no wander).
 struct PaywallBackground: View {
-    /// The shared `AiryField`, over the paywall's own brighter-than-canvas white. The wall is a
-    /// bright moment regardless of appearance, so it does not take `Theme.background`.
+    /// Pure white, like the welcome and every setup screen before it (owner call 2026-09-05:
+    /// the paywall wears the welcome's aesthetic — black and white, purple as the one accent).
+    /// The lavender/sky/rose `AiryField` wash that sat here is gone; the wall is a bright moment
+    /// regardless of appearance, so it does not take `Theme.background`.
     var body: some View {
-        ZStack {
-            Color(hex: "FAFAFC")
-            AiryField()
-        }
-        .ignoresSafeArea()
+        Color.white.ignoresSafeArea()
     }
 }
 

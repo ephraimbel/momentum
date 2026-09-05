@@ -18,12 +18,12 @@ The products live in ONE subscription group (`22239084 "momentum pro"`) and must
 | Product ID | Duration | Price | Intro offer | Sold? |
 |---|---|---|---|---|
 | `momentum_pro_weekly` | 1 week  | $5.99  | — | yes — the entry plan |
-| `momentum_pro_annual` | 1 year  | **$29.99** | **7 days free** | yes — $0.58/wk; eligible badge "7 DAYS FREE" |
+| `momentum_pro_annual` | 1 year  | **$99.99** | **3 days free** | yes — $1.92/wk, badge "SAVE 70%"; eligible badge "3 DAYS FREE" |
 | `momentum_pro_monthly`| 1 month | $9.99  | — | **no** — retired from the offering 2026-08-28 |
 
 The monthly stays live but unsold: removing a product never cancels or re-prices an existing
 subscriber, and keeping it is what lets the remaining monthly subs renew. The annual carries a
-seven-day introductory free trial (restored 2026-09-01 for the onboarding hard-wall test); weekly
+three-day introductory free trial (restored 2026-09-01 at seven days, cut to three 2026-09-05); weekly
 and retired monthly charge immediately. The app reads StoreKit's offer, so only eligible customers
 see trial copy and ineligible customers see the ordinary annual purchase terms.
 
@@ -31,6 +31,20 @@ see trial copy and ineligible customers see the ordinary annual purchase terms.
 "preserve price" option only exists for increases. The 2026-08-28 cut from $64.99 to $29.99
 therefore re-prices every current annual subscriber, including the $59.99 cohort preserved
 earlier that month.
+
+**2026-09-05 — annual RAISED $29.99 → $99.99 (owner call).** Scheduled via the API (`POST /v1/subscriptionPrices`
+with `preserveCurrentPrice: true`, start 2026-09-06, the earliest date accepted) for the USA point
+(`customerPrice 99.99`, proceeds $70.00 first-year) plus its 174 equalizations — 175 rows verified, 175 existing
+rows preserved, so every current subscriber keeps what they pay today and only new subscriptions bill $99.99.
+Nothing changes in RevenueCat (prices come from StoreKit by product id). In the app the yearly card leads with
+**$1.92 / wk**, carries "$99.99 billed yearly", and its badge derives to **SAVE 70%** (67.9% real, nearest-5 rule).
+
+**2026-09-05 — annual trial CUT 7 → 3 days (owner call, same day).** Intro offers cannot be edited: all 175
+`ONE_WEEK` FREE_TRIAL offers were DELETEd and 175 `THREE_DAYS` FREE_TRIAL offers POSTed (`/v1/subscriptionIntroductoryOffers`,
+relationships subscription + territory, no price point for a free trial), effective 2026-09-05, verified 175/175.
+Athletes already inside a 7-day trial keep it. The app derives every trial string from the store's intro offer
+(`trialDays(of:)` converts `.day` units directly), the placeholder is `trialDays: 3`, and the "ends in 2 days" reminder
+still fires (on day 1) because `scheduleTrialReminder` only skips trials of 2 days or fewer.
 
 These IDs must match `PaywallOffering.standard` in `PaywallController.swift`.
 
@@ -64,7 +78,7 @@ xcodebuild -scheme Momentum -destination 'generic/platform=iOS' build
 load live localized prices into the paywall, and keep `isPro` in sync via `customerInfoStream`.
 
 ## 5. Verify on device (Gate 3)
-- Fresh sandbox account → annual shows **7 days free** with real localized renewal terms; weekly has no trial.
+- Fresh sandbox account → annual shows **3 days free** with real localized renewal terms; weekly has no trial.
 - Purchase → entitlement flips; gated surfaces unlock; **Restore** works on a fresh install.
 - **Settings → Manage subscription** opens the App Store sheet (cancel in ≤2 taps).
 - Superwall A/B: confirm each placement shows its remote paywall; the native `PaywallView` remains

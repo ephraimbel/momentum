@@ -87,27 +87,27 @@ struct PaywallTests {
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func sevenDayTrialIsAnnualOnly() {
+    @Test func threeDayTrialIsAnnualOnly() {
         let offering = PaywallOffering.standard
         // Owner call 2026-09-01: annual earns a full week to experience adaptation; weekly is
         // already the low-commitment entry plan and charges immediately.
-        #expect(offering.annual.trialDays == 7)
+        #expect(offering.annual.trialDays == 3)
         #expect(offering.weekly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 90)   // 90.37% ($29.99 vs 52 × $5.99), rounded to nearest 5%
+        #expect(offering.annualSavingsPercent == 70)   // 67.9% ($99.99 vs 52 × $5.99), rounded to nearest 5%
     }
 
-    /// Weekly-anchored pricing (owner call 2026-08-28, yearly cut to $29.99 for conversion): a
+    /// Weekly-anchored pricing (owner call 2026-08-28, yearly at $99.99 since 2026-09-05): a
     /// $5.99 week is the entry plan and the yearly sits 90% under its run-rate, sold at its own
     /// weekly number ($0.58/wk). The pair must stay derivable from the two constants — a hand-written
     /// badge or per-week string is how these fall out of step with what the store charges.
     @Test func pricingIsTheWeeklyAnchoredPair() {
         let offering = PaywallOffering.standard
         #expect(offering.weekly.priceText == "$5.99")
-        #expect(offering.annual.priceText == "$29.99")
+        #expect(offering.annual.priceText == "$99.99")
         #expect(offering.weekly.period == .weekly)
         #expect(offering.annual.period == .annual)
         // The yearly's headline: its own per-week price, derived — never typed.
-        #expect(offering.annual.perWeekText == "$0.58 / wk")
+        #expect(offering.annual.perWeekText == "$1.92 / wk")
         // The entry plan never advertises a per-week equivalent — it IS the weekly price.
         #expect(offering.weekly.perWeekText == nil)
     }

@@ -177,7 +177,10 @@ final class OnboardingViewModel {
         case name, identity, goal, disciplines, units, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
              hybridFocus, why,
-             health, intensity, building, reveal, notifications, primers, account
+             health, intensity, building, reveal, notifications, primers, account,
+             // Appended, never inserted: every raw value above is a shipped analytics ID
+             // and an old draft's saved step. `computeSteps` owns where this actually sits.
+             review
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -209,7 +212,7 @@ final class OnboardingViewModel {
         if let c = stepsCache, c.key == key { return (c.steps, c.questions) }
         let all = computeSteps()
         let questions = all.filter {
-            ![.health, .building, .reveal, .notifications, .primers, .account].contains($0)
+            ![.health, .building, .reveal, .review, .notifications, .primers, .account].contains($0)
         }
         stepsCache = (key, all, questions)
         return (all, questions)
@@ -225,7 +228,7 @@ final class OnboardingViewModel {
         let ordered: [Step] = [
             .name, .goal, .disciplines, .race, .experience, .runVolume, .injuries, .metrics,
             .muscleFocus, .days, .session, .equipment, .hybridFocus, .health, .intensity,
-            .notifications, .primers, .building, .reveal, .account,
+            .notifications, .primers, .building, .reveal, .review, .account,
         ]
         return ordered.filter { step in
             switch step {

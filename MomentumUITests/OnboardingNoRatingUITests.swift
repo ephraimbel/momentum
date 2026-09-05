@@ -1,6 +1,12 @@
 import XCTest
 
-/// The personal reveal stays focused on training. Ratings belong after actual engagement.
+/// The personal reveal stays focused on training: the plan owns its screen and no rating surface
+/// shares it, or the permission beats before it.
+///
+/// The ask itself is NOT forbidden in onboarding any more — since 2026-09-05 it is a page of its
+/// own between the reveal and checkout (`OnboardingReviewView`, whose own invariants live in
+/// `OnboardingReviewUITests`). What this suite still pins is that the ask stays on that page and
+/// nowhere else, and that the plan is never interrupted by it.
 final class OnboardingNoRatingUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
@@ -74,7 +80,11 @@ final class OnboardingNoRatingUITests: XCTestCase {
         // Land on the notifications step. Since 2026-09-01 the two permission beats sit BEFORE
         // plan generation (notifications → location → building → reveal → account), so from here
         // to the app is every beat a rating ask could ever have lived on.
-        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-notifications"]
+        // `--review-no-ask` holds the review beat's native sheet: this walk has to read the page
+        // under it, and a system surface owns accessibility while it is up. The sheet's own
+        // behaviour is `OnboardingReviewUITests`' job.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding",
+                               "--onboarding-notifications", "--review-no-ask"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]
@@ -100,14 +110,21 @@ final class OnboardingNoRatingUITests: XCTestCase {
                        "The location step must not claim to end onboarding — beats follow it.")
         locationContinue.tap()
 
-        // Continue hands to the build and then the plan reveal. No rating surface interrupts it.
+        // Continue hands to the build and then the plan reveal. The plan owns this screen whole:
+        // the ask lives on the page AFTER it, and may not reach back onto the reveal itself.
         let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Expected the plan reveal after the build.")
         assertNoRatingSurface(app, on: "the plan reveal")
         revealCTA.tap()
 
+        // The review beat (2026-09-05). Its own suite pins the shape; here we only check that it
+        // is the one place the ask lives, and that it hands straight on.
+        let reviewCTA = app.buttons["onboarding.review.continue"]
+        XCTAssertTrue(reviewCTA.waitForExistence(timeout: 15), "Expected the review beat after the reveal.")
+        reviewCTA.tap()
+
         // This athlete is seeded Pro, so the wall stands down and the flow completes into the app.
-        assertNoRatingSurface(app, on: "the hand-off after the reveal")
+        assertNoRatingSurface(app, on: "the hand-off after the review beat")
         XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20),
                       "Onboarding must complete into the app.")
     }

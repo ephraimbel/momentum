@@ -18,20 +18,20 @@ final class PaywallUITests: XCTestCase {
         XCTAssertTrue(headline.waitForExistence(timeout: 15), "Paywall didn't present.")
         // Annual-only seven-day trial (owner call 2026-09-01). The fallback catalog is the DEBUG
         // contract; production derives this eligibility and the localized renewal price from StoreKit.
-        XCTAssertTrue(app.buttons["Start my 7-day free trial"].exists,
+        XCTAssertTrue(app.buttons["Start my 3-day free trial"].exists,
                       "The annual trial CTA is missing.")
-        XCTAssertFalse(app.buttons["Continue · $29.99/year"].exists,
+        XCTAssertFalse(app.buttons["Continue · $99.99/year"].exists,
                        "The annual plan must not charge immediately while its trial is eligible.")
         XCTAssertTrue(app.staticTexts["No payment due now"].exists,
                       "The trial must say plainly that payment is not due today.")
-        XCTAssertTrue(app.staticTexts["7 days free, then $29.99/yr · cancel anytime"].exists,
+        XCTAssertTrue(app.staticTexts["3 days free, then $99.99/yr · cancel anytime"].exists,
                       "The annual trial's renewal terms are missing or ambiguous.")
-        XCTAssertTrue(app.staticTexts["7 DAYS FREE"].exists,
+        XCTAssertTrue(app.staticTexts["3 DAYS FREE"].exists,
                       "The annual card must foreground its active trial.")
-        XCTAssertFalse(app.staticTexts["SAVE 90%"].exists,
+        XCTAssertFalse(app.staticTexts["SAVE 70%"].exists,
                        "The savings badge must not compete with an active trial badge.")
         // The Marquee (2026-08-27) + weekly pricing (2026-08-28): plans are Yearly/Weekly cards (a11y
-        // "Yearly plan, $0.58 per week, $29.99 billed yearly"), and the features are the marquee.
+        // "Yearly plan, $1.92 per week, $99.99 billed yearly"), and the features are the marquee.
         // One-screen contract: both cards, the feature marquee, and the CTA — no scrolling.
         let yearly = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Yearly plan")).firstMatch
@@ -48,7 +48,7 @@ final class PaywallUITests: XCTestCase {
         weekly.tap()
         XCTAssertTrue(app.buttons["Continue · $5.99/week"].waitForExistence(timeout: 5),
                       "CTA didn't follow the weekly selection.")
-        XCTAssertFalse(app.buttons["Start my 7-day free trial"].exists,
+        XCTAssertFalse(app.buttons["Start my 3-day free trial"].exists,
                        "The weekly plan must not inherit the annual plan's trial.")
         XCTAssertTrue(app.staticTexts["$5.99/wk · cancel anytime"].waitForExistence(timeout: 5),
                       "Fine print didn't follow the weekly selection.")

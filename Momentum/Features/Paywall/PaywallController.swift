@@ -36,25 +36,20 @@ struct PaywallOffering: Sendable, Equatable {
     var weeklyPriceValue: Double = weeklyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (owner call 2026-08-28, second pass — the yearly cut from $64.99 to
-    /// **$29.99** to buy conversion): the entry plan is **weekly** and the yearly is priced
-    /// **90% under the weekly run-rate**, displayed at its own per-week number. $5.99 × 52 =
-    /// $311.48 against $29.99 is 90.4% — a clean yearly price, **$0.58 a week**, and a badge that
-    /// rounds to **SAVE 90%**.
+    /// Shipped pricing (owner call 2026-09-05 — the yearly raised from $29.99 to **$99.99**;
+    /// weekly unchanged): the entry plan is **weekly** and the yearly is sold at its own per-week
+    /// number, **$1.92 a week**, with "$99.99 billed yearly" on the card. $5.99 × 52 = $311.48
+    /// against $99.99 is 67.9% under the weekly run-rate, and the badge rounds to the nearest
+    /// five — **SAVE 70%** — the same rule every earlier pair wore (90.37% → 90, 79.1% → 80).
     ///
     /// The three numbers have to agree, and only two of them are free: pick the yearly and the
-    /// weekly falls out of it, along with the badge. $79.99 was considered and rejected — it is
-    /// only 74.3% off, so it would have to wear "SAVE 75%".
+    /// per-week line falls out of it, along with the badge.
     ///
-    /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). Note the
-    /// take rate is NOT 84% in year one: App Store Connect quotes this product's proceeds as
-    /// **$21.00 on $29.99** (the standard 70% first-year rate) rising to ~85% once a subscriber
-    /// passes twelve months, so a first-year yearly nets ~$21 against ~$15 of cost. It clears,
-    /// but by ~$6 rather than the ~$10 an 84% take implies — and a heavy user who churns inside
-    /// year one is roughly break-even. This is
-    /// the reason a 90% badge off a CHEAPER weekly does not work: at $1.99/wk the same 90% is
-    /// $10.35, which loses ~$6.61 a year on every heavy subscriber. If the weekly ever drops, the
-    /// yearly cannot simply follow the percentage down.
+    /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). The take
+    /// rate is NOT 84% in year one: App Store Connect pays the standard 70% first-year rate
+    /// (~$70 on $99.99), rising to ~85% once a subscriber passes twelve months — so a first-year
+    /// yearly clears by ~$55 against ~$15 of cost. History: $29.99 (2026-08-28, "SAVE 90%")
+    /// cleared by only ~$6 and a heavy user who churned inside year one was break-even.
     ///
     /// Monthly is gone from the offering. Existing monthly subscribers keep their price and their
     /// entitlement — removing a product from an offering never cancels or re-prices a live sub —
@@ -66,23 +61,22 @@ struct PaywallOffering: Sendable, Equatable {
     /// RevenueCat is wired — the weekly product must be in the SAME subscription group as the
     /// annual, or upgrades/downgrades won't work.
     static let weeklyPrice = 5.99
-    static let annualPrice = 29.99
+    static let annualPrice = 99.99
 
     static let standard = PaywallOffering(
         weekly: .init(id: "momentum_pro_weekly", period: .weekly,
                       priceText: money(weeklyPrice), perWeekText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
-                      // Seven-day annual trial (owner call 2026-09-01). Weekly stays trial-less:
-                      // it is already the low-commitment entry plan, while a full week lets an
-                      // annual customer experience the adaptive loop before renewal. The live
+                      // Three-day annual trial (owner call 2026-09-05, down from seven). Weekly
+                      // stays trial-less: it is already the low-commitment entry plan. The live
                       // path still reads StoreKit's intro offer, so eligibility stays store-authored.
-                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 7))
+                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 3))
 
     /// Percent saved by paying yearly instead of 52× weekly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **90%**: $29.99 vs
-    /// 52 × $5.99 = $311.48 is 90.37%, which rounds to 90%.
+    /// (live once the store loads), never a hand-written label. Currently **70%**: $99.99 vs
+    /// 52 × $5.99 = $311.48 is 67.9%, which rounds to 70%.
     var annualSavingsPercent: Int {
         let weeklyYear = 52 * weeklyPriceValue
         guard weeklyYear > 0 else { return 0 }

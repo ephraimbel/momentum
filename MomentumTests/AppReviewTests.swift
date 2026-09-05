@@ -2,9 +2,13 @@ import Testing
 import Foundation
 @testable import Momentum
 
-/// The rating-prompt gate. Guideline 5.6.3 got the app rejected for asking during onboarding, so the
-/// contract here is exact: never before real engagement, never past Apple's own three-per-year
-/// ceiling, never twice in the same few days, and never again once the athlete has rated.
+/// The rating-prompt gate for the IN-APP cards. Never before real engagement, never past Apple's
+/// own three-per-year ceiling, never twice in the same few days, never again once the athlete has
+/// rated.
+///
+/// Onboarding's `.review` beat (2026-09-05) does not come through `shouldRequestReview` at all —
+/// it raises the sheet on arrival and tells this ledger a slot is gone via `recordOnboardingAsk`.
+/// That is the ONE sanctioned bypass and it is a debit, not a claim: see the tests at the bottom.
 struct AppReviewTests {
 
     /// An isolated defaults suite per test — never touch `.standard`.
@@ -119,5 +123,51 @@ struct AppReviewTests {
             if AppReview.shouldRequestReview(defaults: d, now: day(20 + n * 10)) { asks += 1 }
         }
         #expect(asks == AppReview.maxAsks - 1, "a legacy install gets the two remaining chances")
+    }
+
+    // MARK: The onboarding beat's debit
+
+    /// The beat spends one slot, so the athlete is NOT asked again the first time they save a
+    /// workout — the cards resume at the 5th logged item.
+    @Test func theOnboardingAskSpendsOneSlotAndPushesTheCardsToTheNextMilestone() {
+        let d = suite()
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        AppReview.recordWorkoutSaved(defaults: d)
+        #expect(!AppReview.shouldRequestReview(defaults: d, now: day(9)),
+                "the 1st-item card would be a second ask in a week")
+        for _ in 0..<4 { AppReview.recordWorkoutSaved(defaults: d) }   // now at 5
+        #expect(AppReview.shouldRequestReview(defaults: d, now: day(9)),
+                "the 5th-item card is still owed")
+    }
+
+    /// Never more than Apple's three, counting the onboarding one.
+    @Test func theOnboardingAskCountsAgainstTheThreePerYearCeiling() {
+        let d = suite()
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        var asks = 1
+        for n in 1...60 {
+            AppReview.recordWorkoutSaved(defaults: d)
+            AppReview.recordMealLogged(defaults: d)
+            if AppReview.shouldRequestReview(defaults: d, now: day(n * 10)) { asks += 1 }
+        }
+        #expect(asks == AppReview.maxAsks)
+    }
+
+    /// It records an ASK, never a rating: iOS reports nothing about what happened in the sheet, so
+    /// latching `rated` here would silence the two remaining cards on a guess.
+    @Test func theOnboardingAskNeverClaimsTheAthleteRated() {
+        let d = suite()
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        for _ in 0..<5 { AppReview.recordWorkoutSaved(defaults: d) }
+        #expect(AppReview.shouldRequestReview(defaults: d, now: day(30)),
+                "a spent slot must not read as a completed review")
+    }
+
+    /// An athlete who already rated in a previous version is not debited by reaching the beat.
+    @Test func theOnboardingAskIsANoOpOnceTheAthleteHasRated() {
+        let d = suite()
+        AppReview.recordRated(defaults: d)
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        #expect(d.object(forKey: "com.momentum.review.lastAsk.v2") == nil)
     }
 }

@@ -8,10 +8,11 @@ This supersedes the longer quiz / commitment-beat proposals in ONBOARDING-MOTION
 
 ## Experience arc
 
-1. **Welcome: the brand.** Keep the full-screen film and its original MOMENTUM / KEEP MOVING
-   closing frame. No additional headline or supporting paragraph competes with the film's
-   typography. Only "Build my plan" and the quieter returning-account link sit at the bottom;
-   the lower scrim protects those controls while leaving the film clear above them.
+1. **Welcome: the brand.** Owner clarification, 2026-09-05: retain the new photographic welcome
+   as the normal entry screen. White canvas, floating circular photographs (including the four
+   supplied running photos), left-aligned copy, and an ink action. The real authentication gate
+   owns entry and returning-athlete routing. Refine its motion separately; do not propagate
+   its typography or flat surfaces into the rest of onboarding or the paywall.
 2. **Your profile, then your goal.** Name and @username share the first setup page. Suggest a
    username from the name; retain a deliberate edit and show advisory availability. Goal,
    supporting activities, and race details follow. Optional finish time opens a matching sheet.
@@ -72,7 +73,8 @@ motivation question is removed; it did not determine the training prescription.
 - Keep the iPhone frames and existing permission previews. They have one clear purpose per page;
   none is an extra marketing interruption after the personal plan reveal.
 - The reveal retains its more expressive earned animation, but the settled page prioritizes useful
-  training. No review solicitation interrupts that moment.
+  training. No review solicitation interrupts that moment: the ask is a page of its own that
+  follows the reveal (see "App Store review beat" below), and nothing about it shares the plan.
 - Honor Reduce Motion. Content and selected values must remain visible without motion. No repeated
   celebration, flashing, or extra delays are added to make the interview feel longer.
 
@@ -178,3 +180,30 @@ Adding a country requires running `swift scripts/render_race_flags.swift` and pa
   the complete guest journey, both motion modes, double-tap navigation, interrupted building,
   name/handle and schedule persistence, all 12 compact-phone layouts, and hard-gate/outage recovery.
   The final build and changed-file SwiftLint checks passed.
+
+### App Store review beat — 2026-09-05
+
+Owner call, made with the 2026-07 App Review 5.6.3 rejection spelled out: onboarding carries a
+review ask again, as its own page between the plan reveal and checkout. Flow order is now
+notifications, location, build, **reveal, review**, checkout, account.
+
+- `OnboardingReviewView` is a permission-beat-shaped page — the app's own mark lit from beneath,
+  a centered heading, two plain cards on why a review matters, and a pinned Continue.
+- **The native sheet is raised on arrival, without a tap** (`requestReview()`, 0.5s after the page
+  settles — a system sheet presented over a still-animating view is silently dropped by iOS).
+- What keeps it out of the shape Apple rejected, and what must stay true:
+  - Continue is live on the first frame, gated on nothing, and is the page's only control.
+  - There is no custom rating UI: no star row, no "do you like momentum?" fork routing unhappy
+    athletes anywhere but the store. Apple's sheet is the only rating surface.
+  - The copy never claims a review was written. iOS reports nothing about what happened in the
+    sheet, so the page states the ask and stays stated.
+  - The ask is never the last beat; checkout and the account hand-off both follow it.
+- Arrival calls `AppReview.recordOnboardingAsk()`, which spends one of Apple's three yearly slots
+  **without** latching "rated" — so the engagement-gated in-app cards resume at the 5th and 15th
+  logged item instead of arriving the next morning.
+- Verify: `--onboarding-review` lands on the beat; add `--review-no-ask` to read the page with the
+  sheet held. The sheet renders unreliably in the simulator (StoreKit rate-limiting) — confirm it
+  on device.
+- Pinned by `OnboardingReviewUITests` (4 UI tests), `OnboardingNoRatingUITests` (the ask lives on
+  that page and nowhere else), `AppReviewTests` (the ledger debit), and `OnboardingFlowTests`
+  (its seat in the step order).

@@ -9,15 +9,27 @@ final class OnboardingPaywallUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     /// Enters at the plan reveal. Notifications and location now happen before generation; the
-    /// conversion hand-off under test is reveal → checkout → account.
+    /// conversion hand-off under test is reveal → review beat → checkout → account.
     private func launchToPaywall(_ app: XCUIApplication) {
         // Seeded profile (the flow needs one) + forced-free entitlement so the paywall actually
         // shows — `--debug-free` is read before `--seed-demo`'s Pro grant, so free wins.
-        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--onboarding", "--onboarding-reveal"]
+        // `--review-no-ask` holds the review beat's native sheet (2026-09-05): a system surface
+        // would otherwise own accessibility on the page between the reveal and checkout.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--onboarding", "--onboarding-reveal",
+                               "--review-no-ask"]
         app.launch()
         let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
+        passThroughReviewBeat(app)
+    }
+
+    /// The review beat stands between the reveal and checkout (`OnboardingReviewUITests` pins its
+    /// shape); the walkers here only pass through it. Launch with `--review-no-ask`.
+    private func passThroughReviewBeat(_ app: XCUIApplication) {
+        let reviewCTA = app.buttons["onboarding.review.continue"]
+        XCTAssertTrue(reviewCTA.waitForExistence(timeout: 15), "Expected the review beat after the reveal.")
+        reviewCTA.tap()
     }
 
     /// Reveal goes straight to the personalized checkout, with no generic welcome in between.
@@ -38,7 +50,7 @@ final class OnboardingPaywallUITests: XCTestCase {
 
         // Checkout: seven-day annual trial, Restore, and no bypass.
         advanceToCheckout(app)
-        let trial = app.buttons["Start my 7-day free trial"]
+        let trial = app.buttons["Start my 3-day free trial"]
         XCTAssertTrue(trial.waitForExistence(timeout: 10), "The annual trial CTA is missing.")
         XCTAssertFalse(app.buttons["Close"].exists, "The hard-wall checkout must not carry a close button.")
         XCTAssertTrue(app.buttons["Restore"].exists, "Checkout must keep Restore reachable.")
@@ -53,7 +65,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--seed-demo", "--debug-free"]
         app.launch()
-        XCTAssertTrue(app.buttons["Start my 7-day free trial"].waitForExistence(timeout: 20),
+        XCTAssertTrue(app.buttons["Start my 3-day free trial"].waitForExistence(timeout: 20),
                       "The hard gate did not survive a force-quit.")
         XCTAssertFalse(app.buttons["Close"].exists, "The relaunch gate must remain hard.")
         XCTAssertFalse(app.tabBars.firstMatch.isHittable, "The app is reachable behind the hard wall.")
@@ -69,11 +81,12 @@ final class OnboardingPaywallUITests: XCTestCase {
     func testRelaunchGatePurchaseStillOffersTheAccount() {
         let app = XCUIApplication()
         let args = ["--seed-demo", "--onboarding-guest", "--debug-free"]
-        app.launchArguments = ["--reset-store"] + args + ["--onboarding", "--onboarding-reveal"]
+        app.launchArguments = ["--reset-store"] + args + ["--onboarding", "--onboarding-reveal", "--review-no-ask"]
         app.launch()
         let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
+        passThroughReviewBeat(app)
 
         advanceToCheckout(app)
 
@@ -115,12 +128,13 @@ final class OnboardingPaywallUITests: XCTestCase {
     /// `--paywall-pricing-down` is the seam for that state (it's otherwise unreachable on a sim).
     func testStoreUnreachableHardGateOffersADeferral() {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--paywall-pricing-down",
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--paywall-pricing-down", "--review-no-ask",
                                "--onboarding", "--onboarding-reveal"]
         app.launch()
         let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
+        passThroughReviewBeat(app)
 
         // The personalized checkout still opens when store pricing is unavailable.
         advanceToCheckout(app)

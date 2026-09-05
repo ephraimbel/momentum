@@ -5,6 +5,72 @@ final class OnboardingMotionUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     @MainActor
+    func testGalleryWelcomeFlowsIntoEditableProfile() {
+        for reduced in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--reset-store", "--reset-auth"]
+                + (reduced ? ["--ui-test-reduce-motion"] : [])
+            app.launch()
+            let start = app.buttons["welcome.gallery.start"]
+            XCTAssertTrue(start.waitForExistence(timeout: 15))
+            XCTAssertTrue(start.isHittable)
+            let welcome = XCTAttachment(screenshot: app.screenshot())
+            welcome.name = reduced ? "gallery-welcome-reduced" : "gallery-welcome"
+            welcome.lifetime = .keepAlways
+            add(welcome)
+            start.tap()
+            let name = app.textFields["Your name"]
+            XCTAssertTrue(name.waitForExistence(timeout: 10))
+            XCTAssertTrue(name.isHittable)
+            XCTAssertFalse(start.exists)
+            let profile = XCTAttachment(screenshot: app.screenshot())
+            profile.name = reduced ? "gallery-profile-reduced" : "gallery-profile"
+            profile.lifetime = .keepAlways
+            add(profile)
+            name.tap()
+            name.typeText("Maya")
+            XCTAssertEqual(name.value as? String, "Maya")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testWelcomeDragKeepsActionsStationaryAndUsable() {
+        for reduced in [false, true] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--reset-store", "--reset-auth"]
+                + (reduced ? ["--ui-test-reduce-motion"] : [])
+            app.launch()
+            let start = app.buttons["welcome.gallery.start"]
+            XCTAssertTrue(start.waitForExistence(timeout: 15))
+            let original = start.frame
+            capture(app, name: reduced ? "welcome-before-drag-reduced" : "welcome-before-drag")
+            let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.84, dy: 0.28))
+            let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.58))
+            from.press(forDuration: 0.1, thenDragTo: to)
+            XCTAssertEqual(start.frame.minY, original.minY, accuracy: 1)
+            XCTAssertEqual(start.frame.minX, original.minX, accuracy: 1)
+            XCTAssertTrue(start.isHittable)
+            capture(app, name: reduced ? "welcome-drag-reduced" : "welcome-drag")
+            app.buttons["I already have an account"].tap()
+            XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
+            app.buttons["Back"].tap()
+            XCTAssertTrue(start.waitForExistence(timeout: 5))
+            XCUIDevice.shared.press(.home)
+            XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+            app.activate()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            let ready = NSPredicate(format: "exists == true AND hittable == true AND enabled == true")
+            expectation(for: ready, evaluatedWith: start)
+            waitForExpectations(timeout: 5)
+            capture(app, name: reduced ? "welcome-resumed-reduced" : "welcome-resumed")
+            start.tap()
+            XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 10))
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testChoicesAndBackNavigationWorkWithAndWithoutMotion() {
         for reduced in [false, true] {
             let app = XCUIApplication()

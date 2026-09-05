@@ -6,8 +6,8 @@ import SwiftUI
 // hero for the permission beats, one titanium device frame, one capsule CTA. Every step in
 // `OnboardingFlow` is assembled from these, so the flow can never drift into two looks.
 //
-// Rules carried through: monochrome first, lavender = tappable/selected only, iridescence only on
-// the progress bar (a genuine progress surface) and never on a card; transforms-only motion;
+// Palette refinement: monochrome first, iridescent progress and a faint shared aurora accent.
+// Keep the original materials, icons, layout and transforms-only motion;
 // Reduce Motion = static.
 
 enum OnboardingStyle {
@@ -17,10 +17,10 @@ enum OnboardingStyle {
     static let entrance: Animation = .spring(response: 0.46, dampingFraction: 0.9)
     static let selection: Animation = .spring(response: 0.3, dampingFraction: 0.78)
     static let progress: Animation = .spring(response: 0.5, dampingFraction: 0.88)
-    /// The page ground: a flat cool gray on light (white cards float on it with almost no shadow);
-    /// the app charcoal on dark.
+    /// White ground to meet the welcome; the original beveled materials remain unchanged.
+    /// Preserve the app charcoal in dark appearance.
     static func canvas(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Theme.background : Color(hex: "F5F5F7")
+        scheme == .dark ? Theme.background : .white
     }
 }
 
@@ -70,7 +70,7 @@ struct OnboardingDetailSheet<Content: View>: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    OnboardingHeading(title: title, subtitle: subtitle, size: 27)
+                    OnboardingHeading(title: title, subtitle: subtitle, size: 27, alignment: .center)
                     VStack(spacing: 12) { content }
                 }
                 .padding(24)
@@ -92,9 +92,8 @@ struct OnboardingDetailSheet<Content: View>: View {
 /// The page ground: the app canvas with a soft aurora pool breathing in from the top corners —
 /// the "glow" of the language, kept faint enough that copy and cards stay on pure ground.
 struct OnboardingCanvas: View {
-    /// The crown: a soft aurora falling from the top edge of the screen, gone within ~half the
-    /// page. Earned — it's ON only for the plan reveal (the page that marks an achievement); the
-    /// questions stay on flat ground.
+    /// Plain white by default — the welcome is pure white and every question after it is the
+    /// same room (owner call 2026-09-05). Only the reveal asks for the icon's pearl sheen.
     var crown = false
     @Environment(\.colorScheme) private var scheme
     @ReducedMotionPreference private var reduceMotion
@@ -102,15 +101,28 @@ struct OnboardingCanvas: View {
     var body: some View {
         ZStack(alignment: .top) {
             OnboardingStyle.canvas(scheme)
-            LinearGradient(stops: [
-                .init(color: Theme.iridescent[0].opacity(scheme == .dark ? 0.35 : 0.6), location: 0),
-                .init(color: Theme.iridescent[1].opacity(scheme == .dark ? 0.18 : 0.3), location: 0.45),
-                .init(color: Theme.iridescent[2].opacity(0.1), location: 0.78),
+            if crown {
+            // The icon's light, not a stripe. A mesh of the icon's pearl tones laid across the
+            // top of the page like refraction on glass — soft patches that drift into one another
+            // with no band or edge — dissolving into the canvas before the first control. The
+            // lavender aurora that sat here read as a coloured header (owner call 2026-09-05).
+            MeshGradient(width: 4, height: 3, points: [
+                [0.00, 0.00], [0.33, 0.00], [0.66, 0.00], [1.00, 0.00],
+                [0.00, 0.50], [0.30, 0.42], [0.70, 0.58], [1.00, 0.50],
+                [0.00, 1.00], [0.33, 1.00], [0.66, 1.00], [1.00, 1.00],
+            ], colors: [
+                Theme.pearl[3], Theme.pearl[5], Theme.pearl[0], Theme.pearl[1],
+                Theme.pearl[2], .white,         Theme.pearl[4], Theme.pearl[3],
+                .white,         .white,         .white,         .white,
+            ])
+            .frame(height: 520)
+            .mask(LinearGradient(stops: [
+                .init(color: .black, location: 0), .init(color: .black, location: 0.35),
                 .init(color: .clear, location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-            .frame(height: 460)
-            .opacity(crown ? 1 : 0)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: crown)
+            ], startPoint: .top, endPoint: .bottom))
+            .opacity(scheme == .dark ? 0.22 : 1)
+            .transition(reduceMotion ? .opacity : .opacity.animation(.easeOut(duration: 0.6)))
+            }
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -151,12 +163,15 @@ struct GlassCircleButton: View {
 struct OnboardingHeading: View {
     let title: String
     var subtitle: String? = nil
-    var size: CGFloat = 30
+    var size: CGFloat = 26
+    /// Questions read left-aligned, the welcome's voice (palette pass 2026-09-05); the permission
+    /// heroes and the account screen keep their centered glyph and stay centered.
+    var alignment: HorizontalAlignment = .leading
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(alignment: alignment, spacing: 8) {
             Text(title)
-                .font(.display(size, weight: .semibold))
+                .font(.display(size, weight: .semibold)).tracking(-0.4)
                 .foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
             if let subtitle {
@@ -166,9 +181,9 @@ struct OnboardingHeading: View {
                     .lineSpacing(2)
             }
         }
-        .multilineTextAlignment(.center)
+        .multilineTextAlignment(alignment == .center ? .center : .leading)
         .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: alignment == .center ? .center : .leading)
     }
 }
 
@@ -228,7 +243,7 @@ struct ChoiceCard: View {
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(isSelected ? Theme.purpleDeep : Theme.ink)
+                        .foregroundStyle(Theme.ink)
                         .frame(width: 28, height: 28)
                         .animation(reduceMotion ? nil : OnboardingStyle.selection) { icon in
                             icon.scaleEffect(isSelected && !reduceMotion ? 1.12 : 1)
@@ -259,6 +274,9 @@ struct ChoiceCard: View {
                         .strokeBorder(IridescentMaterial(), lineWidth: 2)
                 }
             }
+            // The same soft glow `SelectionCard` gives the Podium ring in Plan Settings, so the
+            // tier looks identical in setup and in the app.
+            .shadow(color: iridescent ? Theme.iridescent[0].opacity(0.4) : .clear, radius: 6)
             .contentShape(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
         }
         .buttonStyle(RaisedPressStyle(scale: 0.98))
@@ -270,13 +288,15 @@ struct ChoiceCard: View {
         ZStack {
             Circle().strokeBorder(Theme.ink.opacity(scheme == .dark ? 0.3 : 0.16), lineWidth: 1.5)
                 .opacity(isSelected ? 0 : 1)
-            Circle().fill(Theme.ink)
+            // Purple means "chosen, right now" — the only accent on the card (owner direction
+            // 2026-09-05: subtle purple accents, ink everywhere else).
+            Circle().fill(Theme.purple)
                 .scaleEffect(isSelected || reduceMotion ? 1 : 0.4)
                 .opacity(isSelected ? 1 : 0)
             if multi {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(Theme.background)
+                    .foregroundStyle(.white)
                     .scaleEffect(isSelected || reduceMotion ? 1 : 0.65)
                     .opacity(isSelected ? 1 : 0)
             } else {
@@ -569,12 +589,14 @@ struct OnboardingCTA: View {
                 if inFlight { ProgressView().tint(Theme.background) }
             }
             .frame(maxWidth: .infinity).frame(height: 58)
-            .foregroundStyle(Theme.background)
-            .raised(Capsule(), tone: .ink)
+            .foregroundStyle(isEnabled ? Theme.background : Theme.inkTertiary)
+            // Waiting for a choice, the pill rests as a quiet white surface with grey text —
+            // the same object the secondary buttons are — instead of a dimmed black slab
+            // (palette pass 2026-09-05). It turns ink the moment it can be pressed.
+            .raised(Capsule(), tone: isEnabled ? .ink : .white)
             .contentShape(Capsule())
         }
         .buttonStyle(RaisedPressStyle())
-        .opacity(isEnabled ? 1 : 0.35)
         .disabled(!isEnabled || inFlight)
         .animation(.easeOut(duration: 0.15), value: inFlight)
         .animation(reduceMotion ? Motion.crossfade : OnboardingStyle.selection, value: isEnabled)

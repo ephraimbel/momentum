@@ -108,10 +108,30 @@ enum AppReview {
         return defaults.bool(forKey: askedKey) ? 1 : 0
     }
 
+    /// Spend ONE of the three asks on the onboarding review beat, without claiming a rating.
+    ///
+    /// The beat (owner call 2026-09-05) raises the native sheet on arrival, so every athlete who
+    /// reaches it has had one of Apple's three yearly `requestReview()` slots spent on them. We
+    /// cannot know whether they wrote anything, so `recordRated` would be a lie: this records an
+    /// ASK. `asksMade` then indexes past the 1st-item milestone, which means the earned cards pick
+    /// up at the 5th and 15th logged item instead of nagging someone the morning after onboarding.
+    /// Idempotent within `minDaysBetweenAsks` for free, because it also stamps `lastAskKey`.
+    ///
+    /// This is deliberately NOT a bypass of `shouldRequestReview` — that gate still owns every
+    /// in-app card. This only tells the ledger a slot is gone.
+    static func recordOnboardingAsk(defaults: UserDefaults = .standard, now: Date = .now) {
+        guard !defaults.bool(forKey: ratedKey) else { return }
+        let asks = asksMade(defaults: defaults)
+        guard asks < maxAsks else { return }
+        defaults.set(asks + 1, forKey: asksKey)
+        defaults.set(now, forKey: lastAskKey)
+    }
+
     // `markAsked` lived here from 2026-07-26 to 2026-08-22, so the onboarding `.rateUs` beat could
     // latch the once-ever guard without passing the engagement gate (it asked before any workout
-    // existed). That beat is gone and nothing else may bypass the gate: an ask that hasn't earned
-    // its engagement is exactly the 5.6.3 problem. `shouldRequestReview` is the only door.
+    // existed). It came back 2026-09-05 as `recordOnboardingAsk`, which spends a slot instead of
+    // latching a rating; nothing else may bypass the gate, and `shouldRequestReview` is still the
+    // only door for the in-app cards.
 
     #if DEBUG
     /// Test-only reset so fixtures start clean.

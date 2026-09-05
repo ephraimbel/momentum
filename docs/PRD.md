@@ -95,7 +95,7 @@ Five connected moments. If these feel magical, momentum wins.
 
 ### 3.1 MVP (v0) — the unified core
 Small but complete across disciplines. Do each better than anyone.
-- **Onboarding + unified plan reveal** (multi-discipline) → hard paywall; seven-day annual trial.
+- **Onboarding + unified plan reveal** (multi-discipline) → hard paywall; three-day annual trial.
 - **Activity chooser**: run · ride · walk · strength.
 - **GPS tracking** (run/ride/walk): live monochrome map, discipline-correct metrics (pace vs speed), cadence (steps/rpm), optional HR, auto-pause, audio + haptic cues, Live Activity, GPS-strength indicator.
 - **Strength logging**: start empty or from a template/plan day; exercise library; set logging (weight×reps, RPE/RIR, set types); auto rest timer; supersets; plate calculator; inline previous-performance; finish summary (volume, sets, PRs, muscles).
@@ -373,7 +373,7 @@ flowchart TD
   I -- no --> K
   K --> L[Optional calibration: recent run / known lifts]
   L --> M[Building your plan...] --> N[Unified plan reveal + goal ring]
-  N --> O[Paywall: 7-day trial, honest terms] --> P[Primers] --> Today
+  N --> O[Paywall: 3-day trial, honest terms] --> P[Primers] --> Today
 ```
 
 ### 7.2 Today / Home
@@ -760,7 +760,7 @@ Freemium subscription. Free fuels adoption + reviews + (future) virality; the AI
 **Free:** track all disciplines (run/ride/walk/strength), basic post-workout summaries, manual strength logging + full exercise library, limited history, a single plan glimpse, basic share card.
 **Pro:** the adaptive **AI coach** + full multi-discipline plans + programs + adaptation; **AI reads**; **advanced analytics** (working-sets-per-muscle, e1RM trends, training load, pace/speed trends); full history; all templates; all share templates; cadence metronome / voice coach; (v1) Watch premium.
 
-**Pricing (weekly/annual pair set 2026-08-28; annual trial restored 2026-09-01):** **$5.99/wk** with no trial and **$29.99/yr** with a **7-day introductory free trial** for eligible subscribers. The annual card compares at **$0.58/wk**; while eligible it foregrounds **7 DAYS FREE**, and otherwise its weekly-run-rate savings rounds to **SAVE 90%**. The retired **$9.99/mo** product remains live only so existing monthly subscribers can renew; it is not sold in the offering. Onboarding ends at the hard paywall, while contextual paywalls remain dismissible. **Show renewal terms plainly; one-tap cancel; reminder before renewal.**
+**Pricing (weekly/annual pair set 2026-08-28; annual trial restored 2026-09-01; yearly raised to $99.99 on 2026-09-05):** **$5.99/wk** with no trial and **$99.99/yr** with a **3-day introductory free trial** (2026-09-05; was 7) for eligible subscribers. The annual card compares at **$1.92/wk**; while eligible it foregrounds **3 DAYS FREE**, and otherwise its weekly-run-rate savings rounds to **SAVE 70%**. The retired **$9.99/mo** product remains live only so existing monthly subscribers can renew; it is not sold in the offering. Onboarding ends at the hard paywall, while contextual paywalls remain dismissible. **Show renewal terms plainly; one-tap cancel; reminder before renewal.**
 **RevenueCat:** entitlement `pro`; offering `default`; sold products `momentum_pro_weekly`, `momentum_pro_annual` (`momentum_pro_monthly` is legacy/unsold). **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
 
 ---

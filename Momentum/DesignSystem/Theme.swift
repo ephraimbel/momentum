@@ -70,6 +70,31 @@ enum Theme {
         static let body = 17.0, caption = 13.0, label = 11.0
     }
 
+    // MARK: Pearl — the app icon's own light (2026-09-05)
+    /// The glass runner's holographic pearl, sampled from the icon: a silver-white base with soft
+    /// prismatic patches of gold, peach, lilac, sky and mint. For WASHES only — the onboarding
+    /// canvas sheen — never for a filled shape; it is the light on the icon, not a colour.
+    static let pearl: [Color] = [
+        Color(hex: "F7F1DF"), // gold
+        Color(hex: "F3DFD3"), // peach
+        Color(hex: "E7D9EE"), // lilac
+        Color(hex: "D9E6F2"), // sky
+        Color(hex: "DFEEE8"), // mint
+        Color(hex: "ECEDF1"), // silver
+    ]
+
+    /// The pearl at LINE strength: the same prismatic hues with enough chroma to read on a 3 pt
+    /// bar against white — the icon's rainbow patches, gold through sky, as a holographic stroke.
+    /// For thin progress marks (the onboarding bar and its tip); never a fill.
+    static let pearlDeep: [Color] = [
+        Color(hex: "E8CD8F"), // gold
+        Color(hex: "EDBFAF"), // peach
+        Color(hex: "CDB6E4"), // lilac
+        Color(hex: "AFCBEC"), // sky
+        Color(hex: "B9DFD0"), // mint
+        Color(hex: "D8D6E3"), // silver
+    ]
+
     // MARK: Iridescent stops — the lavender-led AURORA (rebrand "Lavender Glass", 2026-08-16;
     // retuned from the old holographic set: mint/peach out, the family now orbits the brand
     // lavender). Same law as ever: earned-only, used at ~0.3–0.6 opacity, soft/blurred.

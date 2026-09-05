@@ -80,12 +80,17 @@ final class GuestEntryUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // --debug-free: a sim left dev-unlocked by an earlier --debug-pro would sail past the paywall.
-        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-guest", "--onboarding-reveal", "--debug-free"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-guest", "--onboarding-reveal", "--debug-free",
+                               "--review-no-ask"]   // the review beat's native sheet stays down
         app.launch()
         let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 20), "should land on the plan reveal")
         attach("beat-1-reveal")
         revealCTA.tap()
+        // The review beat (2026-09-05) sits between the reveal and checkout; pass through it.
+        let reviewCTA = app.buttons["onboarding.review.continue"]
+        XCTAssertTrue(reviewCTA.waitForExistence(timeout: 15), "the reveal should hand to the review beat")
+        reviewCTA.tap()
 
         XCTAssertTrue(app.staticTexts["YOUR GOAL"].waitForExistence(timeout: 10))
         attach("beat-2-paywall")
@@ -122,7 +127,9 @@ final class GuestEntryUITests: XCTestCase {
         // stored identity and leaves the SwiftData profile behind, so after any sibling test (or a
         // manual --seed-demo launch) the app skipped setup entirely and the guard tripped. With the
         // wipe the walk now reliably starts in onboarding on any device.
-        app.launchArguments = ["--reset-store", "--reset-auth", "--debug-free", "--uitest-password"]
+        // `--review-no-ask`: the review beat's native rating sheet would otherwise sit over the
+        // page between the reveal and checkout and own accessibility for the rest of the walk.
+        app.launchArguments = ["--reset-store", "--reset-auth", "--debug-free", "--uitest-password", "--review-no-ask"]
         app.launch()
 
         let getStarted = app.buttons["Build my plan"]
@@ -191,8 +198,12 @@ final class GuestEntryUITests: XCTestCase {
             // stays in the hierarchy underneath it, `firstMatch` picks that covered one, and a
             // walker keyed on `firstMatch.isHittable` sleeps forever (found 2026-08-28 after a 1257s
             // timeout). Take the first Continue that is actually hittable, wherever it lives.
+            // Index-bound elements can vanish between the query and the property read (a Continue
+            // leaving with its page mid-transition failed the walk with "No matches found for
+            // Element at index 7", 2026-09-05) — `exists` is the one read that answers false
+            // instead of failing, so it goes first.
             let liveContinue = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
-                .first { $0.isHittable && $0.isEnabled }
+                .first { $0.exists && $0.isHittable && $0.isEnabled }
             let inAppAction = liveContinue
                 ?? [looksGreat, maybeLater, notNow, tryNow].first { $0.exists && $0.isHittable }
             if let inAppAction {

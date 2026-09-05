@@ -135,6 +135,43 @@ final class AuthFormUITests: XCTestCase {
 
     // MARK: Every door is present (App Store 4.8 keeps Apple beside Google)
 
+    func testBeveledAccountLayoutAndReducedMotion() {
+        for reduced in [false, true] {
+            let app = launch(["--signin-create"] + (reduced ? ["--ui-test-reduce-motion"] : []))
+            XCTAssertTrue(app.staticTexts["Create your account"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.buttons["Create account"].isHittable)
+            XCTAssertTrue(app.appleSignInButton.exists)
+            XCTAssertTrue(app.buttons["Continue with Google"].exists)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = reduced ? "account-beveled-reduced" : "account-beveled"
+            shot.lifetime = .keepAlways
+            add(shot)
+            app.buttons["Have an account? Sign in"].tap()
+            XCTAssertTrue(app.buttons["Forgot password?"].waitForExistence(timeout: 5))
+            app.buttons["Forgot password?"].tap()
+            XCTAssertTrue(app.staticTexts["Enter your email above first, then tap Forgot password."]
+                .waitForExistence(timeout: 5))
+            app.buttons["Back"].tap()
+            XCTAssertTrue(app.buttons["welcome.gallery.start"].waitForExistence(timeout: 5))
+            app.terminate()
+        }
+    }
+
+    func testBeveledAccountSupportsLargeText() {
+        let app = launch(["--signin-create", "-UIPreferredContentSizeCategoryName",
+                          "UICTContentSizeCategoryAccessibilityXXXL"])
+        XCTAssertTrue(app.staticTexts["Create your account"].waitForExistence(timeout: 15))
+        let google = app.buttons["Continue with Google"]
+        for _ in 0..<8 where !google.isHittable { app.swipeUp() }
+        XCTAssertTrue(google.isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "account-beveled-accessibility"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["Back"].tap()
+        XCTAssertTrue(app.buttons["welcome.gallery.start"].waitForExistence(timeout: 5))
+    }
+
     func testAllTheWaysInAreOffered() {
         let app = launch(["--signin-page"])
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 15))

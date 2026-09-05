@@ -38,6 +38,17 @@ struct RootView: View {
         return .today
     }()
     @State private var showOnboarding = false
+    /// Keeps the welcome mounted for a beat after sign-in so its exit finishes beneath the
+    /// arriving onboarding cover instead of being cut the frame the branch flips (2026-09-05).
+    @State private var welcomeLingers = false
+    /// The flow is hosted INLINE — a sibling above the welcome in this view's own tree — instead of
+    /// in the cover, for the welcome hand-off only. A `fullScreenCover` slides up from the bottom
+    /// no matter what the transaction says (captured frame by frame, 2026-09-05), and lands
+    /// whenever UIKit gets to it; an inline sibling is inserted on the very frame the state
+    /// flips, with no presentation semantics at all — no slide, no lag, no touch pass-through.
+    /// Every other door (deep links, a data wipe, Reduce Motion) keeps the cover.
+    @State private var onboardingInline = false
+    @ReducedMotionPreference private var reduceMotion
     /// True for ~one dismiss-animation beat after onboarding completes, so the tab shell (and its
     /// Mapbox map) is built AFTER the cover has left the screen, not during its dismissal.
     @State private var holdTabsForOnboardingDismiss = false
@@ -109,6 +120,45 @@ struct RootView: View {
         #endif
     }
 
+    /// The cover hosts every door but the welcome hand-off (`onboardingInline`).
+    private var onboardingCoverShown: Binding<Bool> {
+        Binding(get: { showOnboarding && !onboardingInline },
+                set: { if !$0 { showOnboarding = false } })
+    }
+
+    /// ONE flow for both hosts. Raised from the welcome, it finishes the welcome's exit itself and
+    /// reveals beneath the burst; through every other door it is fully present on its first frame.
+    private func onboardingFlow(arrivingFromWelcome: Bool) -> some View {
+        OnboardingFlow(arrivingFromWelcome: arrivingFromWelcome) {
+            showOnboarding = false
+            onboardingInline = false
+            // Claim the just-picked identity (@handle, name, avatar) on the backend NOW —
+            // waiting for the next cold launch's claim would leave the handle unprotected
+            // for the whole first session. No-op for guests/dark builds; a lost race posts
+            // the deduped "handle taken" notification.
+            if CommunityAccess.enabled, let fresh = profiles.first {
+                Task { await services.social.claimProfile(fresh, in: context) }
+            }
+            // The coach says hello the moment there's a plan to explain — a quiet seed the
+            // Today button badges, offered at the peak-curiosity moment. Once ever.
+            if profiles.first?.plan != nil { CoachProactive.seedPlanIntro(in: context) }
+            // No rating ask here any more (guideline 5.6.3 — never on first launch / onboarding).
+            // The prompt moved to the finished-workout moment, gated on real engagement — see
+            // `AppReview` and `WorkoutRunner.dismissSummary`.
+        }
+        // First-run onboarding is a LIGHT, glass sequence regardless of the athlete's appearance
+        // setting (owner call 2026-08-27, reversing the 2026-07-28 dark run: the light canvas
+        // is the hero aesthetic, and the setup should read as the bright, premium first
+        // impression). The paywall that follows stays dark — a deliberate scene change, the
+        // way the checkout in every premium health onboarding drops to a dark room.
+        // `.environment(\.colorScheme)`, NOT `.preferredColorScheme`: the latter is a
+        // PREFERENCE that flows UP to the hosting window, which would leave the whole app
+        // stuck light after onboarding finishes and quietly override Settings → Appearance.
+        // Setting the environment styles only onboarding's own subtree. Every `Theme` token
+        // is an asset colorset, so they all resolve light from this one line.
+        .environment(\.colorScheme, .light)
+    }
+
     private func refreshSocialInbox() async {
         guard CommunityAccess.enabled, auth.isSignedIn, !auth.isGuest else { return }
         await SocialActivityInbox.refresh(backend: services.social, in: context)
@@ -139,7 +189,7 @@ struct RootView: View {
         @Bindable var auth = auth
         @Bindable var router = router
         return Group {
-            if !auth.isSignedIn {
+            if !auth.isSignedIn || welcomeLingers {
                 // The welcome (2026-07-27): brand only, no account. "Get started" enters setup
                 // local-only and the account is offered on the LAST beat of onboarding. Told
                 // whether training already lives on this device so it can offer to resume it
@@ -155,7 +205,10 @@ struct RootView: View {
                     // in the same frame the cover's dismiss animation started, and that stutter was
                     // the athlete's very last impression of setup (perf audit 2026-08-13).
                     if showOnboarding || holdTabsForOnboardingDismiss {
-                        Theme.background.ignoresSafeArea()
+                        // Onboarding is LIGHT, fixed — and so is the ground it arrives over. On a
+                        // dark-appearance device this used to be the charcoal, and the flow's
+                        // dissolve out of the white welcome read as a black flash (2026-09-05).
+                        Color.white.ignoresSafeArea()
                     } else {
                         // The ONE workout recorder, mounted over the whole shell (tab bar included)
                         // so a run started from Today or Plan crossfades up over the map rather
@@ -384,34 +437,28 @@ struct RootView: View {
         // Onboarding presents from THIS always-installed level, not from the signed-in branch:
         // sign-in flips the branch and raises this flag in the same update, and a cover attached
         // to a view being inserted that instant can silently fail to present (blank canvas).
-        .fullScreenCover(isPresented: $showOnboarding) {
-            OnboardingFlow {
-                showOnboarding = false
-                // Claim the just-picked identity (@handle, name, avatar) on the backend NOW —
-                // waiting for the next cold launch's claim would leave the handle unprotected
-                // for the whole first session. No-op for guests/dark builds; a lost race posts
-                // the deduped "handle taken" notification.
-                if CommunityAccess.enabled, let fresh = profiles.first {
-                    Task { await services.social.claimProfile(fresh, in: context) }
+        //
+        // NO `presentationBackground`, on purpose. A transparent one passes touches through
+        // wherever the content is transparent, for the cover's whole life (the plan reveal's
+        // scroll went dead in the gap between two tiles); even an opaque white one swallowed
+        // taps on content still at opacity 0 (the reveal's CTA during its overture). Only the
+        // system backdrop behaves — bisected 2026-09-05. The flow's own canvas is opaque from its
+        // first frame, so a dark device never flashes charcoal.
+        .fullScreenCover(isPresented: onboardingCoverShown) {
+            onboardingFlow(arrivingFromWelcome: false)
+        }
+        // The welcome hand-off's host (see `onboardingInline`): inserted on the frame the welcome
+        // signs in, over the resting icon the flow then reproduces and bursts
+        // (`WelcomeGalleryView.Handoff`); removed with a fade when the flow completes, which the
+        // tab shell's hold below already waits out.
+        .overlay {
+            ZStack {
+                if showOnboarding && onboardingInline {
+                    onboardingFlow(arrivingFromWelcome: true)
+                        .transition(.asymmetric(insertion: .identity, removal: .opacity))
                 }
-                // The coach says hello the moment there's a plan to explain — a quiet seed the
-                // Today button badges, offered at the peak-curiosity moment. Once ever.
-                if profiles.first?.plan != nil { CoachProactive.seedPlanIntro(in: context) }
-                // No rating ask here any more (guideline 5.6.3 — never on first launch / onboarding).
-                // The prompt moved to the finished-workout moment, gated on real engagement — see
-                // `AppReview` and `WorkoutRunner.dismissSummary`.
             }
-            // First-run onboarding is a LIGHT, glass sequence regardless of the athlete's appearance
-            // setting (owner call 2026-08-27, reversing the 2026-07-28 dark run: the light canvas
-            // is the hero aesthetic, and the setup should read as the bright, premium first
-            // impression). The paywall that follows stays dark — a deliberate scene change, the
-            // way the checkout in every premium health onboarding drops to a dark room.
-            // `.environment(\.colorScheme)`, NOT `.preferredColorScheme`: the latter is a
-            // PREFERENCE that flows UP to the hosting window, which would leave the whole app
-            // stuck light after onboarding finishes and quietly override Settings → Appearance.
-            // Setting the environment styles only onboarding's own subtree. Every `Theme` token
-            // is an asset colorset, so they all resolve light from this one line.
-            .environment(\.colorScheme, .light)
+            .animation(.easeInOut(duration: 0.4), value: showOnboarding)
         }
         // Onboarding owns the screen: the coach cover must never stack over it (proactive seeds
         // and deep links suspend until the flow completes). No `initial:` — isSuspended already
@@ -419,7 +466,7 @@ struct RootView: View {
         .onChange(of: showOnboarding) { _, showing in
             if !showing {
                 // Onboarding just finished: hold the tab shell until the cover's dismiss animation
-                // has the screen to itself (see the canvas branch above).
+                // (or the inline host's fade) has the screen to itself (see the canvas branch above).
                 holdTabsForOnboardingDismiss = true
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(550))
@@ -616,7 +663,31 @@ struct RootView: View {
             #endif
         }
         // Just signed in (new athlete) → straight into onboarding.
-        .onChange(of: auth.isSignedIn) { _, signedIn in if signedIn && profiles.isEmpty { showOnboarding = true } }
+        .onChange(of: auth.isSignedIn) { _, signedIn in
+            guard signedIn && profiles.isEmpty else { return }
+            // No modal slide-up out of the welcome (owner call 2026-09-05). The welcome has just
+            // faded its photographs to white; the flow now fades in over that same white and its
+            // first question cascades up, so the hand-off reads as one continuous dissolve rather
+            // than a sheet arriving from the bottom. The cover still presents; only its
+            // animation is suppressed. `OnboardingFlow` owns the arrival.
+            if reduceMotion {
+                // The welcome has already faded; the flow is fully present on its first frame.
+                var quiet = Transaction(); quiet.disablesAnimations = true
+                withTransaction(quiet) { showOnboarding = true }
+                return
+            }
+            // The welcome signs in mid-hold, on the resting icon. The flow is inserted INLINE on
+            // this very frame (see `onboardingInline`), reproduces that resting frame and continues
+            // it (`WelcomeGalleryView.Handoff`); the welcome stays mounted beneath until the burst
+            // is well over, then the branch flips to the canvas under the flow.
+            welcomeLingers = true
+            onboardingInline = true
+            showOnboarding = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(2.0))
+                welcomeLingers = false
+            }
+        }
         // Returning to onboarding after a data wipe (Settings → Delete all data).
         .onChange(of: profiles.isEmpty) { _, empty in if empty && auth.isSignedIn { showOnboarding = true } }
     }

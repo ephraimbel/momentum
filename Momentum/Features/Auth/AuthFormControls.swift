@@ -10,7 +10,7 @@ import SwiftUI
 enum AuthMessageKind { case error, info }
 
 extension View {
-    /// The boxed field chrome: surface fill, hairline, and a lavender focus ring.
+    /// The original beveled field chrome, with an iridescent focus accent.
     ///
     /// ⚠️ The BOX is the tap target. Framing the text view and padding OUTSIDE it left a 16pt
     /// margin on each side that looked tappable and wasn't — the commonest way a form feels
@@ -24,11 +24,12 @@ extension View {
             // A SUNKEN well, not the raised card material (owner call 2026-08-28). The fields
             // used to wear the same surface as the buttons beside them, so a thing you type into
             // looked like a thing you press. Depth is the affordance: raised = act, sunken = enter.
-            // Focus = the lavender ring, the app's "happening now" accent.
+            // Focus carries the iridescent accent without flattening the well.
             .sunken(.rounded(OnboardingStyle.cardRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-                    .strokeBorder(Theme.purple, lineWidth: 1.5)
+                    .strokeBorder(LinearGradient(colors: Theme.iridescentDeep,
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1.5)
                     .opacity(focused ? 1 : 0)
             }
             .contentShape(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))

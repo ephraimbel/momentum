@@ -56,7 +56,7 @@ struct PaywallView: View {
                 // meets the box and the "glow" renders as a hard-edged rectangle — which is
                 // exactly what a background sized to the text's own bounds did.
                 .background {
-                    RadialGradient(colors: [Theme.purple.opacity(0.08), Theme.iridescent[1].opacity(0.05), .clear],
+                    RadialGradient(colors: [Theme.purple.opacity(0.07), Theme.purple.opacity(0.02), .clear],
                                    center: .center, startRadius: 4, endRadius: 150)
                         .frame(width: 340, height: 340)
                         .allowsHitTesting(false)
@@ -163,7 +163,9 @@ struct PaywallView: View {
         let f: Font = .display(34 * s, weight: .bold)
         let x: CGFloat = 0.28 * CGFloat(shift)
         let g = LinearGradient(
-            colors: [Theme.purple, Color(hex: "9A7BF3"), Color(hex: "7C97EC"), Color(hex: "4E93D4")],
+            // Lavender only (2026-09-05) — the sweep stays, the drift into blue is gone: purple is
+            // the paywall's one accent, and it should read as the brand's, not a rainbow.
+            colors: [Theme.purpleDeep, Theme.purple, Color(hex: "A896F6"), Theme.purple],
             startPoint: UnitPoint(x: -0.35 + x, y: 0), endPoint: UnitPoint(x: 1.15 + x, y: 0.9))
         if personalizedOutcome != nil {
             return Text("Your goal.\n").font(f).tracking(-1.2).foregroundStyle(Theme.ink)
@@ -206,7 +208,8 @@ struct PaywallView: View {
                     ZStack {
                         Circle().strokeBorder(Theme.ink.opacity(0.18), lineWidth: 1.5).opacity(isSelected ? 0 : 1)
                         // The check springs in from small; the ring simply fades — a settle, not a pop.
-                        Circle().fill(Theme.ink).scaleEffect(isSelected ? 1 : 0.5).opacity(isSelected ? 1 : 0)
+                        // Purple = chosen, the same mark the setup questions use.
+                        Circle().fill(Theme.purple).scaleEffect(isSelected ? 1 : 0.5).opacity(isSelected ? 1 : 0)
                         Image(systemName: "checkmark").font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.white).scaleEffect(isSelected ? 1 : 0.4).opacity(isSelected ? 1 : 0)
                     }
@@ -285,6 +288,8 @@ struct FeatureMarquee: View {
 
     enum Art { case plan, coach, race, recovery, fuel, analytics, watch }
     struct Item { let art: Art; let tint: Color; let title: String; let line: String }
+    // The arts keep their own colour (owner call 2026-09-05: "keep the paywall animations
+    // colourful") — they are the one lively thing on an otherwise white, black-and-purple wall.
     static let items: [Item] = [
         .init(art: .plan, tint: Theme.purple, title: "A plan built for your goal",
               line: "Every session earns its place in the build."),
