@@ -501,7 +501,7 @@ function Pricing() {
             <div className="price-row">
               <h3>momentum Pro</h3>
               <p className="price">
-                $0.58 <span>/ week</span>
+                $1.92 <span>/ week</span>
               </p>
             </div>
             <div className="features">
@@ -537,7 +537,7 @@ function FAQ() {
   const items = [
     {
       q: "Is there a free trial?",
-      a: "Yes. momentum is a membership: every new runner starts with a 3-day free trial of momentum Pro on the annual plan, then $99.99 billed yearly, which works out to $0.58 a week, 90% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
+      a: "Yes. momentum is a membership: every new runner starts with a 3-day free trial of momentum Pro on the annual plan, then $99.99 billed yearly, which works out to $1.92 a week, 70% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",
