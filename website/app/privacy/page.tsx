@@ -24,7 +24,7 @@ export default function Privacy() {
       </header>
       <main className="legal">
         <h1 className="display">Privacy Policy</h1>
-        <p className="legal-date">Effective July 9, 2026</p>
+        <p className="legal-date">Effective September 4, 2026</p>
 
         <p>
           momentum is built on a simple idea: your training data is yours. This policy explains what
@@ -68,6 +68,19 @@ export default function Privacy() {
           <li>We never make your location, routes, or health data public without an explicit opt-in.</li>
           <li>We never use your health data for anything other than the features you can see.</li>
         </ul>
+
+        <h2>Marketing-site measurement</h2>
+        <p>
+          If you choose Allow on momentumrunning.app, we use the OpenAI Ads Measurement Pixel to
+          understand whether an ad leads to an App Store visit. The Pixel receives an
+          <strong> App Store link clicked</strong> event, the page origin, and a privacy-preserving
+          ad-click identifier stored in the first-party <code>__oppref</code> cookie. It does not
+          receive your momentum account, email, health data, workout data, or precise location.
+        </p>
+        <p>
+          Measurement is off until you opt in. You can change your choice at any time through the
+          Ad choices control on the site.
+        </p>
 
         <h2>Apple Health</h2>
         <p>

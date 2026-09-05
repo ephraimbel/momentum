@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import Script from "next/script";
+import OpenAIAdsMeasurement from "@/components/OpenAIAdsMeasurement";
 import "./globals.css";
 
 // The brief's voice (2026-08-14 rebuild): one excellent neutral grotesk, set tight.
@@ -69,7 +71,15 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${interTight.variable} ${inter.variable}`}>
-      <body>{children}</body>
+      <body>
+        <Script id="openai-ads-pixel" strategy="beforeInteractive">
+          {`!function(w,d,s,u){if(w.oaiq)return;var q=function(){q.q.push(arguments)};q.q=[];w.oaiq=q;var j=d.createElement(s);j.async=1;j.src=u;var f=d.getElementsByTagName(s)[0];f.parentNode.insertBefore(j,f)}(window,document,"script","https://bzrcdn.openai.com/sdk/oaiq.min.js");
+try{oaiq("consent",localStorage.getItem("momentum_openai_ads_measurement")==="granted")}catch(e){oaiq("consent",false)}
+oaiq("init",{pixelId:"5rm91AenaY9ndfpPtADUdy",debug:${process.env.NODE_ENV !== "production"}});`}
+        </Script>
+        {children}
+        <OpenAIAdsMeasurement />
+      </body>
     </html>
   );
 }

@@ -1722,3 +1722,69 @@ a {
     transform: none;
   }
 }
+/* OpenAI Ads measurement consent — compact, explicit, and available on every page. */
+.ads-consent {
+  position: fixed;
+  z-index: 1000;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  width: min(620px, calc(100vw - 40px));
+  padding: 16px 18px;
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 60px rgba(17, 17, 17, 0.14);
+  backdrop-filter: blur(18px);
+}
+
+.ads-consent p {
+  margin: 0;
+  color: #2a2926;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ads-consent a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ads-consent-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.ads-consent-manage {
+  position: fixed;
+  z-index: 900;
+  left: 12px;
+  bottom: 12px;
+  padding: 7px 10px;
+  border: 1px solid rgba(17, 17, 17, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: #57544f;
+  font: 500 11px/1 var(--font-ui), sans-serif;
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .ads-consent {
+    right: 12px;
+    bottom: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    width: calc(100vw - 24px);
+  }
+
+  .ads-consent-actions {
+    justify-content: flex-end;
+  }
+}
