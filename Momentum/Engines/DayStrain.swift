@@ -59,8 +59,16 @@ struct DayStrain {
         }
         // Walking-HR nudge: elevated everyday HR marks the movement as costlier; suppressed as
         // cheaper. Missing reading or unlearned baseline → no nudge, never a guess.
+        //
+        // `isBanded` is what makes that second clause true (2026-09-05). The gate used to be
+        // `mean > 0` alone, and `HealthBaselines.build` returns a mean from a SINGLE day — so a
+        // day-one athlete's first walking-HR reading became its own norm, compared itself to
+        // itself, and nudged their strain by up to 15% off one sample. Bounded enough that nobody
+        // would have caught it in the number; wrong in exactly the way the comment promised it
+        // wasn't.
         var multiplier = 1.0
-        if let avg = walkingHRAvg, let baseline = walkingHRBaseline, baseline.mean > 0.000_1 {
+        if let avg = walkingHRAvg, let baseline = walkingHRBaseline,
+           baseline.isBanded, baseline.mean > 0.000_1 {
             multiplier = min(max(avg / baseline.mean, 0.9), 1.15)
         }
         ambientLoad = base * multiplier

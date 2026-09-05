@@ -770,7 +770,7 @@ struct ProgressScreen: View {
                                                         workouts: workouts, checkins: checkins) {
                     ReadinessToday.publish(r)
                     stripReadiness = (Calendar.current.startOfDay(for: Date()),
-                                      r.score, r.band.rawValue, r.displayDriverWithConfidence)
+                                      r.score, r.band.displayName, r.displayDriverWithConfidence)
                 }
             }
         }

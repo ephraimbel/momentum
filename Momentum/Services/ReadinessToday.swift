@@ -45,22 +45,23 @@ enum ReadinessToday {
                         checkins: [DailyCheckin],
                         now: Date = Date(),
                         calendar: Calendar = .current) async -> MorningReadiness? {
-        let signals = await health.recoverySignals()
-        var hrvHist: [(day: Date, value: Double)] = []
-        var rhrHist: [(day: Date, value: Double)] = []
-        var nights: [SleepReport.Night] = []
-        if let concrete = health as? HealthService {
-            let bpm = HKUnit.count().unitDivided(by: .minute())
-            hrvHist = await concrete.hrvDailyHistory(days: HealthBaselines.Window.hrv)
-            rhrHist = await concrete.dailyHistory(.restingHeartRate, unit: bpm,
-                                                  days: HealthBaselines.Window.restingHR)
-            nights = await concrete.sleepNights(days: 60).map {
-                SleepReport.Night(date: $0.date, asleepH: $0.asleepH, coreS: $0.coreS,
-                                  deepS: $0.deepS, remS: $0.remS, awakeS: $0.awakeS, inBedS: $0.inBedS)
-            }
+        // ONE pass over Health (`recoveryFeed`): the signals and the histories they were reduced
+        // from come back together. This used to be four round-trips that re-read the same HRV
+        // samples and the same sleep segments the signals had just been built from.
+        guard let concrete = health as? HealthService else {
+            // A stubbed `HealthServing` (previews, tests) degrades to signals-only — the same
+            // graceful degradation the hub has, through the same recipe.
+            return build(workouts: workouts, checkins: checkins,
+                         signals: await health.recoverySignals(),
+                         hrvHist: [], rhrHist: [], nights: [], now: now, calendar: calendar)
         }
-        return build(workouts: workouts, checkins: checkins, signals: signals,
-                     hrvHist: hrvHist, rhrHist: rhrHist, nights: nights,
+        let feed = await concrete.recoveryFeed()
+        let nights = feed.nights.filter { $0.asleepH > 0 }.map {
+            SleepReport.Night(date: $0.date, asleepH: $0.asleepH, coreS: $0.coreS,
+                              deepS: $0.deepS, remS: $0.remS, awakeS: $0.awakeS, inBedS: $0.inBedS)
+        }
+        return build(workouts: workouts, checkins: checkins, signals: feed.signals,
+                     hrvHist: feed.hrvHist, rhrHist: feed.rhrHist, nights: nights,
                      now: now, calendar: calendar)
     }
 
@@ -72,7 +73,7 @@ enum ReadinessToday {
         // The confidence qualifier travels WITH the driver line. A score built from a check-in and
         // load alone must not read like a full HRV + sleep + resting-HR morning on any surface that
         // shows it — and the wrist is one of those surfaces (owner ask 2026-08-14).
-        ReadinessTodayCache.store(score: r.score, band: r.band.rawValue,
+        ReadinessTodayCache.store(score: r.score, band: r.band.displayName,
                                   driver: r.displayDriverWithConfidence)
         PhoneWatchSync.shared.scheduleRefresh()
     }

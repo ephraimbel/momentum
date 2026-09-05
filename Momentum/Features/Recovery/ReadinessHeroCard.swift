@@ -101,7 +101,7 @@ struct ReadinessHeroCard: View {
                     AnimatedCounter(value: sweep * Double(readiness.score)) { "\(Int($0.rounded()))" }
                         .font(.display(52, weight: .bold))
                         .foregroundStyle(Theme.ink)
-                    Text(readiness.band.rawValue)
+                    Text(readiness.band.displayName)
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).tracking(0.6)
                         .foregroundStyle(Theme.inkSecondary)
                         .opacity(detailsShown ? 1 : 0)
@@ -135,7 +135,7 @@ struct ReadinessHeroCard: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Readiness")
-        .accessibilityValue("\(readiness.score) out of 100, \(readiness.band.rawValue). \(readiness.guidance)")
+        .accessibilityValue("\(readiness.score) out of 100, \(readiness.band.displayName). \(readiness.guidance)")
     }
 
     /// The partial-data footnote — lists the inputs used and names the most notable absence;

@@ -347,4 +347,26 @@ struct MorningReadinessTests {
         // Still a real number with real guidance — the qualifier never replaces the score.
         #expect(phoneOnly.score > 0)
     }
+
+    /// The ring is headed READINESS, so its word has to be a readiness word. The band's `rawValue`
+    /// is the strain vocabulary this enum was written in, and rendering it verbatim put "Very high"
+    /// next to a score of 23 — the number saying wrung out and the word saying great.
+    @Test func theBandWordReadsAsReadinessNotStrain() {
+        #expect(RecoveryModel.band(23) == .depleted)
+        #expect(RecoveryModel.Readiness.depleted.displayName == "Depleted")
+        #expect(RecoveryModel.Readiness.primed.displayName == "Primed")
+        // No readiness word may be one of the STRAIN phrasings the raw values carry: "Very high"
+        // beside 23 and "Low strain" beside 90 both invert the reading. ("Strained" is fine — it
+        // describes the athlete, not the load, and moves the right way.)
+        let strainWords = Set(RecoveryModel.Readiness.allCases.map(\.rawValue))
+        #expect(strainWords.contains("Very high"), "the raw values are still the strain vocabulary")
+        for band in RecoveryModel.Readiness.allCases {
+            #expect(!["Very high", "Low strain", "High strain"].contains(band.displayName))
+        }
+        // And the word must move the same direction as the score: worse score, worse word.
+        let ordered: [RecoveryModel.Readiness] = [.depleted, .strained, .moderate, .ready, .primed]
+        #expect(ordered.map(\.displayName)
+                == ["Depleted", "Strained", "Moderate", "Ready", "Primed"])
+    }
+
 }

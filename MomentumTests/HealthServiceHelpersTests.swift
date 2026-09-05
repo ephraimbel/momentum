@@ -350,6 +350,44 @@ struct RecoverySignalsIllnessWatchTests {
         #expect(RecoverySignals.empty.respiratoryZ == nil)
     }
 
+    /// `establishedDeviation` is the illness watch's only producer — the thing that was missing
+    /// entirely until 2026-09-05, when `respiratoryZ`/`wristTempDeltaC` had two consumers and no
+    /// assignment anywhere outside the DEBUG demo fixture.
+    @Test func establishedDeviationWithholdsUntilTheNormIsLearned() {
+        let cal = Calendar(identifier: .gregorian)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let today = cal.startOfDay(for: now)
+        func history(days: Int, value: Double, todayValue: Double) -> [(day: Date, value: Double)] {
+            (0..<days).compactMap { ago in
+                cal.date(byAdding: .day, value: -ago, to: today)
+                    .map { (day: $0, value: ago == 0 ? todayValue : value) }
+            }
+        }
+        func deviation(days: Int) -> (z: Double, delta: Double)? {
+            let h = history(days: days, value: 14, todayValue: 17)
+            let base = HealthBaselines.build(from: h, windowDays: 30, now: now, calendar: cal)
+            return HealthService.establishedDeviation(h, baseline: base, now: now, calendar: cal)
+        }
+        // Banded (≥7) is not enough — these two are the only signals that subtract on their own,
+        // so they wait for ESTABLISHED (≥14). A deviation measured against four nights is a coin flip.
+        #expect(deviation(days: 7) == nil)
+        #expect(deviation(days: 13) == nil)
+        let learned = try? #require(deviation(days: 20))
+        #expect(learned != nil)
+        if let learned {
+            #expect(learned.delta > 2.5)      // ~3 br/min over a 14 br/min norm
+            #expect(learned.z > 1)            // and comfortably outside the personal spread
+        }
+        // No norm at all, and a norm with no reading for this morning, both stay silent.
+        #expect(HealthService.establishedDeviation([], baseline: nil, now: now, calendar: cal) == nil)
+        let stale = history(days: 20, value: 14, todayValue: 14).filter { $0.day < today }
+            .filter { $0.day < cal.date(byAdding: .day, value: -1, to: today)! }
+        let staleBase = HealthBaselines.build(from: stale, windowDays: 30, now: now, calendar: cal)
+        #expect(HealthService.establishedDeviation(stale, baseline: staleBase,
+                                                   now: now, calendar: cal) == nil,
+                "a fortnight-old reading is not this morning's deviation")
+    }
+
     @Test func demoStrainedIsAConcordantStrainedMorning() {
         let s = RecoverySignals.demoStrained
         #expect(s.hrvTrend == .down)                     // HRV well below norm

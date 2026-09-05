@@ -49,12 +49,14 @@ final class HealthService: HealthServing {
         // result means "absent", never zero.
         HKQuantityType(.respiratoryRate),              // recovery: overnight breaths/min vs personal norm
         HKQuantityType(.appleSleepingWristTemperature),// recovery: overnight wrist-temp deviation (Watch S8+)
-        HKQuantityType(.oxygenSaturation),             // FYI vital: overnight SpO₂ — noticed, never scored
-        HKQuantityType(.heartRateRecoveryOneMinute),   // fitness: HR fall in the minute after hard work
         HKQuantityType(.walkingHeartRateAverage),      // fatigue whisper: everyday-movement HR vs norm
-        HKQuantityType(.timeInDaylight),               // education tile: morning light (watchOS 10+)
-        HKCategoryType(.mindfulSession),               // education tile: down-regulation minutes
     ]
+    // We ask for what we read, and nothing else. `.oxygenSaturation`,
+    // `.heartRateRecoveryOneMinute`, `.timeInDaylight` and `.mindfulSession` were requested here
+    // from the recovery-hub build until 2026-09-05 for tiles the plan defers to P4/P5 — no code
+    // path has ever queried any of the four. They appeared on the athlete's Health permission
+    // sheet as things momentum wanted to read about their body, and then were never read. Add a
+    // type back on the commit that adds its query, not before.
 
     /// True once the user has granted permission to share workouts. (HealthKit hides read status by
     /// design, so write authorization is the honest "connected" signal.)
@@ -130,12 +132,56 @@ final class HealthService: HealthServing {
     /// night's sleep — each with a ~30-day baseline so the value reads against the athlete's own norm
     /// (PRD §4.8, §8.6). Best-effort; every field is `nil` when unavailable/unauthorized.
     func recoverySignals() async -> RecoverySignals {
+        await recoveryFeed().signals
+    }
+
+    /// Everything today's readiness needs, from ONE pass over Health.
+    ///
+    /// The signals and the day-bucketed histories behind them are the same reduction of the same
+    /// samples, so they are read together. Before this existed each caller fetched the signals and
+    /// then re-fetched the very histories the signals had just been built from — `ReadinessToday`
+    /// pulled HRV and sleep twice per refresh, and the Health segment three times. Callers that
+    /// need the histories (for `HealthBaselines`, the sparklines, the sleep report) take the feed;
+    /// callers that only want the headline numbers call `recoverySignals()` above.
+    ///
+    /// `nights` spans 60 days because `SleepReport` learns the athlete's sleep NEED from it and
+    /// wants a couple of months to do that honestly; the vitals windows come from
+    /// `HealthBaselines.Window`.
+    struct RecoveryFeed: Sendable {
+        var signals: RecoverySignals = .empty
+        var hrvHist: [(day: Date, value: Double)] = []
+        var rhrHist: [(day: Date, value: Double)] = []
+        var respHist: [(day: Date, value: Double)] = []
+        var tempHist: [(day: Date, value: Double)] = []
+        var nights: [SleepNight] = []
+    }
+
+    func recoveryFeed() async -> RecoveryFeed {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--health-recovery-demo") { return .demo }
-        if ProcessInfo.processInfo.arguments.contains("--health-recovery-strained") { return .demoStrained }
-        if ProcessInfo.processInfo.arguments.contains("--health-recovery-primed") { return .demoPrimed }
+        // The scripted scenarios keep their own shapes — the demo histories come from
+        // `demoDailyHistory`/`demoSleepNights` so the charts and the headline stay one story.
+        if let scenario = Self.demoRecoveryScenario {
+            // Same precedence the old short-circuit had: demo, then strained, then primed.
+            let args = ProcessInfo.processInfo.arguments
+            let signals: RecoverySignals = args.contains("--health-recovery-demo") ? .demo
+                : args.contains("--health-recovery-strained") ? .demoStrained
+                : args.contains("--health-recovery-primed") ? .demoPrimed
+                : (scenario == .strained ? .demoStrained : .demo)
+            return RecoveryFeed(
+                signals: signals,
+                hrvHist: Self.demoDailyHistory(.heartRateVariabilitySDNN, days: HealthBaselines.Window.hrv,
+                                               scenario: scenario) ?? [],
+                rhrHist: Self.demoDailyHistory(.restingHeartRate, days: HealthBaselines.Window.restingHR,
+                                               scenario: scenario) ?? [],
+                respHist: Self.demoDailyHistory(.respiratoryRate, days: HealthBaselines.Window.respiratoryRate,
+                                                scenario: scenario) ?? [],
+                tempHist: Self.demoDailyHistory(.appleSleepingWristTemperature,
+                                                days: HealthBaselines.Window.wristTemperature,
+                                                scenario: scenario) ?? [],
+                nights: Self.demoSleepNights(days: 60, scenario: scenario))
+        }
         #endif
-        guard HKHealthStore.isHealthDataAvailable() else { return .empty }
+        guard HKHealthStore.isHealthDataAvailable() else { return RecoveryFeed() }
         let ms = HKUnit.secondUnit(with: .milli)
         let bpm = HKUnit.count().unitDivided(by: .minute())
         let calendar = Calendar.current
@@ -153,27 +199,92 @@ final class HealthService: HealthServing {
         //     dropped every segment that ended before it — four hours of a 23:00 bedtime. An
         //     evening recompute (a logged run re-fires the deck's task) then cratered the sleep
         //     pillar and PUBLISHED the wrong score to every surface, including the watch.
-        // Yesterday's morning is the oldest value accepted (one missed sync forgiven, as before),
-        // and that night began the evening before it — so the raw fetch reaches two days back.
-        let fetchStart = calendar.date(byAdding: .day, value: -2, to: today)
-            ?? now.addingTimeInterval(-2 * 86_400)
-        async let hrvSamples = quantitySamples(.heartRateVariabilitySDNN, unit: ms, from: fetchStart)
-        async let rhrSamples = quantitySamples(.restingHeartRate, unit: bpm, from: fetchStart)
-        async let segments = sleepSegments(from: fetchStart)
-        async let hrvBase = average(.heartRateVariabilitySDNN, unit: ms, days: 30)
-        async let rhrBase = average(.restingHeartRate, unit: bpm, days: 30)
+        // The BASELINES are learned exactly the way the vitals board learns them — day-bucketed,
+        // median per day, winsorized, and withheld until banded (accuracy audit 2026-09-05).
+        // They used to be `HKStatisticsQuery(.discreteAverage)` over every raw sample in 30 days,
+        // which reintroduced, on the norm side, the same mismatch the 2026-08-27 audit fixed on
+        // the value side — "today" built by one rule, "your normal" by another:
+        //   • A Watch writes daytime SDNN spot-checks as well as overnight ones, and a discrete
+        //     average weights every sample equally. A day with forty daytime readings outvoted a
+        //     night with one, and daytime SDNN sits systematically BELOW overnight — so the norm
+        //     was dragged low while `hrvMs` stayed night-preferred. `hrvTrend` therefore read
+        //     "steady" on genuinely suppressed mornings, and `RecoveryAdaptation` — which eases
+        //     the athlete's actual session off that trend — under-fired for Apple Watch users,
+        //     the largest cohort we have. (An Oura/Whoop athlete, overnight-only, was unaffected;
+        //     the bug was invisible on exactly the devices we test with.)
+        //   • A discrete average has no minimum. One sample on day one produced a "baseline", so
+        //     `hrvNote` said "below your norm" and the coach repeated it, against a norm learned
+        //     from a single night, while the score beside it honestly said "learning your norm".
+        // Now: one reduction, one norm, one claim. `nil` until `isBanded` (≥7 distinct days), so
+        // the trend accessors return nil and every surface says "learning your norm" instead.
+        //
+        // Yesterday's morning is still the oldest VALUE accepted (one missed sync forgiven); the
+        // fetch reaches back a full baseline window, one day further so the oldest night's
+        // pre-midnight samples are in frame.
+        func windowStart(_ daysBack: Int) -> Date {
+            calendar.date(byAdding: .day, value: -(daysBack + 1), to: today)
+                ?? now.addingTimeInterval(-Double(daysBack + 1) * 86_400)
+        }
+        let hrvStart = windowStart(HealthBaselines.Window.hrv)
+        async let hrvSamples = quantitySamples(.heartRateVariabilitySDNN, unit: ms, from: hrvStart)
+        async let rhrSamples = quantitySamples(.restingHeartRate, unit: bpm,
+                                               from: windowStart(HealthBaselines.Window.restingHR))
+        async let respSamples = quantitySamples(.respiratoryRate, unit: bpm,
+                                                from: windowStart(HealthBaselines.Window.respiratoryRate))
+        async let tempSamples = quantitySamples(.appleSleepingWristTemperature, unit: .degreeCelsius(),
+                                                from: windowStart(HealthBaselines.Window.wristTemperature))
+        // One sleep read, deep enough to serve every consumer: it is the night-preference window
+        // for HRV, the source of `sleepHours`, and the 60 nights `SleepReport` learns need from.
+        // The overnight-only vitals key off their own sample END (`nightKey`) and need no window.
+        let sleepStart = min(hrvStart, windowStart(60))
+        async let segments = sleepSegments(from: sleepStart)
+
         let sleep = await segments
         let nights = Self.nightSpans(from: sleep, calendar: calendar)
         let hrvDaily = Self.nightPreferredMedianPerDay(
             (await hrvSamples).map { (date: $0.start, value: $0.value) }, nights: nights, calendar: calendar)
         let rhrDaily = Self.medianPerDay(
             (await rhrSamples).map { (date: $0.start, value: $0.value) }, calendar: calendar)
-        return RecoverySignals(
+        let respDaily = Self.medianPerNight(
+            (await respSamples).map { (date: $0.end, value: $0.value) }, calendar: calendar)
+        let tempDaily = Self.medianPerNight(
+            (await tempSamples).map { (date: $0.end, value: $0.value) }, calendar: calendar)
+
+        let hrvBase = HealthBaselines.build(from: hrvDaily, windowDays: HealthBaselines.Window.hrv,
+                                            now: now, calendar: calendar)
+        let rhrBase = HealthBaselines.build(from: rhrDaily, windowDays: HealthBaselines.Window.restingHR,
+                                            now: now, calendar: calendar)
+        let respBase = HealthBaselines.build(from: respDaily, windowDays: HealthBaselines.Window.respiratoryRate,
+                                             now: now, calendar: calendar)
+        let tempBase = HealthBaselines.build(from: tempDaily, windowDays: HealthBaselines.Window.wristTemperature,
+                                             now: now, calendar: calendar)
+
+        let signals = RecoverySignals(
             hrvMs: Self.recentMorningValue(hrvDaily, now: now, calendar: calendar),
-            hrvBaselineMs: await hrvBase,
+            hrvBaselineMs: hrvBase.flatMap { $0.isBanded ? $0.mean : nil },
             restingHR: Self.recentMorningValue(rhrDaily, now: now, calendar: calendar).map { Int($0.rounded()) },
-            restingHRBaseline: await rhrBase,
-            sleepHours: Self.lastNightAsleepHours(from: sleep, now: now, calendar: calendar))
+            restingHRBaseline: rhrBase.flatMap { $0.isBanded ? $0.mean : nil },
+            sleepHours: Self.lastNightAsleepHours(from: sleep, now: now, calendar: calendar),
+            // Illness watch (RECOVERY-HUB-PLAN §11.1.3) — wired 2026-09-05. These two fields had
+            // consumers (`MorningReadiness` −5/−10 modifiers, `RecoveryAdaptation.decide`) and
+            // NO producer anywhere in the app: the only assignment in the whole target was the
+            // DEBUG `demoStrained` fixture. So the marketing captures showed illness watch
+            // working, every real athlete got nil, the modifiers could never fire, and DriverRow
+            // still printed "All clear — no signals firing" — a claim we had not earned about
+            // two signals we read, charted, and put a tile on screen for.
+            respiratoryZ: Self.establishedDeviation(respDaily, baseline: respBase,
+                                                    now: now, calendar: calendar)?.z,
+            wristTempDeltaC: Self.establishedDeviation(tempDaily, baseline: tempBase,
+                                                       now: now, calendar: calendar)?.delta)
+
+        let nightCutoff = windowStart(59)
+        return RecoveryFeed(signals: signals,
+                            hrvHist: hrvDaily.filter { $0.day >= windowStart(HealthBaselines.Window.hrv - 1) },
+                            rhrHist: rhrDaily,
+                            respHist: respDaily,
+                            tempHist: tempDaily,
+                            nights: Self.nightReports(from: sleep, calendar: calendar)
+                                .filter { $0.date >= nightCutoff })
     }
 
     /// The device-measured VO₂max from Apple Health (Apple Watch outdoor runs, Garmin, etc.) — a real
@@ -273,20 +384,12 @@ final class HealthService: HealthServing {
         }
     }
 
-    /// Discrete average of a quantity over the last `days` — the athlete's personal baseline for a
-    /// recovery signal (HRV, resting HR). `nil` when there are no samples in the window.
-    private func average(_ id: HKQuantityTypeIdentifier, unit: HKUnit, days: Int) async -> Double? {
-        await withCheckedContinuation { continuation in
-            let start = Calendar.current.date(byAdding: .day, value: -days, to: Date())
-            let predicate = HKQuery.predicateForSamples(withStart: start, end: nil)
-            let query = HKStatisticsQuery(quantityType: HKQuantityType(id),
-                                          quantitySamplePredicate: predicate,
-                                          options: .discreteAverage) { _, stats, _ in
-                continuation.resume(returning: stats?.averageQuantity()?.doubleValue(for: unit))
-            }
-            store.execute(query)
-        }
-    }
+    // `average(_:unit:days:)` — an `HKStatisticsQuery(.discreteAverage)` baseline — lived here
+    // until 2026-09-05. It is deliberately gone rather than left unused: it weighted every raw
+    // sample equally (so daytime HRV spot-checks outvoted the night the value came from), applied
+    // no winsorization, and had no minimum sample count, which is exactly what made "your norm"
+    // disagree with the norm the score and the vitals tiles use. Baselines come from
+    // `HealthBaselines.build` over a day-bucketed history now — one reduction, everywhere.
 
     /// Which wearables are actually feeding the recovery signals — for the provenance line, so it
     /// can say "your Oura ring" instead of "your connected wearable" (owner ask 2026-08-15).
@@ -602,6 +705,26 @@ final class HealthService: HealthServing {
         if let v = history.last(where: { $0.day == today })?.value { return v }
         guard let yesterday = calendar.date(byAdding: .day, value: -1, to: today) else { return nil }
         return history.last(where: { $0.day == yesterday })?.value
+    }
+
+    /// Pure pick (testable): this morning's deviation from a LEARNED norm — the illness-watch
+    /// input — or nil until that norm is established.
+    ///
+    /// Two gates, both deliberate. The norm must be `isEstablished` (≥14 distinct days): these are
+    /// the only signals that can subtract from a score on their own, and a deviation measured
+    /// against four nights of history is a coin flip, not a body signal. And the value must be
+    /// *this morning's* (`recentMorningValue`), so a fortnight-old fever never sits on today's
+    /// readiness. Returns both readings because the two consumers want different ones — breathing
+    /// rate is scored in SDs (a personal spread), wrist temperature in raw °C (the deviation IS
+    /// the quantity, and the SD of a stable overnight temperature is tiny enough that a z-score
+    /// would fire on noise).
+    nonisolated static func establishedDeviation(_ history: [(day: Date, value: Double)],
+                                                 baseline: HealthBaselines.Baseline?,
+                                                 now: Date,
+                                                 calendar: Calendar) -> (z: Double, delta: Double)? {
+        guard let baseline, baseline.isEstablished,
+              let today = recentMorningValue(history, now: now, calendar: calendar) else { return nil }
+        return (z: baseline.z(today), delta: today - baseline.mean)
     }
 
     /// Pure pick (testable): last night's asleep hours — the night keyed to THIS morning, whole,

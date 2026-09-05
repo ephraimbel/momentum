@@ -2248,7 +2248,7 @@ struct MorningReadinessLine: View {
                             Text("\(readiness.score)")
                                 .font(.display(20, weight: .black)).monospacedDigit()
                                 .foregroundStyle(Theme.ink)
-                            Text(readiness.band.rawValue)
+                            Text(readiness.band.displayName)
                                 .font(.rounded(Theme.FontSize.caption, weight: .bold))
                                 .foregroundStyle(Theme.inkSecondary)
                         }
@@ -2316,7 +2316,7 @@ struct MorningReadinessLine: View {
     private var driver: String { readiness.displayDriverWithConfidence }
 
     private var a11yLabel: String {
-        var label = "Readiness \(readiness.score), \(readiness.band.rawValue). \(driver)."
+        var label = "Readiness \(readiness.score), \(readiness.band.displayName). \(driver)."
         if adjustedToday { label += " Today's plan was adjusted — tap to see why." }
         return label
     }

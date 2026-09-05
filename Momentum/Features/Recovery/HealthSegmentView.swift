@@ -120,7 +120,7 @@ struct HealthSegmentView: View {
             // One number everywhere: publish today's full-blend score so the Trends strip and the
             // athlete-panel rail show exactly what the hero shows (never the light fallback again).
             if let r = built.readiness {
-                ReadinessTodayCache.store(score: r.score, band: r.band.rawValue,
+                ReadinessTodayCache.store(score: r.score, band: r.band.displayName,
                                           driver: r.displayDriverLine)
             }
             // Week guard (§11.1.4): a week of poor recovery at normal load raises ONE consent-gated
@@ -184,7 +184,8 @@ struct HealthSegmentView: View {
                   readout: model.readout,
                   acwr: model.acwr,
                   timeline: [],                       // the history trail is Pro — it lives below
-                  onSelectPillar: onSelect)
+                  onSelectPillar: onSelect,
+                  illnessWatchLearning: model.illnessWatchLearning)
             .reveal(0.07)
 
         if !model.healthAuthorized {
@@ -458,6 +459,9 @@ extension HealthSegmentView {
         var readout: DriverRow.Readout = .allClear
         var acwr: Double = 0
         var healthAuthorized = false
+        /// Breathing rate / wrist temperature are arriving but their norms aren't established
+        /// yet — the readout says so rather than reporting a clean sweep it hasn't run.
+        var illnessWatchLearning = false
         /// The wearables actually feeding the signals (most-contributing first) — names the
         /// provenance footnote ("your Oura ring and Apple Watch").
         var sources: [WearableKind] = []
@@ -502,9 +506,9 @@ extension HealthSegmentView {
             // ── Health reads: the live morning signals + the day-bucketed histories (P1 APIs).
             // The history queries live on the concrete service; a stubbed HealthServing (previews,
             // tests) degrades to signals-only, exactly like an unauthorized device.
-            let signals = await health.recoverySignals()
             let concrete = health as? HealthService
 
+            var signals = RecoverySignals.empty
             var hrvHist: [(day: Date, value: Double)] = []
             var rhrHist: [(day: Date, value: Double)] = []
             var respHist: [(day: Date, value: Double)] = []
@@ -513,22 +517,30 @@ extension HealthSegmentView {
             var rawNights: [SleepNight] = []
             var sources: [WearableKind] = []
             if let concrete {
-                sources = await concrete.signalSources()
-                hrvHist = await concrete.hrvDailyHistory(days: HealthBaselines.Window.hrv)
-                rhrHist = await concrete.dailyHistory(.restingHeartRate, unit: bpm,
-                                                      days: HealthBaselines.Window.restingHR)
+                // ONE pass for the signals and the four histories they are reduced from
+                // (`recoveryFeed`) — the same call `ReadinessToday` makes, so the hero's number
+                // and these charts are literally the same samples reduced once. Walking HR isn't
+                // in the feed (it is a strain input, not a readiness one) and the source sweep is
+                // metadata-only, so both ride alongside.
+                async let feed = concrete.recoveryFeed()
+                async let walk = concrete.dailyHistory(.walkingHeartRateAverage, unit: bpm,
+                                                       days: HealthBaselines.Window.walkingHR)
+                async let kinds = concrete.signalSources()
+                let f = await feed
+                signals = f.signals
+                hrvHist = f.hrvHist
+                rhrHist = f.rhrHist
                 // Overnight-only signals key by NIGHT (the sample's end → the wake morning), not by
                 // the sample's start — otherwise one night splits across two dates and the band
-                // appears after half the nights it claims (accuracy audit 2026-08-27).
-                respHist = await concrete.dailyHistory(.respiratoryRate, unit: bpm,
-                                                       days: HealthBaselines.Window.respiratoryRate,
-                                                       reduction: .nightMedian)
-                tempHist = await concrete.dailyHistory(.appleSleepingWristTemperature, unit: .degreeCelsius(),
-                                                       days: HealthBaselines.Window.wristTemperature,
-                                                       reduction: .nightMedian)
-                walkHist = await concrete.dailyHistory(.walkingHeartRateAverage, unit: bpm,
-                                                       days: HealthBaselines.Window.walkingHR)
-                rawNights = await concrete.sleepNights(days: 60)
+                // appears after half the nights it claims (accuracy audit 2026-08-27). The feed
+                // applies that reduction; these arrive already night-keyed.
+                respHist = f.respHist
+                tempHist = f.tempHist
+                rawNights = f.nights
+                walkHist = await walk
+                sources = await kinds
+            } else {
+                signals = await health.recoverySignals()
             }
 
             // ── Baselines (learned norms — every "vs your normal" reads through these).
@@ -570,6 +582,12 @@ extension HealthSegmentView {
             for entry in rhrHist { rhrByDay[calendar.startOfDay(for: entry.day)] = entry.value }
             var walkByDay: [Date: Double] = [:]
             for entry in walkHist { walkByDay[calendar.startOfDay(for: entry.day)] = entry.value }
+            // The illness-watch inputs, per morning — so a past day's score is built by the same
+            // recipe as today's rather than silently dropping two of its five signals.
+            var respByDay: [Date: Double] = [:]
+            for entry in respHist { respByDay[calendar.startOfDay(for: entry.day)] = entry.value }
+            var tempByDay: [Date: Double] = [:]
+            for entry in tempHist { tempByDay[calendar.startOfDay(for: entry.day)] = entry.value }
             var nightByDay: [Date: SleepReport.Night] = [:]
             for night in nights {
                 let key = calendar.startOfDay(for: night.date)
@@ -616,6 +634,23 @@ extension HealthSegmentView {
                     sig.hrvMs = hrvByDay[d]
                     sig.restingHR = rhrByDay[d].map { Int($0.rounded()) }
                     sig.sleepHours = nightByDay[d]?.asleepH
+                    // Illness watch, rebuilt as of THAT morning (wired 2026-09-05, matching the
+                    // live feed). Baselines are rebuilt per day below for the same reason the HRV
+                    // and resting-HR ones are: a past morning must not borrow a norm learned from
+                    // nights that had not happened yet. Established-only, so early history simply
+                    // carries no modifier rather than an unlearned verdict.
+                    let respBaseD = HealthBaselines.build(from: respHist,
+                                                          windowDays: HealthBaselines.Window.respiratoryRate,
+                                                          now: d, calendar: calendar)
+                    let tempBaseD = HealthBaselines.build(from: tempHist,
+                                                          windowDays: HealthBaselines.Window.wristTemperature,
+                                                          now: d, calendar: calendar)
+                    if let base = respBaseD, base.isEstablished, let v = respByDay[d] {
+                        sig.respiratoryZ = base.z(v)
+                    }
+                    if let base = tempBaseD, base.isEstablished, let v = tempByDay[d] {
+                        sig.wristTempDeltaC = v - base.mean
+                    }
                     let past = workouts.filter { $0.startedAt < d }
                     let ctx = sleepContext(asOf: d)
                     let score = MorningReadiness(
@@ -762,6 +797,10 @@ extension HealthSegmentView {
                 }
                 readout = lines.isEmpty ? .allClear : .warnings(lines)
             }
+            // Only claim "still learning" when the hardware is actually writing the signal. An
+            // athlete whose watch never records wrist temperature is not waiting for anything.
+            let illnessWatchLearning = (!respHist.isEmpty && !(respBase?.isEstablished ?? false))
+                || (!tempHist.isEmpty && !(tempBase?.isEstablished ?? false))
             let timeline = adaptationEvents.prefix(6).map {
                 DriverRow.TimelineEntry(date: $0.date, headline: $0.headline, reason: $0.detail)
             }
@@ -771,6 +810,7 @@ extension HealthSegmentView {
                          readout: readout,
                          acwr: acwr,
                          healthAuthorized: health.isAuthorized,
+                         illnessWatchLearning: illnessWatchLearning,
                          sources: sources,
                          balanceWeek: balanceWeek,
                          balanceMonth: balanceMonth,
@@ -794,7 +834,9 @@ extension HealthSegmentView {
         private static func vitalTile(_ kind: VitalTileModel.Kind,
                                       history: [(day: Date, value: Double)],
                                       baseline: HealthBaselines.Baseline?,
-                                      unit: String) -> VitalTileModel {
+                                      unit: String,
+                                      now: Date = Date(),
+                                      calendar: Calendar = .current) -> VitalTileModel {
             let latest = history.last?.value
             let decimals = kind == .respiratory || kind == .wristTemp
             var delta = ""
@@ -803,7 +845,26 @@ extension HealthSegmentView {
             if let baseline, baseline.isBanded {
                 bandRange = (lower: baseline.lower, upper: baseline.upper)
             }
-            if let latest, let baseline, baseline.isBanded {
+            // How old the headline reading is. `history.last` is the most recent day that HAS a
+            // value anywhere in a 30–60 day window, which is not the same thing as a current
+            // reading: a watch that stopped being worn three weeks ago left a value here, and the
+            // tile printed it with "steady vs normal" beside it as though it were this morning's
+            // (accuracy audit 2026-09-05 — the same staleness the VO₂max read was bounded for).
+            //
+            // Three days, not one. These are overnight signals and plenty of athletes skip a night
+            // or two; withholding a Tuesday reading on a Thursday would be its own kind of lying.
+            // Past that the value still shows — the number and the sparkline are real history —
+            // but the COMPARISON goes away, because a fortnight-old reading measured against
+            // today's norm is a claim about a day the athlete didn't wear the thing.
+            let staleDays = history.last.flatMap {
+                calendar.dateComponents([.day], from: calendar.startOfDay(for: $0.day),
+                                        to: calendar.startOfDay(for: now)).day
+            }
+            let isCurrent = (staleDays ?? .max) <= 3
+            if latest != nil, !isCurrent, let days = staleDays {
+                inBand = days == 1 ? "Last read yesterday" : "Last read \(days) days ago"
+            }
+            if let latest, let baseline, baseline.isBanded, isCurrent {
                 let diff = latest - baseline.mean
                 let threshold = max(baseline.sd * 0.5, decimals ? 0.1 : 1)
                 if abs(diff) < threshold {

@@ -8,12 +8,32 @@ import Foundation
 /// a physiological diagnosis. The AI narrates it; this type only computes.
 @MainActor
 struct RecoveryModel {
-    enum Readiness: String, Sendable {
+    enum Readiness: String, Sendable, CaseIterable {
         case primed = "Low strain"
         case ready = "Steady"
         case moderate = "Moderate"
         case strained = "High strain"
         case depleted = "Very high"
+
+        /// The band in READINESS words — what every ring headed "READINESS" is labelled with.
+        ///
+        /// `rawValue` is the STRAIN vocabulary this enum was first written in ("Low strain" …
+        /// "Very high" [strain]), and it was being rendered verbatim under the readiness ring —
+        /// where it inverts at the bottom end. A depleted morning showed the numeral **23** with
+        /// the word **"Very high"** beside it, and VoiceOver read "23 out of 100, Very high":
+        /// the number said wrung out, the word said great, and the athlete had to guess which one
+        /// the app meant (accuracy audit 2026-09-05). These names match the case names and the
+        /// `readinessReady`/`readinessModerate`/`readinessStrained`/`readinessDepleted` colour
+        /// assets the same band already picks, so the page finally speaks one vocabulary.
+        var displayName: String {
+            switch self {
+            case .primed:   "Primed"
+            case .ready:    "Ready"
+            case .moderate: "Moderate"
+            case .strained: "Strained"
+            case .depleted: "Depleted"
+            }
+        }
     }
 
     let score: Int            // 0–100 context index; higher = fewer load-pattern cautions

@@ -44,6 +44,11 @@ struct DriverRow: View {
     var timeline: [TimelineEntry] = []
     /// Chips scroll to their card — the Health segment wires this to its scroll proxy.
     var onSelectPillar: ((MorningReadiness.PillarKind) -> Void)? = nil
+    /// The illness-watch signals are arriving but their norm isn't learned yet (≥14 nights), so
+    /// "no signals firing" would be claiming a sweep we haven't finished. Only true when the
+    /// athlete's hardware IS writing breathing rate or wrist temperature — someone whose watch
+    /// never writes them is not owed a promise that they're coming.
+    var illnessWatchLearning = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
@@ -233,11 +238,15 @@ struct DriverRow: View {
     @ViewBuilder private var readoutView: some View {
         switch readout {
         case .allClear:
-            readoutLine(icon: "checkmark.circle",
+            readoutLine(icon: illnessWatchLearning ? "hourglass" : "checkmark.circle",
                         tint: Theme.Health.recoveryInk,
                         text: loadDominatedLow
                             ? "Low from training load, no acute body signals — the plan already carries this via your deload cadence."
-                            : "All clear — no signals firing.")
+                            : illnessWatchLearning
+                                // Two of the five are still learning what normal looks like for
+                                // you, so the sweep isn't complete and the line must not say it is.
+                                ? "Nothing firing in what's learned so far. Breathing rate and wrist temperature join once there are about two weeks of nights to compare against."
+                                : "All clear — no signals firing.")
         case .warnings(let lines):
             VStack(alignment: .leading, spacing: Theme.Space.xs) {
                 ForEach(lines, id: \.self) { line in

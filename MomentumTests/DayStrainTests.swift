@@ -105,6 +105,21 @@ struct DayStrainTests {
         #expect(strain(steps: 10_000, hrBaseline: baseline).ambientLoad == 100)
     }
 
+    /// An UNLEARNED norm is the third way to have no signal, and it used to nudge anyway: the gate
+    /// was `mean > 0`, and `HealthBaselines.build` hands back a mean from a single day. A day-one
+    /// athlete's first walking-HR reading became its own baseline and moved their strain by up to
+    /// 15% off one sample (accuracy audit 2026-09-05).
+    @Test func anUnbandedWalkingHRBaselineNeverNudges() {
+        // Six days is under `isBanded` (≥7) — a norm the athlete has not lived long enough to have.
+        let unlearned = HealthBaselines.Baseline(mean: 100, sd: 5, dayCount: 6, windowDays: 60)
+        #expect(!unlearned.isBanded)
+        #expect(strain(steps: 10_000, hrAvg: 130, hrBaseline: unlearned).ambientLoad == 100)
+        #expect(strain(steps: 10_000, hrAvg: 70, hrBaseline: unlearned).ambientLoad == 100)
+        // The seventh day earns it, and the same reading finally counts.
+        let learned = HealthBaselines.Baseline(mean: 100, sd: 5, dayCount: 7, windowDays: 60)
+        #expect(abs(strain(steps: 10_000, hrAvg: 130, hrBaseline: learned).ambientLoad - 115) < 0.000_1)
+    }
+
     @Test func dayKeyExcludes2350AndIncludes0010() {
         // A 23:50 session belongs to yesterday's strain; a 00:10 session to today's.
         let todayStart = cal.startOfDay(for: now)
