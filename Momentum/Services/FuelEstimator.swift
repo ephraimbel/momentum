@@ -118,7 +118,8 @@ struct FuelEstimator {
                 return .unavailable
             }
             guard http.statusCode == 200 else { return .declined }
-            return .estimated(try JSONDecoder().decode(Estimate.self, from: data))
+            let estimate = try JSONDecoder().decode(Estimate.self, from: data)
+            return Self.isValid(estimate) ? .estimated(estimate) : .declined
         } catch {
             return Self.neverReachedServer(error) ? .unavailable : .declined
         }
@@ -127,9 +128,9 @@ struct FuelEstimator {
     /// Apply an estimate onto a meal — unless the athlete already set numbers by hand (manual wins).
     /// Items land as the breakdown; the meal's totals are Σ items (one source of truth).
     static func apply(_ e: Estimate, to meal: Meal) {
-        guard meal.source != "manual" else { return }
+        guard meal.source != "manual", isValid(e) else { return }
         meal.items = e.items.map {
-            MealItem(name: $0.name, qty: max(0.25, $0.qty), unit: $0.unit, kcal: $0.kcal,
+            MealItem(name: $0.name, qty: $0.qty, unit: $0.unit, kcal: $0.kcal,
                      carbsG: $0.carbs_g, proteinG: $0.protein_g, fatG: $0.fat_g,
                      sodiumMg: $0.sodium_mg, fluidsMl: $0.fluids_ml,
                      potassiumMg: $0.potassium_mg, magnesiumMg: $0.magnesium_mg,
@@ -140,6 +141,22 @@ struct FuelEstimator {
         meal.confidence = e.confidence
         meal.note = e.note.isEmpty ? nil : e.note
         meal.source = "ai"
+    }
+
+    /// Reject the entire response before touching a saved meal. A malformed item must not
+    /// produce a negative total, an overflow, or a resolved-but-empty journal entry.
+    static func isValid(_ estimate: Estimate) -> Bool {
+        guard !estimate.items.isEmpty, estimate.items.count <= 100,
+              estimate.confidence.isFinite, (0...1).contains(estimate.confidence) else { return false }
+        return estimate.items.allSatisfy { item in
+            let numbers = [item.kcal, item.carbs_g, item.protein_g, item.fat_g, item.sodium_mg, item.fluids_ml]
+                + [item.potassium_mg, item.magnesium_mg, item.calcium_mg, item.fiber_g, item.sugar_g, item.satfat_g].compactMap { $0 }
+            return !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !item.unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && item.qty.isFinite && (0.001...10_000).contains(item.qty)
+                && numbers.allSatisfy { (0...1_000_000).contains($0) }
+                && (item.iron_mg.map { $0.isFinite && (0...1_000_000).contains($0) } ?? true)
+        }
     }
 
     private var endpoint: URL? {

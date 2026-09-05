@@ -3,7 +3,7 @@ import AuthenticationServices
 import AVFoundation
 
 /// The entry, two beats:
-/// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Get started" that
+/// 1. **Welcome** — the full-bleed athletic hero with the wordmark and a single "Build my plan" that
 ///    goes straight into onboarding. **No account is asked for here** (decision 2026-07-27,
 ///    supersedes the 2026-07-10 "auth moved off the welcome" half-step and PRD §8.11's
 ///    sign-in-first ordering): a login wall on launch is the cheapest place in the funnel to lose
@@ -15,7 +15,8 @@ import AVFoundation
 struct SignInView: View {
     @Environment(AuthController.self) private var auth
     @Environment(Services.self) private var services
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    @ReducedMotionPreference private var reduceMotion
 
     /// True when presented as a cover (Settings → guest "more ways to sign in"): skips the
     /// welcome hero and the back chevron dismisses the cover instead of returning to it.
@@ -41,7 +42,7 @@ struct SignInView: View {
     }
 
     @State private var showingSignIn: Bool
-    @State private var welcomeAppeared = false   // drives the lockup's one-time settle-in
+    @State private var welcomeAppeared = false   // drives the actions' one-time settle-in
 
     var body: some View {
         ZStack {
@@ -58,13 +59,13 @@ struct SignInView: View {
         .animation(.easeOut(duration: 0.28), value: showingSignIn)
     }
 
-    // MARK: Beat 1 — the welcome (brand only)
+    // MARK: Beat 1 — the welcome (brand film → personal setup)
 
     /// Named after the profile when there is one, so a second person on a hand-me-down phone can
     /// see whose data they'd be picking up — and "I already have an account" is right underneath.
     /// Falls back to a plain "Continue" rather than "Continue as me" when the name is blank.
     private var primaryTitle: String {
-        guard hasLocalProfile else { return "Get started" }
+        guard hasLocalProfile else { return "Build my plan" }
         return existingName.map { "Continue as \($0)" } ?? "Continue"
     }
 
@@ -79,24 +80,26 @@ struct SignInView: View {
             // CTA off-screen).
             Color.clear
                 .overlay {
-                    Image("WelcomePoster")
+                    Image(reduceMotion ? "WelcomeClosingPoster" : "WelcomePoster")
                         .resizable()
                         .scaledToFill()
                 }
                 .clipped()
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
-            WelcomeFilmView(paused: showingSignIn)
-                .ignoresSafeArea()
-                .accessibilityHidden(true)
+            // Reduce Motion gets the actual closing card immediately, with no player or seek.
+            if !reduceMotion {
+                WelcomeFilmView(paused: showingSignIn || scenePhase != .active)
+                    .ignoresSafeArea()
+                    .accessibilityHidden(true)
+            }
 
-            // Scrim — clear over the runners up top, darkening toward the bottom so the positioning
-            // line and the Get started button stay crisp.
+            // The film owns the message. Shade only the lower action area for legibility.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0.0),
-                    .init(color: .clear, location: 0.40),
-                    .init(color: .black.opacity(0.34), location: 0.74),
+                    .init(color: .clear, location: 0.58),
+                    .init(color: .black.opacity(0.34), location: 0.84),
                     .init(color: .black.opacity(0.88), location: 1.0),
                 ],
                 startPoint: .top, endPoint: .bottom
@@ -106,14 +109,10 @@ struct SignInView: View {
             // No centered lockup anymore (owner call 2026-08-11): the film's own closing card
             // carries the wordmark and motto, and a static overlay would double-brand the ending.
 
-            // The positioning line sits right above the CTA pair, all anchored to the bottom.
+            // The film's MOMENTUM / KEEP MOVING close is the only headline. The controls sit
+            // below it in the UI face, giving the brand room to land without a competing lockup.
             VStack(spacing: Theme.Space.md) {
                 Spacer()
-                Text("From your first 5K to your first ultra.")
-                    .font(.rounded(Theme.FontSize.body, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .multilineTextAlignment(.center)
-                    .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
                 VStack(spacing: Theme.Space.xs) {
                     Button {
                         Haptics.light()
@@ -149,7 +148,7 @@ struct SignInView: View {
                         showingSignIn = true
                     } label: {
                         Text("I already have an account")
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                            .font(.rounded(15, weight: .medium))
                             .foregroundStyle(.white.opacity(0.9))
                             .shadow(color: .black.opacity(0.45), radius: 8, y: 1)
                             .lineLimit(1)
@@ -165,7 +164,7 @@ struct SignInView: View {
             .opacity(welcomeAppeared || reduceMotion ? 1 : 0)
             .offset(y: welcomeAppeared || reduceMotion ? 0 : 18)
         }
-        // A quiet settle-in so the brand lands on the photo instead of snapping in. Honors Reduce
+        // A quiet settle-in for the actions over the film. Honors Reduce
         // Motion (no transform, no fade).
         .onAppear {
             // A remembered athlete never waits at the gate (owner call 2026-08-20, "Strava just
@@ -193,7 +192,7 @@ struct SignInView: View {
 /// "momentum keep moving" closing card — so the welcome settles into the same stillness the old
 /// static hero had, with the brand carried by the film itself (owner call 2026-08-11; loop was
 /// considered and rejected — endless motion under the CTAs reads restless and burns battery).
-/// Reduce Motion: no playback at all, the view opens directly on the closing card — and no sound.
+/// Reduce Motion: the parent shows the bundled closing still and never creates this player.
 /// Sound is ON (owner call 2026-08-15): the bundled asset carries its AAC track again, and the
 /// audio session is `.playback` + `.mixWithOthers` — deliberate on both counts. `.playback` so the
 /// film is heard even with the ringer switch on silent (an `.ambient` film would simply never be
@@ -205,55 +204,58 @@ private struct WelcomeFilmView: UIViewRepresentable {
     /// athlete comes back. Muted, this leak was invisible; with sound on, a film playing under the
     /// sign-in page is exactly the "clicked off but still hear it" bug.
     var paused = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     final class PlayerView: UIView {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
-        // Safe by the `layerClass` override directly above — UIKit builds this view's layer from
-        // that type, so the cast cannot fail. (The rule stays on everywhere else.)
+        // UIKit creates the layer using the class above.
         // swiftlint:disable:next force_cast
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        var paused = false
+        var dismantled = false
+        private var audioConfigured = false
+
+        func updatePlayback() {
+            guard !dismantled, let player = playerLayer.player else { return }
+            if paused {
+                player.pause()
+            } else {
+                if !audioConfigured {
+                    try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+                    audioConfigured = true
+                }
+                player.isMuted = false
+                player.play()
+            }
+        }
     }
 
     func makeUIView(context: Context) -> PlayerView {
         let view = PlayerView()
-        // Missing asset → the poster underlay simply stays; the welcome still works.
+        view.paused = paused
         guard let url = Bundle.main.url(forResource: "WelcomeVideo", withExtension: "mov") else { return view }
         view.playerLayer.videoGravity = .resizeAspectFill
-        let reduceMotion = reduceMotion
-        // Player construction waits one runloop turn: bringing up AVFoundation inside `makeUIView`
-        // sat on the app's very first frame — the first screen a brand-new user ever sees. The
-        // poster underlay holds the identical opening frame until the player attaches.
+        // Keep AVFoundation off the first frame. Read the latest state after the deferral: a
+        // quick tap may already have covered or removed the film before its player is ready.
         DispatchQueue.main.async {
+            guard !view.dismantled else { return }
             let player = AVPlayer(url: url)
-            player.actionAtItemEnd = .pause                   // hold the closing card; never loop
+            player.actionAtItemEnd = .pause
             player.preventsDisplaySleepDuringVideoPlayback = false
             view.playerLayer.player = player
-            if reduceMotion {
-                // Straight to the closing card — same destination, no motion, and no sound
-                // (a still frame with a soundtrack would be pure noise). The absurd target
-                // time clamps to the end of the item.
-                player.isMuted = true
-                player.seek(to: CMTime(seconds: 9_999, preferredTimescale: 600))
-            } else {
-                // Audible past the silent switch, layered over (never replacing) anything the
-                // athlete is already listening to — see the type doc for why this exact pair.
-                try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
-                player.isMuted = false
-                player.play()
-            }
+            view.updatePlayback()
         }
         return view
     }
 
     func updateUIView(_ uiView: PlayerView, context: Context) {
-        // Player construction is deferred one runloop turn (see makeUIView); until it lands there
-        // is nothing to pause. Resume is safe unconditionally: once the film has ended,
-        // `actionAtItemEnd = .pause` holds the closing card and play() is a no-op — and under
-        // Reduce Motion the player sits at the end already, so it never springs back to life.
-        guard let player = uiView.playerLayer.player else { return }
-        if paused { player.pause() }
-        else if !reduceMotion { player.play() }
+        uiView.paused = paused
+        uiView.updatePlayback()
+    }
+
+    static func dismantleUIView(_ uiView: PlayerView, coordinator: ()) {
+        uiView.dismantled = true
+        uiView.playerLayer.player?.pause()
+        uiView.playerLayer.player = nil
     }
 }
 

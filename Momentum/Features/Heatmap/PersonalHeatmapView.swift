@@ -25,7 +25,7 @@ struct PersonalHeatmapView: View {
             if cells.isEmpty {
                 Color.clear.overlay { if loaded { emptyState } }
             } else {
-                HeatmapMapView(cells: cells, style: style.uriStyle(for: colorScheme)).ignoresSafeArea()
+                HeatmapMapView(cells: cells, style: style.renderedStyle(for: colorScheme)).ignoresSafeArea()
             }
             topBar
             if !cells.isEmpty { statsBar }

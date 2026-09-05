@@ -17,14 +17,23 @@ final class CoachPresenter {
     private(set) var prefill: String?
     /// The workout a contextual entry is about — the debrief grounds in THIS one, not just the latest.
     private(set) var contextWorkoutID: UUID?
-    /// A nav-card destination waiting for the shell — set on tap, consumed by `RootView.onChange`.
+    /// A nav-card destination waiting for the shell. When the coach is open, the shell consumes
+    /// this only after its cover has dismissed; notifications can also route without a coach cover.
     var pendingNav: CoachDestination?
+    private(set) var navigationAwaitsDismissal = false
     /// Set by the shell when a nav card asked for plan settings; `PlanView` consumes it on appear.
     var wantsPlanSettings = false
     /// Onboarding owns the screen — while it's up, the coach never presents over it (a proactive
     /// seed or stray deep link mid-onboarding would stack covers). Set by `RootView`.
     var isSuspended = false {
-        didSet { if isSuspended { isPresented = false } }
+        didSet {
+            if isSuspended {
+                pendingNav = nil
+                navigationAwaitsDismissal = false
+                wantsPlanSettings = false
+                isPresented = false
+            }
+        }
     }
 
     init() {
@@ -33,6 +42,8 @@ final class CoachPresenter {
 
     func open(prefill: String? = nil, workoutID: UUID? = nil) {
         guard !isSuspended else { return }
+        pendingNav = nil
+        navigationAwaitsDismissal = false
         self.prefill = prefill
         self.contextWorkoutID = workoutID
         isPresented = true
@@ -52,9 +63,21 @@ final class CoachPresenter {
 
     /// A nav card was tapped: leave the chat and let the shell route.
     func navigate(_ destination: CoachDestination) {
-        isPresented = false
+        navigationAwaitsDismissal = isPresented || navigationAwaitsDismissal
         pendingNav = destination
+        isPresented = false
         markSeen()
+    }
+
+    /// Consume once. A new chat opened during dismissal clears the old request in `open`, so a
+    /// late dismissal callback can never steer the athlete away from their new conversation.
+    func consumeNavigation(afterDismissal: Bool = false) -> CoachDestination? {
+        guard !navigationAwaitsDismissal || afterDismissal else { return nil }
+        defer {
+            pendingNav = nil
+            navigationAwaitsDismissal = false
+        }
+        return pendingNav
     }
 
     /// The chat consumed the prefill into its input field.

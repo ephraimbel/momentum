@@ -151,10 +151,10 @@ struct ProfileGrid: View {
         // The signature reveal cascade (the summary screens' entrance): each block lands a beat
         // after the one above, so the page reads top-down as a composed report, not a dump.
         VStack(alignment: .leading, spacing: Theme.Space.xl) {
-            lifetimeSection.reveal(0)
-            if !stats.countsByType.isEmpty { trainSection.reveal(0.08) }
-            consistencySection.reveal(0.16)
-            awardsSection.reveal(0.24)
+            lifetimeSection.reveal(0, once: "profile.lifetime")
+            if !stats.countsByType.isEmpty { trainSection.reveal(0.02, once: "profile.training") }
+            consistencySection.reveal(0.04, once: "profile.consistency")
+            awardsSection.reveal(0.06, once: "profile.awards")
         }
         .padding(.horizontal, Theme.Space.md)
         .padding(.top, Theme.Space.lg)

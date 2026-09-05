@@ -11,13 +11,79 @@ import SwiftUI
 // Reduce Motion = static.
 
 enum OnboardingStyle {
-    /// Cards float, so they take the sheet radius (the radius law: 22 for anything that reads as
-    /// a panel); chips stay capsules.
-    static let cardRadius = 20.0
+    /// A restrained shared radius for interview cards and optional detail panels.
+    static let cardRadius = 16.0
+    static let pageTransition: Animation = .timingCurve(0.22, 0.0, 0.18, 1.0, duration: 0.36)
+    static let entrance: Animation = .spring(response: 0.46, dampingFraction: 0.9)
+    static let selection: Animation = .spring(response: 0.3, dampingFraction: 0.78)
+    static let progress: Animation = .spring(response: 0.5, dampingFraction: 0.88)
     /// The page ground: a flat cool gray on light (white cards float on it with almost no shadow);
     /// the app charcoal on dark.
     static func canvas(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Theme.background : Color(hex: "F5F5F7")
+    }
+}
+
+/// Onboarding has its own arrival rhythm. Everyday screens use the faster `.reveal`; these
+/// questions get a little more travel and a soft landing, without delaying input or changing layout.
+private struct OnboardingEntrance: ViewModifier {
+    let delay: Double
+    let lift: CGFloat
+    @State private var shown = false
+    @ReducedMotionPreference private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown || reduceMotion ? 1 : 0)
+            .offset(y: shown || reduceMotion ? 0 : lift)
+            .onAppear {
+                guard !shown else { return }
+                guard !reduceMotion else { shown = true; return }
+                withAnimation(OnboardingStyle.entrance.delay(delay)) { shown = true }
+            }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced { shown = true }
+            }
+    }
+}
+
+extension View {
+    func onboardingEntrance(_ delay: Double = 0, lift: CGFloat = 18) -> some View {
+        modifier(OnboardingEntrance(delay: delay, lift: lift))
+    }
+}
+
+/// Optional precision lives in a focused panel, leaving the interview's main choices in view.
+struct OnboardingDetailSheet<Content: View>: View {
+    let title: String
+    let subtitle: String?
+    let content: Content
+    @Environment(\.dismiss) private var dismiss
+
+    init(title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    OnboardingHeading(title: title, subtitle: subtitle, size: 27)
+                    VStack(spacing: 12) { content }
+                }
+                .padding(24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .background(OnboardingCanvas())
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }.font(.rounded(15, weight: .semibold))
+                }
+            }
+        }
+        .environment(\.colorScheme, .light)
     }
 }
 
@@ -31,7 +97,7 @@ struct OnboardingCanvas: View {
     /// questions stay on flat ground.
     var crown = false
     @Environment(\.colorScheme) private var scheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -88,16 +154,16 @@ struct OnboardingHeading: View {
     var size: CGFloat = 30
 
     var body: some View {
-        VStack(spacing: Theme.Space.sm + 2) {
+        VStack(spacing: 10) {
             Text(title)
-                .font(.rounded(size, weight: .semibold))
+                .font(.display(size, weight: .semibold))
                 .foregroundStyle(Theme.ink)
                 .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle)
-                    .font(.rounded(18, weight: .regular))
+                    .font(.rounded(15, weight: .regular))
                     .foregroundStyle(Theme.inkSecondary)
-                    .lineSpacing(3)
+                    .lineSpacing(2)
             }
         }
         .multilineTextAlignment(.center)
@@ -112,9 +178,18 @@ struct OnboardingHeading: View {
 /// hairline on the charcoal (a drop shadow does nothing on dark ground).
 struct OnboardingCardSurface: ViewModifier {
     var selected = false
+    @Environment(\.colorScheme) private var scheme
     func body(content: Content) -> some View {
-        content.raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous),
-                       selected: selected)
+        let shape = RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+        content
+            .background(shape.fill(scheme == .dark ? Theme.surface : .white))
+            .overlay(shape.strokeBorder(Theme.ink.opacity(0.055), lineWidth: 0.5))
+            .overlay {
+                shape.strokeBorder(Theme.ink.opacity(0.75), lineWidth: 1)
+                    .opacity(selected ? 1 : 0)
+                    .animation(Motion.crossfade, value: selected)
+            }
+            .shadow(color: .black.opacity(scheme == .dark ? 0 : 0.025), radius: 8, y: 3)
     }
 }
 
@@ -141,30 +216,31 @@ struct ChoiceCard: View {
     let action: () -> Void
 
     @Environment(\.colorScheme) private var scheme
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         Button {
             Haptics.selection()
             action()
         } label: {
-            HStack(spacing: Theme.Space.md) {
-                // The glyph disc (owner call 2026-08-27: keep the icons): quiet gray at rest,
-                // lavender-tint when picked — the one place color enters a card.
+            HStack(spacing: 12) {
+                // A small lift in scale acknowledges the choice; no looping or full-card bounce.
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(isSelected ? Theme.purpleDeep : Theme.ink)
-                        .frame(width: 42, height: 42)
-                        .background(Circle().fill(isSelected ? Theme.purpleTint : Theme.tintedField))
-                        .symbolEffect(.bounce, value: isSelected)
+                        .frame(width: 28, height: 28)
+                        .animation(reduceMotion ? nil : OnboardingStyle.selection) { icon in
+                            icon.scaleEffect(isSelected && !reduceMotion ? 1.12 : 1)
+                        }
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.rounded(19, weight: .semibold))
+                        .font(.rounded(16, weight: .semibold))
                         .foregroundStyle(Theme.ink)
                     if let subtitle {
                         Text(subtitle)
-                            .font(.rounded(16, weight: .regular))
+                            .font(.rounded(13, weight: .regular))
                             .foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -172,8 +248,9 @@ struct ChoiceCard: View {
                 Spacer(minLength: Theme.Space.sm)
                 indicator
             }
-            .padding(.horizontal, systemImage == nil ? 22 : 16)
-            .padding(.vertical, subtitle == nil ? (systemImage == nil ? 22 : 14) : 16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: 54)
             .frame(maxWidth: .infinity, alignment: .leading)
             .modifier(OnboardingCardSurface(selected: isSelected && !iridescent))
             .overlay {
@@ -184,8 +261,7 @@ struct ChoiceCard: View {
             }
             .contentShape(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
         }
-        .buttonStyle(RaisedPressStyle(scale: 0.975))
-        .animation(.spring(response: 0.34, dampingFraction: 0.78), value: isSelected)
+        .buttonStyle(RaisedPressStyle(scale: 0.98))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
@@ -195,19 +271,22 @@ struct ChoiceCard: View {
             Circle().strokeBorder(Theme.ink.opacity(scheme == .dark ? 0.3 : 0.16), lineWidth: 1.5)
                 .opacity(isSelected ? 0 : 1)
             Circle().fill(Theme.ink)
-                .scaleEffect(isSelected ? 1 : 0.4)
+                .scaleEffect(isSelected || reduceMotion ? 1 : 0.4)
                 .opacity(isSelected ? 1 : 0)
             if multi {
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Theme.background)
+                    .scaleEffect(isSelected || reduceMotion ? 1 : 0.65)
                     .opacity(isSelected ? 1 : 0)
             } else {
                 Circle().fill(.white).frame(width: 9, height: 9)
+                    .scaleEffect(isSelected || reduceMotion ? 1 : 0.65)
                     .opacity(isSelected ? 1 : 0)
             }
         }
-        .frame(width: 26, height: 26)
+        .frame(width: 21, height: 21)
+        .animation(reduceMotion ? Motion.crossfade : OnboardingStyle.selection, value: isSelected)
     }
 }
 
@@ -470,6 +549,7 @@ struct OnboardingCTA: View {
     /// 2026-08-28: onboarding must never feel stuck). Same treatment the auth CTA uses.
     var inFlight = false
     let action: () -> Void
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         Button {
@@ -477,12 +557,18 @@ struct OnboardingCTA: View {
             action()
         } label: {
             ZStack {
-                Text(title)
-                    .font(.rounded(19, weight: .semibold))
-                    .opacity(inFlight ? 0 : 1)
+                HStack(spacing: 10) {
+                    Text(title)
+                        .font(.rounded(17, weight: .semibold))
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .offset(x: isEnabled || reduceMotion ? 0 : -4)
+                        .accessibilityHidden(true)
+                }
+                .opacity(inFlight ? 0 : 1)
                 if inFlight { ProgressView().tint(Theme.background) }
             }
-            .frame(maxWidth: .infinity).frame(height: 62)
+            .frame(maxWidth: .infinity).frame(height: 58)
             .foregroundStyle(Theme.background)
             .raised(Capsule(), tone: .ink)
             .contentShape(Capsule())
@@ -491,6 +577,8 @@ struct OnboardingCTA: View {
         .opacity(isEnabled ? 1 : 0.35)
         .disabled(!isEnabled || inFlight)
         .animation(.easeOut(duration: 0.15), value: inFlight)
+        .animation(reduceMotion ? Motion.crossfade : OnboardingStyle.selection, value: isEnabled)
+        .accessibilityLabel(title)
     }
 }
 

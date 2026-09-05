@@ -9,32 +9,24 @@ final class OnboardingPaywallUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     /// Enters at the plan reveal. Notifications and location now happen before generation; the
-    /// conversion hand-off under test is reveal → showcase → checkout → account.
+    /// conversion hand-off under test is reveal → checkout → account.
     private func launchToPaywall(_ app: XCUIApplication) {
         // Seeded profile (the flow needs one) + forced-free entitlement so the paywall actually
         // shows — `--debug-free` is read before `--seed-demo`'s Pro grant, so free wins.
         app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--onboarding", "--onboarding-reveal"]
         app.launch()
-        let revealCTA = app.buttons["This looks great"]
+        let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
     }
 
-    // The tour's CTA is a STORE fact: "Try now" for an eligible annual trial, "Continue" for an
-    // ineligible returning subscriber. Walkers match either so they pin the hand-off, not eligibility.
-
-    /// Walks the two-page flow (2026-08-05) from its device-tour opener to the checkout page.
-    /// No system prompts on the way — the tour never asks for permissions; onboarding already did.
+    /// Reveal goes straight to the personalized checkout, with no generic welcome in between.
     private func advanceToCheckout(_ app: XCUIApplication) {
-        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Didn't land on the paywall's tour page.")
-        tryNow.tap()
-        XCTAssertTrue(app.staticTexts["YOUR GOAL"].waitForExistence(timeout: 10),
-                      "The personalized outcome should be named, not buried in generic feature copy.")
+        XCTAssertTrue(app.staticTexts["YOUR GOAL"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["Welcome to momentum."].exists)
         XCTAssertTrue(app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS 'Built into every week'")
-        ).firstMatch.exists,
-                      "The checkout must keep the athlete's goal as its value proposition.")
+        ).firstMatch.exists)
     }
 
     /// HARD: neither page carries an X, the app behind checkout cannot be reached, and force-quitting
@@ -43,15 +35,6 @@ final class OnboardingPaywallUITests: XCTestCase {
     func testHardPaywallHasNoCloseAndSurvivesRelaunch() {
         let app = XCUIApplication()
         launchToPaywall(app)
-
-        // Showcase: Restore is the only trailing chrome.
-        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "Showcase didn't follow the plan reveal.")
-        XCTAssertFalse(app.buttons["Close"].exists, "The hard-wall showcase must not carry a close button.")
-        XCTAssertTrue(app.buttons["Restore"].exists, "The paywall must still offer Restore.")
-        app.swipeDown()
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 3),
-                      "A downward dismissal gesture escaped the hard-wall showcase.")
 
         // Checkout: seven-day annual trial, Restore, and no bypass.
         advanceToCheckout(app)
@@ -63,14 +46,8 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(trial.waitForExistence(timeout: 3),
                       "A downward dismissal gesture escaped the hard-wall checkout.")
 
-        // Back returns only to the in-gate showcase; it must never reveal the app underneath.
-        app.buttons["Back"].tap()
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 5),
-                      "Back navigation left the hard paywall instead of returning to its showcase.")
-        XCTAssertFalse(app.tabBars.firstMatch.isHittable,
-                       "Back navigation exposed the app behind the hard wall.")
-        tryNow.tap()
-        XCTAssertTrue(trial.waitForExistence(timeout: 5), "Checkout did not reopen inside the gate.")
+        XCTAssertFalse(app.buttons["Back"].exists, "Direct checkout must not restart the feature tour.")
+        XCTAssertFalse(app.tabBars.firstMatch.isHittable)
 
         // Force-quit AT checkout, then relaunch without the onboarding deep link.
         app.terminate()
@@ -94,12 +71,11 @@ final class OnboardingPaywallUITests: XCTestCase {
         let args = ["--seed-demo", "--onboarding-guest", "--debug-free"]
         app.launchArguments = ["--reset-store"] + args + ["--onboarding", "--onboarding-reveal"]
         app.launch()
-        let revealCTA = app.buttons["This looks great"]
+        let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
 
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch.waitForExistence(timeout: 10),
-                      "Showcase didn't follow the plan reveal.")
+        advanceToCheckout(app)
 
         // Force-quit AT the wall, then come back with no onboarding deep link at all.
         app.terminate()
@@ -124,7 +100,7 @@ final class OnboardingPaywallUITests: XCTestCase {
                 Subscribing from the relaunch gate skipped the account beat — paying guest. \
                 on screen: tabBar=\(app.tabBars.firstMatch.exists) \
                 stillOnWall=\(cta.exists) \
-                welcome=\(app.buttons["Get started"].exists) \
+                welcome=\(app.buttons["Build my plan"].exists) \
                 onboarding=\(app.buttons["Continue"].exists)
                 """)
         }
@@ -142,11 +118,11 @@ final class OnboardingPaywallUITests: XCTestCase {
         app.launchArguments = ["--reset-store", "--seed-demo", "--debug-free", "--paywall-pricing-down",
                                "--onboarding", "--onboarding-reveal"]
         app.launch()
-        let revealCTA = app.buttons["This looks great"]
+        let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Didn't land on the plan reveal.")
         revealCTA.tap()
 
-        // The first two pages sell without transacting, so they advance even with the store down.
+        // The personalized checkout still opens when store pricing is unavailable.
         advanceToCheckout(app)
 
         // Pricing never loaded, so the CTA is a Retry rather than a price we can't stand behind.

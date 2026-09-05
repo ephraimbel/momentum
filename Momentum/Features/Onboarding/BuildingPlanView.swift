@@ -22,13 +22,13 @@ struct BuildingPlanView: View {
     /// main thread is briefly busy generating the plan), not stepped with the checklist.
     var ringProgress: Double = 0
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @State private var breathe = false
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                ProgressRing(progress: ringProgress, lineWidth: 7)
+                ProgressRing(progress: ringProgress, lineWidth: 7, isStatic: reduceMotion)
                 BrandMark(size: 46)
                     .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
             }
@@ -40,8 +40,8 @@ struct BuildingPlanView: View {
                 RadialGradient(colors: [Theme.iridescent[0].opacity(0.42), Theme.iridescent[1].opacity(0.12), .clear],
                                center: .center, startRadius: 8, endRadius: 110)
                     .frame(width: 220, height: 220)
-                    .scaleEffect(breathe ? 1.08 : 0.94)
-                    .opacity(breathe ? 1 : 0.8)
+                    .scaleEffect(reduceMotion ? 1 : (breathe ? 1.08 : 0.94))
+                    .opacity(reduceMotion || breathe ? 1 : 0.8)
                     .animation(reduceMotion ? nil : .easeInOut(duration: 1.6).repeatForever(autoreverses: true),
                                value: breathe)
             }
@@ -50,7 +50,7 @@ struct BuildingPlanView: View {
 
             VStack(spacing: Theme.Space.xs) {
                 Text("Building your plan")
-                    .font(.rounded(30, weight: .semibold))
+                    .font(.display(30, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 Text("Shaped around your answers, not averages.")
                     .font(.rounded(17, weight: .regular))
@@ -64,8 +64,9 @@ struct BuildingPlanView: View {
                 ForEach(lines.indices, id: \.self) { i in checklistRow(i) }
             }
             .padding(.horizontal, 22).padding(.vertical, 20)
-            .frame(width: 320, alignment: .leading)
+            .frame(maxWidth: 320, alignment: .leading)
             .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
+            .padding(.horizontal, Theme.Space.lg)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .background(OnboardingCanvas())
@@ -82,7 +83,7 @@ struct BuildingPlanView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.white, Theme.purple)
-                        .transition(.opacity.combined(with: .scale(scale: 0.4)))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.4)))
                 } else if current && !reduceMotion {
                     ProgressView().controlSize(.small).tint(Theme.inkTertiary)
                 } else {

@@ -34,6 +34,7 @@ enum BarcodeFood {
         var sugarG: Double?
         var satFatG: Double?
         var nova: Int?
+        var sodiumIsKnown: Bool = true
     }
 
     /// Decode an Open Food Facts v2 product response. Returns nil when the product is missing,
@@ -59,9 +60,9 @@ enum BarcodeFood {
         // OFF values arrive as numbers OR strings ("409" and 409 are both in the wild).
         func value(_ key: String, _ basis: String) -> Double? {
             let raw = nutriments["\(key)_\(basis)"]
-            if let n = raw as? NSNumber { return n.doubleValue }
-            if let s = raw as? String { return Double(s) }
-            return nil
+            let number = (raw as? NSNumber)?.doubleValue ?? (raw as? String).flatMap(Double.init)
+            guard let number, number.isFinite, (0...1_000_000).contains(number) else { return nil }
+            return number
         }
         // Energy ladder: kcal when declared; some labels carry only kJ ("energy" is kJ in OFF).
         func kcalValue(_ basis: String) -> Double? {
@@ -92,7 +93,7 @@ enum BarcodeFood {
 
         let servingSize = (product["serving_size"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let servingDescription = perServing ? (servingSize ?? "1 serving") : "100 g"
+        let servingDescription = perServing ? (servingSize.flatMap { $0.isEmpty ? nil : $0 } ?? "1 serving") : "100 g"
 
         return ScannedProduct(
             barcode: barcode,
@@ -116,7 +117,8 @@ enum BarcodeFood {
                 let raw = product["nova_group"]
                 let n = (raw as? NSNumber)?.intValue ?? (raw as? String).flatMap { Int($0) }
                 return n.map { min(4, max(1, $0)) }
-            }()
+            }(),
+            sodiumIsKnown: sodiumMg(basis) != nil
         )
     }
 
@@ -136,8 +138,22 @@ enum BarcodeFood {
         var satFatG: Int?
     }
 
+    /// Keep the database's per-serving precision for subsequent portion edits and daily sums.
+    static func nutrition(of p: ScannedProduct) -> NutritionValues {
+        var n = NutritionValues(values: [.kcal: p.kcal, .carbs: p.carbsG, .protein: p.proteinG, .fat: p.fatG])
+        n[.sodium] = p.sodiumIsKnown ? p.sodiumMg : nil
+        n[.potassium] = p.potassiumMg; n[.calcium] = p.calciumMg; n[.iron] = p.ironMg
+        n[.fiber] = p.fiberG; n[.sugar] = p.sugarG; n[.saturatedFat] = p.satFatG
+        return n
+    }
+
     static func portion(of p: ScannedProduct, servings: Double) -> Portion {
-        func scaled(_ v: Double) -> Int { Int((v * servings).rounded()) }
+        let quantity = servings.isFinite && (0...10_000).contains(servings) ? servings : 0
+        func scaled(_ v: Double) -> Int {
+            let amount = v * quantity
+            guard amount.isFinite, amount >= 0 else { return 0 }
+            return Int(exactly: min(amount.rounded(), 1_000_000_000)) ?? 0
+        }
         return Portion(kcal: scaled(p.kcal),
                        carbsG: scaled(p.carbsG),
                        proteinG: scaled(p.proteinG),
@@ -145,7 +161,7 @@ enum BarcodeFood {
                        sodiumMg: scaled(p.sodiumMg),
                        potassiumMg: p.potassiumMg.map(scaled),
                        calciumMg: p.calciumMg.map(scaled),
-                       ironMg: p.ironMg.map { ($0 * servings * 10).rounded() / 10 },
+                       ironMg: p.ironMg.flatMap { $0.isFinite && $0 >= 0 ? ($0 * quantity * 10).rounded() / 10 : nil },
                        fiberG: p.fiberG.map(scaled),
                        sugarG: p.sugarG.map(scaled),
                        satFatG: p.satFatG.map(scaled))
@@ -155,7 +171,7 @@ enum BarcodeFood {
     /// the same words typed later hit the history rung and copy these label numbers.
     static func mealText(for p: ScannedProduct, servings: Double) -> String {
         let name = [p.brand, p.name].compactMap { $0 }.joined(separator: " ")
-        guard servings != 1 else { return name }
+        guard servings.isFinite, (0...10_000).contains(servings), servings != 1 else { return name }
         let qty = servings.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(servings)) : String(servings)
         return "\(qty) x \(name)"

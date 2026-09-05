@@ -101,7 +101,7 @@ struct RaceCatalogTests {
         #expect(RaceCatalog.races.filter { $0.region == .majors }.count == 7)
         #expect(RaceCatalog.races.allSatisfy { !$0.distances.isEmpty })
         #expect(RaceCatalog.races.filter { $0.region == .majors }.allSatisfy { $0.flagship == .marathon })
-        #expect(RaceCatalog.races.allSatisfy { !$0.name.isEmpty && !$0.city.isEmpty && !$0.flag.isEmpty })
+        #expect(RaceCatalog.races.allSatisfy { !$0.name.isEmpty && !$0.city.isEmpty && !$0.country.isEmpty })
     }
 
     @Test func raceWeekendsOfferSubDistances() {

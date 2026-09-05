@@ -67,8 +67,8 @@ final class OnboardingViewModel {
     /// True when a draft resumed at or past `s` — the athlete already saw and answered it.
     func restoredAtOrPast(_ s: Step) -> Bool {
         guard let restoredStep,
-              let restored = Step.allCases.firstIndex(of: restoredStep),
-              let target = Step.allCases.firstIndex(of: s) else { return false }
+              let restored = steps.firstIndex(of: restoredStep),
+              let target = steps.firstIndex(of: s) else { return false }
         return restored >= target
     }
     // How the lifting week composes — coach's pick, full body, upper/lower, or push/pull/legs.
@@ -169,36 +169,11 @@ final class OnboardingViewModel {
 
     var step: Step = .name
 
-    /// Goal-first, branching order — each user only sees the steps relevant to their goal/disciplines.
+    /// Profile first, then a branching interview relevant to the athlete's goal and disciplines.
     enum Step: Int, CaseIterable {
-        // `metrics` (incl. sex) sits before `muscleFocus` so the anatomy figure is the right body
-        // everywhere it appears (focus step, building beat, reveal).
-        // No cold-open — the welcome page (SignInView) is the brand entry; onboarding opens on the
-        // first question. Order flows broad→specific: who → goal → what you do → running-level+pace →
-        // about you → race specifics → schedule → equipment/focus → motivation → opt-ins → build → reveal.
-        // `metrics` (incl. sex) stays before `muscleFocus`/building/reveal so the anatomy figure is the
-        // right body everywhere it appears.
-        // `identity` (the @handle claim — back since the community launch, 2026-07-29 — plus the
-        // profile photo and avatar looks) follows `name`, both before any training questions.
-        // `experience` doubles as the running pace question (2026-07-24), so there's no separate
-        // `calibration` step any more — runners are asked their level once.
-        // There is NO rating beat. One shipped between `primers` and the paywall from 2026-07-26 and
-        // was REMOVED 2026-08-22 (owner call, funnel work): it asked a rating from someone who had
-        // never used the app, and it sat in the worst possible seat — the last screen before the
-        // checkout, spending the athlete's patience immediately before spending their money. It was
-        // also the exact thing this app was rejected for under App Review 5.6.3. The rating ask now
-        // lives only where engagement justifies it: the soft pre-prompt after a saved workout or a
-        // logged meal (`AppReview.shouldRequestReview` + `RatingPromptView`). Do not re-add a
-        // rating STEP here.
-        //
-        // `account` is the LAST beat, AFTER the paywall (user call 2026-07-27): the sign-in/sign-up
-        // screen used to gate the app on launch, which is the cheapest place in the funnel to lose
-        // someone. Setup now runs local-only (guest) and the account is offered once there's a plan
-        // worth saving. Skippable — `AccountOptionsView(.onboardingBeat)`.
-        // `units` sits immediately after `disciplines` and before `experience`: the pace question
-        // is the first screen that prints a distance, and everything downstream (run volume,
-        // goal time, body weight, the reveal) is quoted in the athlete's own units. Asking later
-        // would mean showing them numbers in units they never chose.
+        // Raw values are historical analytics IDs. Retired standalone pages remain decodable
+        // for draft migration; `computeSteps` owns the live order, never this declaration.
+        // Profile → goal → starting point → training week → approach → reveal → checkout → account.
         case name, identity, goal, disciplines, units, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
              hybridFocus, why,
@@ -244,13 +219,12 @@ final class OnboardingViewModel {
     var steps: [Step] { cachedStepLists.steps }
 
     private func computeSteps() -> [Step] {
-        // Keep raw values stable for historical analytics while putting the two permission beats
-        // before generation. The athlete sees the finished plan, then the showcase, then checkout;
-        // no permission prompt interrupts that conversion hand-off.
+        // Stable enum values preserve analytics and old drafts. Related inputs now share a page:
+        // name and username first, distance units in the header, race time with race setup, preferred
+        // days with frequency, and lifting split with equipment. Profile styling stays in Profile.
         let ordered: [Step] = [
-            .name, .identity, .goal, .disciplines, .units, .experience, .injuries, .metrics,
-            .race, .raceGoalTime, .muscleFocus, .runVolume, .days, .preferredDays, .session,
-            .equipment, .strengthSplit, .hybridFocus, .why, .health, .intensity,
+            .name, .goal, .disciplines, .race, .experience, .runVolume, .injuries, .metrics,
+            .muscleFocus, .days, .session, .equipment, .hybridFocus, .health, .intensity,
             .notifications, .primers, .building, .reveal, .account,
         ]
         return ordered.filter { step in
@@ -292,13 +266,43 @@ final class OnboardingViewModel {
 
     var progress: Double {
         guard let qIdx = questionSteps.firstIndex(of: step) else {
-            return step.rawValue < Step.building.rawValue ? 0 : 1
+            guard let index = steps.firstIndex(of: step) else { return 0 }
+            return Double(steps.prefix(index).filter { questionSteps.contains($0) }.count)
+                / Double(max(1, questionSteps.count))
         }
         return Double(qIdx + 1) / Double(max(1, questionSteps.count))
     }
 
+    /// A quiet chapter label makes the shorter interview read as one continuous conversation.
+    var chapterTitle: String {
+        switch step {
+        case .goal, .disciplines, .units, .race, .raceGoalTime: "YOUR GOAL"
+        case .name, .identity: "YOUR PROFILE"
+        case .experience, .runVolume, .injuries, .metrics, .muscleFocus: "YOUR STARTING POINT"
+        case .days, .preferredDays, .session, .equipment, .strengthSplit, .hybridFocus: "YOUR TRAINING WEEK"
+        default: "YOUR APPROACH"
+        }
+    }
+
+    /// Relocate removed pages without changing or discarding the athlete's saved answers.
+    static func currentStep(for saved: Step) -> Step {
+        switch saved {
+        case .identity: .name
+        case .units: .disciplines
+        case .raceGoalTime: .race
+        case .preferredDays: .days
+        case .strengthSplit: .equipment
+        case .why: .health
+        default: saved
+        }
+    }
+
     var canAdvance: Bool {
         switch step {
+        case .name:
+            let username = SocialPrivacy.normalizedHandle(handle)
+            return !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !username.isEmpty && !SocialPrivacy.isReservedHandle(username)
         // Handle, photo and avatar look are all optional here — the handle is seeded from the name,
         // and the database's unique index is the real arbiter at claim time, not this gate.
         case .identity: return true
@@ -310,8 +314,20 @@ final class OnboardingViewModel {
         // the athlete never saw, let alone chose (found in the 2026-08-28 bug sweep — the screen
         // showed no selection with Continue enabled).
         case .goal: return goal != .generalFitness
+        case .experience: return calibrationMode == .time || (calibrationMode == .feel && paceFeel != nil)
         default: return true
         }
+    }
+
+    /// Keep an untouched suggested username in step with the name; preserve a deliberate edit.
+    func suggestHandle(afterEditing previousName: String) {
+        let oldSuggestion = SocialPrivacy.normalizedHandle(HandleSuggester.baseHandle(name: previousName, email: nil))
+        guard handle.isEmpty || handle == oldSuggestion else { return }
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            handle = ""
+            return
+        }
+        handle = SocialPrivacy.normalizedHandle(HandleSuggester.baseHandle(name: name, email: nil))
     }
 
     func advance() {

@@ -14,7 +14,7 @@ struct OnboardingFlow: View {
     var onComplete: () -> Void
 
     @Environment(\.modelContext) private var context
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     @Environment(Services.self) private var services
     @Environment(AuthController.self) private var auth
@@ -35,8 +35,7 @@ struct OnboardingFlow: View {
     /// re-initialized whenever RootView's body re-evaluates (cover content closures re-run), and a
     /// fresh `CLLocationManager` per pass was pure waste (perf audit 2026-08-13). Held in @State so
     /// the manager outlives the authorization prompt it raises.
-    @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // first-pick affirmation, once per screen
-    @State private var affirmation: String?          // the gentle "got it" micro-reward toast
+    @State private var touchedSteps: Set<OnboardingViewModel.Step> = []  // preserve explicit choices over recommendations
     @State private var showPaywall = false           // the `onboarding_complete` paywall — the last beat, before the app
     @State private var paywallHandledExit = false    // exitPaywall ran — onDismiss must not advance again
     @State private var notificationPopped = false     // notifications step: the reminder banner slides in like real iOS
@@ -49,6 +48,10 @@ struct OnboardingFlow: View {
     /// dismisses (the mid-flight crossfade used to ghost the step underneath through it).
     @State private var jumpCut = false
     @State private var showRacePicker = false        // race step: the catalog of storied marathons
+    @State private var showOtherActivities = false
+    @State private var showGoalTime = false
+    @State private var showTrainingAssessment = false
+    @State private var handleUnavailable = false
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
@@ -70,7 +73,7 @@ struct OnboardingFlow: View {
                 PlanRevealView(vm: vm, profile: profile) { finishOnboarding() }
                     .transition(.opacity)
             } else {
-                VStack(spacing: Theme.Space.lg) {
+                VStack(spacing: 12) {
                     if isQuestion { header }
                     content
                         // The screen travels in the direction of motion (forward from the right, back
@@ -87,8 +90,7 @@ struct OnboardingFlow: View {
         .safeAreaInset(edge: .bottom) {
             if isQuestion { continueBar }
         }
-        .overlay(alignment: .bottom) { if isQuestion { affirmationToast } }
-        .animation(jumpCut ? nil : Motion.travel, value: vm.step)
+        .animation(jumpCut ? nil : (reduceMotion ? Motion.crossfade : OnboardingStyle.pageTransition), value: vm.step)
         .onAppear {
             // A returning athlete who came in through "I already have an account" shouldn't retype
             // what they just told us — prefill the name. The guest-first path (2026-07-27) has no
@@ -190,6 +192,7 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-units") { vm.name = "Maya"; vm.activities = [.run]; vm.step = .units }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
+            if args.contains("--onboarding-experience-hybrid") { vm.activities = [.run, .strength]; vm.step = .experience }
             if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
             if args.contains("--onboarding-race") { vm.activities = [.run]; vm.goal = .raceDistance; vm.step = .race }
             if args.contains("--onboarding-musclefocus") { vm.activities = [.strength]; vm.goal = .buildMuscle; vm.step = .muscleFocus }
@@ -200,6 +203,7 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-split") { vm.activities = [.strength]; vm.step = .strengthSplit }
             if args.contains("--onboarding-why") { vm.activities = [.run]; vm.step = .why }
             if args.contains("--onboarding-primers") { vm.activities = [.run]; vm.step = .primers }
+            vm.step = OnboardingViewModel.currentStep(for: vm.step)
             #endif
             logOnboardingStep(vm.step)
         }
@@ -214,14 +218,11 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
-        // The onboarding_complete paywall (PRD §10) — shown from the plan reveal, after every
-        // opt-in. Its first page remains the showcase, immediately before checkout.
+        // The personal briefing leads directly into checkout, after every permission prompt.
         // **HARD since 2026-09-01**: only purchase/Restore exits normally. `onDismiss` remains for
         // the store-unreachable deferral, whose escape dismisses without an entitlement callback.
         // `finishOnboarding` still arms `onboardingGatePending` first, so a force-quit AT the wall
         // re-raises it from RootView at checkout and the account beat is never silently lost.
-        // Since 2026-08-05 the wall is the two-page flow (the showcase,
-        // then the same PaywallView the rest of the app shows).
         .fullScreenCover(isPresented: $showPaywall, onDismiss: {
             if !paywallHandledExit {
                 // Same jump-cut `exitPaywall` uses: this fallback (the store-unreachable escape
@@ -234,24 +235,9 @@ struct OnboardingFlow: View {
             paywallHandledExit = false
         }) {
             OnboardingPaywallFlow(
+                startAtCheckout: true,
                 personalizedOutcome: vm.projectedOutcome(),
                 onEntitled: { exitPaywall() })
-        }
-    }
-
-    /// A whisper-quiet "got it" toast on the first pick of a screen — the research's positive-
-    /// reinforcement beat, kept monochrome and brief so it stays sleek, not chatty.
-    @ViewBuilder
-    private var affirmationToast: some View {
-        if let affirmation {
-            Text(affirmation)
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                .foregroundStyle(Theme.inkSecondary)
-                .padding(.horizontal, Theme.Space.md)
-                .padding(.vertical, 8)
-                .raised(Capsule())
-                .transition(.opacity.combined(with: .offset(y: 10)))
-                .padding(.bottom, 92)
         }
     }
 
@@ -260,31 +246,62 @@ struct OnboardingFlow: View {
     // MARK: Header (back + progress)
 
     private var header: some View {
-        HStack(spacing: Theme.Space.md) {
-            // Hidden on the first step: its `back()` is a no-op, so a visible chevron there is a
-            // dead, feedback-less tap target on the entry screen.
-            GlassCircleButton(systemName: "chevron.left", label: "Back") { goBack() }
-            .opacity(vm.canGoBack ? 1 : 0)
-            .disabled(!vm.canGoBack)
-            .accessibilityHidden(!vm.canGoBack)
-            GeometryReader { geo in
-                let w = max(10, geo.size.width * vm.progress)
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.hairline)
-                    // Earned iridescence on a genuine progress surface — the same accent as the
-                    // welcome route, with a glowing leading cap that echoes the comet head.
+        VStack(spacing: Theme.Space.sm) {
+            HStack {
+                GlassCircleButton(systemName: "chevron.left", label: "Back") { goBack() }
+                    .opacity(vm.canGoBack ? 1 : 0)
+                    .disabled(!vm.canGoBack)
+                    .accessibilityHidden(!vm.canGoBack)
+                Spacer(minLength: Theme.Space.xs)
+                Text(vm.chapterTitle)
+                    .font(.rounded(10, weight: .semibold)).tracking(1.2)
+                    .foregroundStyle(Theme.inkSecondary)
+                    .contentTransition(.opacity)
+                    .animation(Motion.crossfade, value: vm.chapterTitle)
+                Spacer(minLength: Theme.Space.xs)
+                Menu {
+                    Picker("Distance units", selection: distanceUnitBinding) {
+                        Text("Kilometres").tag(DistanceUnit.metric)
+                        Text("Miles").tag(DistanceUnit.imperial)
+                    }
+                } label: {
+                    Text(distanceUnitLabel)
+                        .font(.rounded(13, weight: .semibold))
+                        .foregroundStyle(Theme.purple)
+                        .frame(width: 46, height: 46)
+                }
+                .accessibilityLabel("Distance units, \(distanceUnitLabel)")
+                .accessibilityIdentifier("onboarding.distanceUnits")
+                .opacity(vm.step == .name ? 0 : 1)
+                .disabled(vm.step == .name)
+                .accessibilityHidden(vm.step == .name)
+            }
+            Capsule().fill(Theme.hairline)
+                .overlay(alignment: .leading) {
                     Capsule()
                         .fill(LinearGradient(colors: Theme.iridescent, startPoint: .leading, endPoint: .trailing))
-                        .frame(width: w)
+                        .scaleEffect(x: vm.progress, y: 1, anchor: .leading)
+                        .animation(reduceMotion ? nil : OnboardingStyle.progress, value: vm.progress)
                 }
-            }
-            .frame(height: 4)
+                .frame(height: 3)
+                .overlay {
+                    GeometryReader { geometry in
+                        Circle().fill(Theme.purple)
+                            .frame(width: 7, height: 7)
+                            .offset(x: max(0, min(geometry.size.width - 7,
+                                                geometry.size.width * vm.progress - 3.5)), y: -2)
+                            .animation(reduceMotion ? nil : OnboardingStyle.progress, value: vm.progress)
+                    }
+                    .accessibilityHidden(true)
+                }
+                .accessibilityLabel("Setup progress")
+                .accessibilityValue("\(Int(vm.progress * 100)) percent")
         }
         .padding(.top, Theme.Space.xs)
     }
 
     private var continueBar: some View {
-        OnboardingCTA(title: "Continue", isEnabled: vm.canAdvance) { goNext() }
+        OnboardingCTA(title: "Continue", isEnabled: vm.canAdvance && !(vm.step == .name && handleUnavailable)) { goNext() }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.sm)
@@ -306,6 +323,7 @@ struct OnboardingFlow: View {
         guard Date().timeIntervalSince(lastStepChangeAt) > 0.45 else { return }
         lastStepChangeAt = Date()
         goingBack = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         vm.advance()
     }
     private func goBack() {
@@ -367,8 +385,7 @@ struct OnboardingFlow: View {
         case .intensity: intensityStep
         case .building: EmptyView()   // rendered full-bleed in `body`
         case .reveal: PlanRevealView(vm: vm, profile: profile) {
-            // The required opt-ins already happened. Preserve the showcase as the final bridge
-            // between this personalized payoff and the checkout.
+            // Keep the athlete's own plan in view all the way into checkout.
             finishOnboarding()
         }
         case .notifications: notificationsStep
@@ -384,24 +401,25 @@ struct OnboardingFlow: View {
         let programmed = ActivityChoice.allCases.filter { $0.isProgrammed && $0 != .run }
         let extras = ActivityChoice.allCases.filter { !$0.isProgrammed }
         return questionScaffold("What supports your running?",
-                                subtitle: "Running is the foundation. Add everything else that belongs in your week.") {
+                                subtitle: "Choose the activities you want alongside your runs.") {
             activitySectionLabel("YOUR FOUNDATION")
             ChoiceCard(title: "Run", subtitle: "Included in every Momentum coaching plan",
                        systemImage: ActivityChoice.run.icon, isSelected: true, multi: true) {}
                 .allowsHitTesting(false)
                 .accessibilityRemoveTraits(.isButton)
                 .accessibilityHint("Running is included in every coaching plan")
-                .reveal(cascade(0))
+                .onboardingEntrance(cascade(0))
             activitySectionLabel("ADD TO YOUR PLAN").padding(.top, Theme.Space.xs)
             ForEach(Array(programmed.enumerated()), id: \.element) { i, a in
-                activityCard(a).reveal(cascade(i + 1))
+                activityCard(a).onboardingEntrance(cascade(i + 1))
             }
-            activitySectionLabel("ALSO TRACK").padding(.top, Theme.Space.xs)
-            Text("Added as cross-training around the runs. Your call.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(Array(extras.enumerated()), id: \.element) { i, a in
-                activityCard(a).reveal(cascade(programmed.count + i + 1))
+            detailButton("Other activities",
+                         value: vm.activities.isDisjoint(with: extras) ? "Optional" : "\(vm.activities.intersection(extras).count) selected",
+                         systemImage: "plus") { showOtherActivities = true }
+        }
+        .sheet(isPresented: $showOtherActivities) {
+            detailSheet("Other activities", subtitle: "Cross-training around your runs.") {
+                ForEach(extras, id: \.self) { a in activityCard(a) }
             }
         }
     }
@@ -412,110 +430,79 @@ struct OnboardingFlow: View {
         }
     }
 
+    private func coachingNote(_ title: String, _ message: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text(title).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            Text(message).font(.rounded(Theme.FontSize.caption, weight: .medium))
+                .foregroundStyle(Theme.inkSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.md).onboardingCard()
+    }
+
+    private func detailButton(_ title: String, value: String, systemImage: String,
+                              action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage).font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary).frame(width: 28)
+                Text(title).font(.rounded(15, weight: .medium)).foregroundStyle(Theme.ink)
+                Spacer(minLength: 4)
+                Text(value).font(.rounded(12, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(.horizontal, 16).frame(minHeight: 52).onboardingCard()
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.99))
+    }
+
+    private func detailSheet<C: View>(_ title: String, subtitle: String? = nil,
+                                      @ViewBuilder content: () -> C) -> some View {
+        OnboardingDetailSheet(title: title, subtitle: subtitle, content: content)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+    }
+
     private func activitySectionLabel(_ text: String) -> some View {
         Text(text).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var nameStep: some View {
-        questionScaffold("What should we call you?", subtitle: "We'll make the plan feel like it's yours.") {
-            TextField("Your name", text: $vm.name)
-                .font(.rounded(22, weight: .semibold)).foregroundStyle(Theme.ink)
-                .textInputAutocapitalization(.words).autocorrectionDisabled()
-                .submitLabel(.done)
-                .padding(.horizontal, 22).padding(.vertical, 20)
-                .onboardingCard()
-                .reveal(cascade(0))
+        questionScaffold("Let's make it yours.", subtitle: "Start with your name and a username.") {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 8) {
+                    activitySectionLabel("NAME")
+                    TextField("Your name", text: $vm.name)
+                        .font(.rounded(20, weight: .medium)).foregroundStyle(Theme.ink)
+                        .textInputAutocapitalization(.words).autocorrectionDisabled()
+                        .textContentType(.name).submitLabel(.done)
+                        .frame(minHeight: 44)
+                }
+                Rectangle().fill(Theme.hairline).frame(height: 0.5)
+                VStack(alignment: .leading, spacing: 2) {
+                    activitySectionLabel("USERNAME")
+                    HandleField(handle: $vm.handle, backend: services.social,
+                                suggestions: HandleSuggester.candidates(name: vm.name, email: nil, seed: 7),
+                                showsOfflineHint: true,
+                                onAvailabilityChange: { handleUnavailable = $0 == .taken || $0 == .reserved })
+                }
+            }
+            .padding(20)
+            .onboardingCard()
+            .onboardingEntrance(cascade(0))
+            Text("You can change these in your profile anytime.")
+                .font(.rounded(13, weight: .regular)).foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+                .onboardingEntrance(cascade(1))
         }
+        .onAppear { vm.suggestHandle(afterEditing: vm.name) }
+        .onChange(of: vm.name) { old, _ in vm.suggestHandle(afterEditing: old) }
     }
 
-    /// A face for the work — a photo, or one of the curated looks, both optional and quiet (no
-    /// permission pressure mid-flow). The @handle claim RETURNED with the community launch
-    /// (2026-07-29): the same `HandleField` Edit Profile uses — live Supabase availability (anon
-    /// RPC, works for guests), tap-to-use suggestions, and the database's unique index as the
-    /// real arbiter at claim time.
-    private var identityStep: some View {
-        questionScaffold("Make it yours", subtitle: "Your @handle, a photo, a look. All optional, all changeable later.") {
-            // The @handle leads, on its OWN card (owner call 2026-07-29 — inside the avatar card
-            // it read as buried, and it's the identity the whole community keys on). Seeded from
-            // the name so most people just tap Continue; the field checks Supabase live and
-            // offers alternates if taken.
-            HandleField(handle: $vm.handle, backend: services.social,
-                        suggestions: HandleSuggester.candidates(name: vm.name, email: nil, seed: 7),
-                        boxed: true, showsOfflineHint: true)
-                .onAppear {
-                    if vm.handle.isEmpty, !vm.name.isEmpty {
-                        vm.handle = SocialPrivacy.normalizedHandle(
-                            HandleSuggester.baseHandle(name: vm.name, email: nil))
-                    }
-                }
-                .reveal(cascade(0))
-            VStack(spacing: 0) {
-                HStack(spacing: Theme.Space.md) {
-                    AvatarView(photo: vm.avatarData, name: vm.name.isEmpty ? "You" : vm.name, size: 56)
-                    PhotosPicker(selection: $pickedOnboardingAvatar, matching: .images) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(vm.avatarData == nil ? "Add a photo" : "Change photo")
-                                .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                            Text("Optional. You can always add one later.")
-                                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(Theme.Space.md)
-                Rectangle().fill(Theme.hairline).frame(height: 0.5)
-                    .padding(.horizontal, Theme.Space.md)
-                // The full 4×3 system, not a scrolling strip: a strip hid eight of the twelve
-                // looks (owner call, 2026-07-29). Same grid grammar as Profile → Edit — one world
-                // per row (light · charcoal · lavender), so the choice reads at a glance. No
-                // ScrollView means no clipping, so the selection ring renders whole for free.
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.Space.sm),
-                                         count: 4),
-                          spacing: Theme.Space.md) {
-                    ForEach(AvatarPreset.allCases) { preset in
-                        Button {
-                            onboardingPreset = preset
-                            Haptics.selection()
-                            // Bake AFTER the selection frame commits: the 512px ImageRenderer +
-                            // PNG encode ran inside the tap handler, so the ring's feedback
-                            // arrived a beat late on every tile (perf audit 2026-08-13). The
-                            // guard drops a bake a faster second tap has superseded.
-                            let name = vm.name.isEmpty ? "You" : vm.name
-                            Task { @MainActor in
-                                await Task.yield()
-                                guard onboardingPreset == preset else { return }
-                                vm.avatarData = AvatarPreset.bake(preset, name: name)
-                            }
-                        } label: {
-                            PresetAvatarView(preset: preset,
-                                             name: vm.name.isEmpty ? "You" : vm.name, size: 56)
-                                .overlay {
-                                    if onboardingPreset == preset {
-                                        Circle().stroke(Theme.ink, lineWidth: 2).padding(-3)
-                                    }
-                                }
-                        }
-                        .buttonStyle(PressableScaleStyle(scale: 0.94))
-                        .accessibilityLabel("Avatar look \(preset.rawValue)")
-                    }
-                }
-                .padding(Theme.Space.md)
-            }
-            .onboardingCard()
-            .reveal(cascade(1))
-        }
-        .onChange(of: pickedOnboardingAvatar) { _, item in
-            guard let item else { return }
-            Task {
-                if let data = try? await item.loadTransferable(type: Data.self) {
-                    vm.avatarData = WorkoutPhotoSection.downscaled(data, maxDimension: 512)
-                    onboardingPreset = nil   // the photo wins over any look picked earlier
-                    Haptics.success()
-                }
-            }
-        }
-    }
+    private var identityStep: some View { nameStep }
 
     /// Units. Asked early because every number after it is quoted back in the athlete's own, and
     /// answered for them from their locale so the common case is one tap on Continue.
@@ -559,7 +546,7 @@ struct OnboardingFlow: View {
                 .padding(.leading, Theme.Space.xs)
             control()
         }
-        .reveal(cascade(index))
+        .onboardingEntrance(cascade(index))
     }
 
     private var goalStep: some View {
@@ -567,13 +554,13 @@ struct OnboardingFlow: View {
         // a running app. Strength/body-composition goals remain, as the supporting pillar.
         let goals: [Goal] = [
             .raceDistance, .endurance, .stayConsistent, .loseFat, .buildMuscle, .getStronger]
-        return questionScaffold("What's your main goal?", subtitle: "This shapes everything that follows.") {
+        return questionScaffold("What are we training for?", subtitle: "Your goal gives every session a purpose.") {
             ForEach(Array(goals.enumerated()), id: \.element) { i, goal in
-                ChoiceCard(title: goal.planLabel, subtitle: goal.planSubtitle,
+                ChoiceCard(title: goal.planLabel,
                            systemImage: goal.planSystemImage, isSelected: vm.goal == goal) {
                     pick { vm.goal = goal }
                 }
-                .reveal(cascade(i))
+                .onboardingEntrance(cascade(i))
             }
         }
     }
@@ -583,8 +570,8 @@ struct OnboardingFlow: View {
     /// recent time sharpens it. Lifters get the plain three-way. A separate "how's your pace?" page
     /// used to ask runners the same thing twice.
     private var experienceStep: some View {
-        questionScaffold(vm.running ? "How's your running?" : "How experienced are you?",
-                         subtitle: vm.running ? "This sets your starting paces. You can always adjust."
+        questionScaffold(vm.running ? "Tell us about your running." : "How experienced are you?",
+                         subtitle: vm.running ? "We'll use this to choose your starting effort. A recent time can make your paces more precise."
                                               : (vm.hybrid ? "We'll set running and lifting separately." : nil)) {
             if vm.running {
                 ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, f in
@@ -592,20 +579,20 @@ struct OnboardingFlow: View {
                                   isSelected: vm.calibrationMode == .feel && vm.paceFeel == f) {
                         pick { vm.paceFeel = f; vm.calibrationMode = .feel; vm.experience = f.experienceLevel }
                     }
-                    .reveal(cascade(i))
+                    .onboardingEntrance(cascade(i))
                 }
                 // Optional precision — a recent race/time trial sharpens the paces past the by-feel guess.
-                timeEntryCard.reveal(cascade(PaceFeel.allCases.count))
+                timeEntryCard.onboardingEntrance(cascade(PaceFeel.allCases.count))
                 // Hybrids still need their lifting level (running has no bearing on it).
                 if vm.lifting {
-                    expSegment("Lifting", vm.liftExperience) { vm.liftExperience = $0 }
-                        .reveal(cascade(PaceFeel.allCases.count + 1))
+                    liftingExperiencePicker
+                        .onboardingEntrance(cascade(PaceFeel.allCases.count + 1))
                 }
             } else {
                 ForEach(Array([ExperienceLevel.new, .some, .experienced].enumerated()), id: \.element) { i, e in
                     ChoiceCard(title: e == .new ? "New to this" : e == .some ? "Some experience" : "Experienced",
                                   isSelected: vm.experience == e) { pick { vm.experience = e } }
-                        .reveal(cascade(i))
+                        .onboardingEntrance(cascade(i))
                 }
             }
         }
@@ -617,20 +604,20 @@ struct OnboardingFlow: View {
                          subtitle: "So your plan starts where you are and builds toward your goal.") {
             metricRow("Per week", volumeLabel(vm.weeklyRunVolumeM),
                       { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) - 5) },
-                      { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) + 5) }).reveal(cascade(0))
+                      { setWeekly(volumeDisplay(vm.weeklyRunVolumeM) + 5) }).onboardingEntrance(cascade(0))
             metricRow("Longest run", volumeLabel(vm.longestRunM),
                       { setLongest(volumeDisplay(vm.longestRunM) - 1) },
-                      { setLongest(volumeDisplay(vm.longestRunM) + 1) }).reveal(cascade(1))
+                      { setLongest(volumeDisplay(vm.longestRunM) + 1) }).onboardingEntrance(cascade(1))
             // The athlete's ceiling (2026-08-28): how far they're willing to build. Left to the
             // coach, the plan builds to what the goal needs; set, it's a hard cap and the verdict
             // says plainly what the cap costs.
             metricRow("Build up to", vm.targetWeeklyRunVolumeM.map(volumeLabel) ?? "Coach",
-                      { setTarget(-5) }, { setTarget(5) }).reveal(cascade(2))
+                      { setTarget(-5) }, { setTarget(5) }).onboardingEntrance(cascade(2))
             Text("The most you're willing to run in a week. Leave it to us and we build to what your goal needs.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
-                .reveal(cascade(3))
+                .onboardingEntrance(cascade(3))
         }
         .onAppear(perform: seedVolumeDefaultsIfNeeded)
     }
@@ -671,40 +658,38 @@ struct OnboardingFlow: View {
         vm.longestRunM = longest
     }
 
-    /// A compact labelled 3-way experience selector (used per-discipline for hybrids).
-    private func expSegment(_ title: String, _ current: ExperienceLevel,
-                            _ set: @escaping (ExperienceLevel) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text(title.uppercased()).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
-            HStack(spacing: Theme.Space.sm) {
-                ForEach([ExperienceLevel.new, .some, .experienced], id: \.self) { e in
-                    let on = current == e
-                    Button { pick { set(e) } } label: {
-                        Text(e == .new ? "New" : e == .some ? "Some" : "Pro")
-                            .font(.rounded(Theme.FontSize.body, weight: .bold))
-                            .frame(maxWidth: .infinity).frame(height: 50)
-                            .foregroundStyle(on ? Theme.background : Theme.ink)
-                            .background {
-                                if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink) }
-                            }
-                            .modifier(SegmentRaise(on: on))
-                    }
-                    .buttonStyle(RaisedPressStyle())
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: on)
-                }
+    /// Hybrids answer both disciplines without extending the running question below the CTA.
+    private var liftingExperiencePicker: some View {
+        Menu {
+            Picker("Lifting experience", selection: $vm.liftExperience) {
+                Text("New to lifting").tag(ExperienceLevel.new)
+                Text("Some experience").tag(ExperienceLevel.some)
+                Text("Experienced").tag(ExperienceLevel.experienced)
             }
+        } label: {
+            HStack {
+                Text("Lifting experience").foregroundStyle(Theme.ink)
+                Spacer(minLength: 4)
+                Text(vm.liftExperience == .new ? "New" : vm.liftExperience == .some ? "Some" : "Experienced")
+                    .foregroundStyle(Theme.inkSecondary)
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
+            }
+            .font(.rounded(14, weight: .medium))
+            .padding(16).frame(minHeight: 52).onboardingCard()
         }
+        .accessibilityIdentifier("onboarding.liftingExperience")
     }
 
     private var daysStep: some View {
-        let opts: [(Int, String, String)] = [
-            (2, "2 days", "Light week"), (3, "3 days", "A steady base"),
-            (4, "4 days", "Consistent"), (5, "5 days", "High volume"), (6, "6+ days", "All in")]
-        return questionScaffold("How many days a week?", subtitle: "We'll shape your week around this.") {
-            ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
-                ChoiceCard(title: o.1, subtitle: o.2, isSelected: vm.daysPerWeek == o.0) { pick { vm.daysPerWeek = o.0 } }
-                    .reveal(cascade(i))
-            }
+        questionScaffold("Let's shape your training week.", subtitle: "Choose a rhythm that fits your life.") {
+            activitySectionLabel("TRAINING DAYS PER WEEK")
+            SegmentedCapsule(items: [2, 3, 4, 5, 6], selection: $vm.daysPerWeek, scale: .page,
+                             title: { "\($0)" }, spokenLabel: { "\($0) training days" })
+                .monospacedDigit()
+            activitySectionLabel("PREFERRED DAYS · OPTIONAL").padding(.top, Theme.Space.sm)
+            preferredDaysPicker
+            coachingNote("A week built around your availability",
+                         "\(vm.daysPerWeek) training days. Leave preferred days empty and we'll arrange the week for you, balancing the work with recovery.")
             // Frequency honesty, said where the choice is made: a race build under its effective
             // day floor holds fitness rather than building readiness (PlanFeasibility owns the
             // numbers; the intensity step's verdict banner repeats the full read).
@@ -737,11 +722,29 @@ struct OnboardingFlow: View {
         let opts: [(Equipment, String, String)] = [
             (.fullGym, "Full gym", "building.2"), (.dumbbellsOnly, "Dumbbells only", "dumbbell"),
             (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
-        return questionScaffold("What equipment do you have?") {
+        return questionScaffold("What equipment do you have?", subtitle: "Your strength sessions will use what you have available.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 ChoiceCard(title: o.1, systemImage: o.2, isSelected: vm.equipment == o.0) { pick { vm.equipment = o.0 } }
-                    .reveal(cascade(i))
+                    .onboardingEntrance(cascade(i))
             }
+            Menu {
+                Picker("Lifting split", selection: $vm.strengthSplit) {
+                    Text("Coach's pick").tag(StrengthSplitStyle.coach)
+                    Text("Full body").tag(StrengthSplitStyle.fullBody)
+                    Text("Upper / lower").tag(StrengthSplitStyle.upperLower)
+                    Text("Push / pull / legs").tag(StrengthSplitStyle.pushPullLegs)
+                }
+            } label: {
+                HStack {
+                    Text("Lifting split").foregroundStyle(Theme.ink)
+                    Spacer()
+                    Text(strengthSplitTitle).foregroundStyle(Theme.inkSecondary)
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
+                }
+                .font(.rounded(14, weight: .medium))
+                .padding(16).frame(minHeight: 52).onboardingCard()
+            }
+            .accessibilityIdentifier("onboarding.liftingSplit")
         }
     }
 
@@ -749,13 +752,11 @@ struct OnboardingFlow: View {
         let opts: [(Int, String, String)] = [
             (30, "30 min", "In and out"), (45, "45 min", "A balanced session"),
             (60, "60 min", "A full workout"), (75, "75+ min", "Go long")]
-        return questionScaffold("How long per session?",
-                                subtitle: vm.lifting
-                                    ? "It sets how much fits in a workout."
-                                    : "Your long run gets whatever it needs. This shapes the rest of the week.") {
+        return questionScaffold("How much time do you have?",
+                                subtitle: "This shapes your usual sessions. Longer runs are planned separately around your goal and current fitness.") {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 ChoiceCard(title: o.1, subtitle: o.2, isSelected: vm.sessionMinutes == o.0) { pick { vm.sessionMinutes = o.0 } }
-                    .reveal(cascade(i))
+                    .onboardingEntrance(cascade(i))
             }
         }
     }
@@ -765,7 +766,7 @@ struct OnboardingFlow: View {
         return questionScaffold("Why are you doing this?", subtitle: "It sets your coach's tone.") {
             ForEach(Array(reasons.enumerated()), id: \.element) { i, r in
                 ChoiceCard(title: r.capitalized, isSelected: vm.reason == r) { pick { vm.reason = r } }
-                    .reveal(cascade(i))
+                    .onboardingEntrance(cascade(i))
             }
         }
     }
@@ -785,30 +786,27 @@ struct OnboardingFlow: View {
                     let on = vm.injuryAreas.contains(area)
                     Button {
                         Haptics.selection()
-                        withAnimation(Motion.lively) {
-                            if on { vm.injuryAreas.remove(area) } else { vm.injuryAreas.insert(area) }
-                        }
+                        if on { vm.injuryAreas.remove(area) } else { vm.injuryAreas.insert(area) }
                     } label: {
                         Text(area.label)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold))
                             .foregroundStyle(on ? .white : Theme.ink)
                             .frame(maxWidth: .infinity).frame(height: 48)
-                            .background {
-                                if on { Capsule().fill(Theme.purple) }
-                            }
-                            .modifier(ChipRaise(on: on))
+                            .background(Capsule().fill(on ? Theme.purple : (colorScheme == .dark ? Theme.surface : .white)))
+                            .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 0.5))
+                            .animation(Motion.crossfade, value: on)
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(on ? .isSelected : [])
-                    .reveal(cascade(i / 2))
+                    .onboardingEntrance(cascade(i / 2))
                 }
             }
             // The explicit way through for the healthy majority (owner ask 2026-07-30): without
             // it, a grid of selectable areas reads like a question you must answer.
             Button {
                 Haptics.success()
-                withAnimation(Motion.lively) { vm.injuryAreas.removeAll() }
+                vm.injuryAreas.removeAll()
                 goNext()
             } label: {
                 HStack(spacing: Theme.Space.sm) {
@@ -823,13 +821,14 @@ struct OnboardingFlow: View {
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
             }
             .buttonStyle(.plain)
-            .reveal(cascade((InjuryArea.allCases.count + 1) / 2))
-            if !vm.injuryAreas.isEmpty {
-                Text("We'll ease the impact around \(vm.injuryAreas.count == 1 ? "this area" : "these areas") and watch for early warning signs.")
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
+            .onboardingEntrance(cascade((InjuryArea.allCases.count + 1) / 2))
+            // Reserve the coaching line so selecting the first area never shifts the grid.
+            Text("We'll ease the impact around these areas and watch for early warning signs.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(vm.injuryAreas.isEmpty ? 0 : 1)
+                .accessibilityHidden(vm.injuryAreas.isEmpty)
+                .animation(Motion.crossfade, value: vm.injuryAreas.isEmpty)
         }
     }
 
@@ -846,18 +845,18 @@ struct OnboardingFlow: View {
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.lg)
             HealthTile()
-                .reveal(0.02)
+                .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Train around your recovery",
-                              subtitle: "Next, iOS will ask about Apple Health. Momentum reads supported recovery signals such as sleep, HRV and resting heart rate from connection onward. It never imports your workout history, and you choose what to share.")
+                              subtitle: "Share Apple Health signals to help your plan respond to recovery. Tracking starts when you connect. You choose what to share; workout history is never imported.")
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
-                .reveal(0.08)
+                .onboardingEntrance(0.08)
             Spacer(minLength: Theme.Space.lg)
             HealthSheetMock()
                 .frame(maxWidth: .infinity)
                 .frame(height: 330, alignment: .top)
                 .bottomFade(from: 0.45)
-                .reveal(0.16)
+                .onboardingEntrance(0.16, lift: 26)
             Spacer(minLength: 0)
             // `inFlight` is the same latch that blocks the double tap: after the system sheet is
             // answered there are still two HealthKit reads before the step advances, and on a
@@ -888,7 +887,7 @@ struct OnboardingFlow: View {
                 }
             }
             .padding(.top, Theme.Space.sm)
-            .reveal(0.26)
+            .onboardingEntrance(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
@@ -900,14 +899,28 @@ struct OnboardingFlow: View {
     /// plan apps: we tell the truth before we sell the plan.
     private var intensityStep: some View {
         let f = vm.feasibility
-        return questionScaffold("How hard do you want to push?",
-                                subtitle: "Same goal, your pace. You can change this anytime.") {
-            feasibilityBanner(f).reveal(cascade(0))
+        return questionScaffold("Here's the approach we recommend.",
+                                subtitle: "Based on your goal, current running, and available training days. Choose the approach that suits you.") {
+            Button { showTrainingAssessment = true } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(f.headline).font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
+                    if !f.detail.isEmpty {
+                        Text(f.detail.replacingOccurrences(of: " What helps most:", with: ""))
+                            .font(.rounded(13, weight: .regular)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("View training assessment").font(.rounded(12, weight: .medium)).foregroundStyle(Theme.purple)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).padding(16).onboardingCard()
+            }
+            .buttonStyle(RaisedPressStyle(scale: 0.99))
+            .sheet(isPresented: $showTrainingAssessment) {
+                detailSheet("Your training assessment") { feasibilityBanner(f) }
+            }
+            .onboardingEntrance(cascade(0))
             ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { i, tier in
                 ChoiceCard(title: tier == f.recommended ? "\(tier.label)  ·  Recommended" : tier.label,
-                              subtitle: tier.subtitle,
-                              isSelected: vm.intensity == tier,
-                              iridescent: tier == .podium) {
+                              isSelected: vm.intensity == tier) {
                     pick {
                         vm.intensity = tier
                         // Podium's structure needs the week to hold it — lift the day count to the
@@ -916,15 +929,14 @@ struct OnboardingFlow: View {
                         if vm.daysPerWeek < tier.floorDays { vm.daysPerWeek = tier.floorDays }
                     }
                 }
-                .reveal(cascade(i + 1))
+                .onboardingEntrance(cascade(i + 1))
             }
-            if vm.intensity == .podium {
-                Text("Podium runs \(PlanIntensity.podium.floorDays)+ days a week. Your week is set to \(vm.daysPerWeek).")
-                    .font(.rounded(Theme.FontSize.caption, weight: .semibold))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
+            Text(vm.intensity == .podium
+                 ? "Podium runs \(PlanIntensity.podium.floorDays)+ days a week. Your week is set to \(vm.daysPerWeek)."
+                 : vm.intensity.subtitle)
+                .font(.rounded(13, weight: .regular)).foregroundStyle(Theme.inkSecondary)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .topLeading)
+                .contentTransition(.opacity)
         }
         // Prefill the honest recommendation on FIRST arrival only. `touchedSteps` covers this
         // session; `restoredAtOrPast` covers a resumed draft — without it, re-entering the step
@@ -983,63 +995,55 @@ struct OnboardingFlow: View {
 
     /// The optional precise path — expand to enter a recent time over a distance you know.
     private var timeEntryCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.md) {
-            Button { Haptics.light(); withAnimation(Motion.standard) { showTimeEntry.toggle() } } label: {
-                HStack(spacing: Theme.Space.sm) {
-                    Image(systemName: vm.calibrationMode == .time ? "checkmark.circle.fill" : "stopwatch")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(vm.calibrationMode == .time ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkSecondary))
-                    Text(vm.calibrationMode == .time ? "\(vm.benchmark.label) in \(Formatters.duration(s: vm.recentRunSeconds))" : "I know a recent time")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                    Spacer(minLength: 0)
-                    Image(systemName: showTimeEntry ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+        detailButton("Recent running result",
+                     value: vm.calibrationMode == .time ? "\(vm.benchmark.label) · \(Formatters.duration(s: vm.recentRunSeconds))" : "Optional",
+                     systemImage: "stopwatch") { showTimeEntry = true }
+            .sheet(isPresented: $showTimeEntry) {
+                detailSheet("Your recent result", subtitle: "A race or timed effort helps set more precise starting paces.") {
+                    timeEntryControls
                 }
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-
-            if showTimeEntry {
-                HStack(spacing: 6) {                          // tighter so "Marathon" fits at full size
-                    ForEach(RunBenchmark.allCases) { b in
-                        let on = vm.benchmark == b
-                        Button {
-                            Haptics.selection()
-                            vm.benchmark = b; vm.recentRunSeconds = b.defaultSeconds; vm.calibrationMode = .time
-                        } label: {
-                            // Uniform smaller label so the longest word ("Marathon") sits comfortably
-                            // in its chip rather than shrinking alone against the others.
-                            Text(b.label).font(.rounded(Theme.FontSize.label, weight: .bold))
-                                .lineLimit(1).minimumScaleFactor(0.9)
-                                .frame(maxWidth: .infinity).frame(height: 40)
-                                .foregroundStyle(on ? .white : Theme.ink)
-                                .background { if on { Capsule().fill(Theme.purple) } }
-                                .modifier(ChipRaise(on: on))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                HStack(spacing: Theme.Space.md) {
-                    Text("Time").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                    Spacer()
-                    // Press-and-hold repeats: the range spans a 12:00 elite 5K to a 60:00 walk-jog,
-                    // and nobody should tap 30 times to reach their real time.
-                    Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }
-                        .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
-                    // Tap the time to TYPE it — "21:45", "1:38:20", or bare digits ("2145").
-                    TypableNumber(display: Formatters.duration(s: vm.recentRunSeconds),
-                                  keyboard: .numbersAndPunctuation, minWidth: 84,
-                                  commit: { commitTypedRaceTime($0) })
-                    Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }
-                        .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
-                }
-                .animation(.snappy(duration: 0.2), value: vm.recentRunSeconds)
-                Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-            }
-        }
-        .padding(Theme.Space.md)
-        .onboardingCard()
     }
+
+    private var timeEntryControls: some View {
+        VStack(spacing: 20) {
+            HStack(spacing: 6) {                          // tighter so "Marathon" fits at full size
+                ForEach(RunBenchmark.allCases) { b in
+                    let on = vm.benchmark == b
+                    Button {
+                        Haptics.selection()
+                        vm.benchmark = b; vm.recentRunSeconds = b.defaultSeconds; vm.calibrationMode = .time
+                    } label: {
+                        // Uniform smaller label so the longest word ("Marathon") sits comfortably
+                        // in its chip rather than shrinking alone against the others.
+                        Text(b.label).font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .lineLimit(1).minimumScaleFactor(0.9)
+                            .frame(maxWidth: .infinity).frame(height: 40)
+                            .foregroundStyle(on ? .white : Theme.ink)
+                            .background { if on { Capsule().fill(Theme.purple) } }
+                            .modifier(ChipRaise(on: on))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: Theme.Space.md) {
+                Text("Time").font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                Spacer()
+                // Press-and-hold repeats: the range spans a 12:00 elite 5K to a 60:00 walk-jog,
+                // and nobody should tap 30 times to reach their real time.
+                Button { Haptics.light(); adjustTime(-vm.benchmark.step) } label: { metricStep("minus") }
+                    .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
+                // Tap the time to TYPE it — "21:45", "1:38:20", or bare digits ("2145").
+                TypableNumber(display: Formatters.duration(s: vm.recentRunSeconds),
+                              keyboard: .numbersAndPunctuation, minWidth: 84,
+                              commit: { commitTypedRaceTime($0) })
+                Button { Haptics.light(); adjustTime(vm.benchmark.step) } label: { metricStep("plus") }
+                    .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
+            }
+            Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        }
+    }
+
 
     /// Typed race time. Accepts "21:45", "1:38:20", bare minutes ("22"), or run-on digits
     /// ("2145" → 21:45). Where an entry is ambiguous ("330" — 3m30s or 3h30m?), the benchmark's own
@@ -1083,13 +1087,13 @@ struct OnboardingFlow: View {
     /// "Easy runs ≈ 6:10 /mi" — the resulting easy pace, so the number feels meaningful.
     private var paceHint: String {
         let p5k = PlanEngine.riegelP5k(distanceM: vm.benchmark.meters, timeS: vm.recentRunSeconds)
-        return "Easy runs ≈ \(Formatters.pace(secPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: .auto))"
+        return "Easy runs ≈ \(Formatters.pace(secPerKm: PlanEngine.pace(.easy, p5k: p5k), unit: useMetricDistance ? .metric : .imperial))"
     }
 
     // MARK: Race setup (racers) — distance + optional date
 
     private var raceStep: some View {
-        questionScaffold("Which race?", subtitle: "We'll point your long runs and taper at it.") {
+        questionScaffold("What's your next finish line?", subtitle: "Choose your distance. Add a date or target time if you have one.") {
             // The occasion first: pick a real race — Boston, Chicago, Hong Kong — and its name,
             // distance, and date are built into the plan from the very first generation.
             Button { Haptics.light(); showRacePicker = true } label: {
@@ -1112,7 +1116,7 @@ struct OnboardingFlow: View {
                 .onboardingCard()
             }
             .buttonStyle(.plain)
-            .reveal(cascade(0))
+            .onboardingEntrance(cascade(0))
             .sheet(isPresented: $showRacePicker) {
                 RacePickerSheet { race, pickedDistance, date in
                     pick {
@@ -1124,19 +1128,50 @@ struct OnboardingFlow: View {
                 }
                 // Forced rather than inherited: a sheet gets its own hosting controller, and whether
                 // a `colorScheme` override propagates into one is a SwiftUI implementation detail
-                // that's varied across releases. Onboarding is unconditionally dark, so this sheet
+                // that's varied across releases. Onboarding is unconditionally light, so this sheet
                 // is too — stated here, at the onboarding call site only, because the SAME sheet is
                 // presented from the Plan tab, where it must follow the athlete's appearance setting.
-                .environment(\.colorScheme, .dark)
+                .environment(\.colorScheme, .light)
             }
 
-            ForEach(Array(RaceDistance.allCases.enumerated()), id: \.element) { i, d in
-                ChoiceCard(title: d.label, subtitle: raceSubtitle(d), isSelected: vm.raceDistance == d) {
-                    pick { vm.raceDistance = d }
+            activitySectionLabel("RACE DISTANCE")
+            HStack(spacing: 6) {
+                ForEach(RaceDistance.allCases) { distance in
+                    Button { pick { vm.raceDistance = distance } } label: {
+                        Text(raceShortLabel(distance))
+                            .font(.rounded(13, weight: .semibold))
+                            .foregroundStyle(vm.raceDistance == distance ? .white : Theme.ink)
+                            .frame(maxWidth: .infinity).frame(height: 46)
+                            .background(RoundedRectangle(cornerRadius: 12)
+                                .fill(vm.raceDistance == distance ? Theme.ink : .white))
+                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline, lineWidth: 0.5))
+                    }
+                    .buttonStyle(RaisedPressStyle(scale: 0.99))
+                    .accessibilityLabel(distance.label)
+                    .accessibilityAddTraits(vm.raceDistance == distance ? .isSelected : [])
                 }
-                .reveal(cascade(i + 1))
             }
-            raceDateCard.reveal(cascade(RaceDistance.allCases.count + 1))
+            .padding(.bottom, 6)
+            raceDateCard
+            detailButton("Target finish time",
+                         value: vm.goalFinishTimeS.map { Formatters.duration(s: $0) } ?? "Optional",
+                         systemImage: "timer") { showGoalTime = true }
+                .sheet(isPresented: $showGoalTime) {
+                    detailSheet("Your target time", subtitle: "We'll assess it against your starting point.") {
+                        raceGoalTimeControls
+                    }
+                }
+
+        }
+    }
+
+    private func raceShortLabel(_ distance: RaceDistance) -> String {
+        switch distance {
+        case .fiveK: "5K"
+        case .tenK: "10K"
+        case .half: "Half"
+        case .marathon: "Marathon"
+        case .fiftyK: "50K"
         }
     }
 
@@ -1179,8 +1214,8 @@ struct OnboardingFlow: View {
     private var muscleFocusStep: some View {
         questionScaffold("Where do you want to grow?", subtitle: "Pick areas to emphasize. Your plan adds volume there.") {
             AnatomyGlowView(activation: vm.targetMuscles(), sex: vm.bodySex, sequential: false)
-                .frame(height: 250).frame(maxWidth: .infinity)
-                .reveal(cascade(0))
+                .frame(height: 140).frame(maxWidth: .infinity)
+                .onboardingEntrance(cascade(0))
             LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm), GridItem(.flexible())],
                       spacing: Theme.Space.sm) {
                 ForEach(focusOptions, id: \.title) { opt in
@@ -1188,7 +1223,7 @@ struct OnboardingFlow: View {
                     Button { pick { toggleFocus(opt) } } label: {
                         Text(opt.title)
                             .font(.rounded(Theme.FontSize.body, weight: .bold))
-                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .frame(maxWidth: .infinity).frame(height: 44)
                             .foregroundStyle(on ? Theme.background : Theme.ink)
                             .background {
                                 if on { RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.ink) }
@@ -1198,7 +1233,7 @@ struct OnboardingFlow: View {
                     .buttonStyle(RaisedPressStyle())
                 }
             }
-            .reveal(cascade(1))
+            .onboardingEntrance(cascade(1))
         }
     }
 
@@ -1213,7 +1248,11 @@ struct OnboardingFlow: View {
     private var preferredDaysStep: some View {
         questionScaffold("Any preferred days?",
                          subtitle: "Optional. We'll fit your \(vm.daysPerWeek)-day week to these. Skip to auto-spread.") {
-            // Seven raised discs (glass pass 2026-08-27) — a picked day fills ink.
+            preferredDaysPicker
+        }
+    }
+
+    private var preferredDaysPicker: some View {
             HStack(spacing: 0) {
                 ForEach(1...7, id: \.self) { wd in
                     let on = vm.preferredDays.contains(wd)
@@ -1224,16 +1263,18 @@ struct OnboardingFlow: View {
                             .foregroundStyle(on ? .white : Theme.ink)
                             .modifier(DayDiscRaise(on: on))
                             .contentShape(Circle())
+                            .animation(reduceMotion ? nil : OnboardingStyle.selection) { day in
+                                day.scaleEffect(on && !reduceMotion ? 1.06 : 1)
+                            }
                     }
                     .buttonStyle(RaisedPressStyle(scale: 0.92))
                     .frame(maxWidth: .infinity)
-                    .accessibilityLabel(weekdayLetter(wd))
+                    .accessibilityLabel(Calendar.current.weekdaySymbols[wd - 1])
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
             .padding(.vertical, Theme.Space.sm)
-            .reveal(cascade(0))
-        }
+            .onboardingEntrance(cascade(0))
     }
 
     private func weekdayLetter(_ wd: Int) -> String { ["S", "M", "T", "W", "T", "F", "S"][(wd - 1) % 7] }
@@ -1255,11 +1296,11 @@ struct OnboardingFlow: View {
     }
 
     private var metricsStep: some View {
-        questionScaffold("A bit about you", subtitle: "Optional. Sharpens your calorie + heart-rate targets. Skip if you'd rather.") {
-            sexSelector.reveal(cascade(0))
+        questionScaffold("A few personal details.", subtitle: "Optional. Your age and body measurements refine heart-rate and fueling estimates.") {
+            sexSelector.onboardingEntrance(cascade(0))
             metricRow("Age", "\(ageDisplay)",
                       typed: { if let a = Int($0.filter(\.isNumber)) { setAge(a) } },
-                      { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).reveal(cascade(1))
+                      { setAge(ageDisplay - 1) }, { setAge(ageDisplay + 1) }).onboardingEntrance(cascade(1))
             // Height feeds the BMR that drives your fuel targets — the same Mifflin–St Jeor the Fuel
             // page uses; without it that estimate leans on an assumed 172 cm. Weight sits below it,
             // the two body figures together.
@@ -1267,12 +1308,12 @@ struct OnboardingFlow: View {
                       units: (["ft·in", "cm"], useMetricHeight ? 1 : 0, { vm.heightMetricChoice = $0 == 1 }),
                       keyboard: .numbersAndPunctuation,
                       typed: { commitTypedHeight($0) },
-                      { adjustHeight(-1) }, { adjustHeight(1) }).reveal(cascade(2))
+                      { adjustHeight(-1) }, { adjustHeight(1) }).onboardingEntrance(cascade(2))
             metricRow("Weight", "\(weightDisplayValue) \(useMetricWeight ? "kg" : "lb")",
                       units: (["lb", "kg"], useMetricWeight ? 1 : 0,
                               { vm.weightUnitChoice = ($0 == 1 ? WeightUnit.kg : WeightUnit.lb).rawValue }),
                       typed: { commitTypedWeight($0) },
-                      { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).reveal(cascade(3))
+                      { adjustWeight(useMetricWeight ? -2 : -5) }, { adjustWeight(useMetricWeight ? 2 : 5) }).onboardingEntrance(cascade(3))
         }
     }
 
@@ -1367,32 +1408,34 @@ struct OnboardingFlow: View {
                            _ minus: @escaping () -> Void, _ plus: @escaping () -> Void) -> some View {
         // A row with a unit toggle carries five elements — tighter spacing and a slimmer value
         // well keep it on one line (the first cut wrapped "Height" to two lines).
-        HStack(spacing: units == nil ? Theme.Space.md : Theme.Space.sm) {
-            Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+        HStack(spacing: units == nil ? 8 : 6) {
+            Text(label).font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
                 .lineLimit(1).fixedSize()
             if let units { unitToggle(units.options, selected: units.index, set: units.set).fixedSize() }
             Spacer(minLength: 4)
             // Repeats on press-and-hold — a high-mileage athlete adjusting from the seeded default
             // to their real number shouldn't need dozens of taps.
-            Button { Haptics.light(); minus() } label: { metricStep("minus") }.buttonStyle(.plain)
+            Button { Haptics.light(); minus() } label: { metricStep("minus") }
+                .buttonStyle(RaisedPressStyle(scale: 0.94))
                 .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Decrease \(label)")
             if let typed {
                 TypableNumber(display: value, keyboard: keyboard,
-                              minWidth: units == nil ? 76 : 58, commit: typed)
+                              minWidth: units == nil ? 64 : 54, commit: typed)
                     .accessibilityLabel("\(label), \(value)")
             } else {
                 Text(value).font(.display(20, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                    .frame(minWidth: 76).contentTransition(.numericText())
+                    .modifier(NumericFeedback(value: value))
+                    .frame(minWidth: 64)
                     .accessibilityLabel("\(label), \(value)")
             }
-            Button { Haptics.light(); plus() } label: { metricStep("plus") }.buttonStyle(.plain)
+            Button { Haptics.light(); plus() } label: { metricStep("plus") }
+                .buttonStyle(RaisedPressStyle(scale: 0.94))
                 .buttonRepeatBehavior(.enabled)
                 .accessibilityLabel("Increase \(label)")
         }
-        .padding(.horizontal, Theme.Space.md).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 10)
         .onboardingCard()
-        .animation(.snappy(duration: 0.2), value: value)
     }
 
     /// The compact unit switch (ft·in|cm, lb|kg) — two small capsule segments beside the label,
@@ -1432,18 +1475,30 @@ struct OnboardingFlow: View {
     /// coach's pick leads: most athletes should let the day count decide, and the explicit splits
     /// are there for the ones who know exactly how they like to train.
     private var strengthSplitStep: some View {
+        questionScaffold("How do you like to split your lifting?") { strengthSplitChoices }
+    }
+
+    private var strengthSplitTitle: String {
+        switch vm.strengthSplit {
+        case .coach: "Coach's pick"
+        case .fullBody: "Full body"
+        case .upperLower: "Upper / lower"
+        case .pushPullLegs: "Push / pull / legs"
+        }
+    }
+
+    private var strengthSplitChoices: some View {
         let opts: [(StrengthSplitStyle, String, String, String)] = [
             (.coach, "Coach's pick", "Full body, splitting as your lift days grow", "wand.and.stars"),
             (.fullBody, "Full body", "Every lift day trains everything", "figure.strengthtraining.traditional"),
             (.upperLower, "Upper · Lower", "Alternating upper and lower days", "figure.arms.open"),
             (.pushPullLegs, "Push · Pull · Legs", "The classic three-day rotation", "dumbbell.fill")]
-        return questionScaffold("How do you like to split your lifting?",
-                                subtitle: "Change it anytime from your plan settings.") {
+        return VStack(spacing: Theme.Space.sm) {
             ForEach(Array(opts.enumerated()), id: \.element.0) { i, o in
                 ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.strengthSplit == o.0) {
                     pick { vm.strengthSplit = o.0 }
                 }
-                .reveal(cascade(i))
+                .onboardingEntrance(cascade(i))
             }
         }
     }
@@ -1459,19 +1514,23 @@ struct OnboardingFlow: View {
                 ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3, isSelected: vm.hybridPriority == o.0) {
                     pick { vm.hybridPriority = o.0 }
                 }
-                .reveal(cascade(i))
+                .onboardingEntrance(cascade(i))
             }
         }
     }
 
     /// Race goal time — the target the athlete is chasing (drives the reveal + the race outlook).
     private var raceGoalTimeStep: some View {
-        let raceLabel = vm.raceDistance?.label ?? "race"
-        return questionScaffold("Chasing a time?",
-                                subtitle: "Optional. Your goal for the \(raceLabel). We'll point the plan at it.") {
+        questionScaffold("Chasing a time?", subtitle: "Optional. We'll assess it against your starting point.") {
+            raceGoalTimeControls
+        }
+    }
+
+    private var raceGoalTimeControls: some View {
+        VStack(spacing: Theme.Space.md) {
             metricRow("Hours", "\(vm.goalHours)",
                       typed: { if let h = Int($0.filter(\.isNumber)) { vm.goalHours = min(9, max(0, h)) } },
-                      { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).reveal(cascade(0))
+                      { vm.goalHours = max(0, vm.goalHours - 1) }, { vm.goalHours = min(9, vm.goalHours + 1) }).onboardingEntrance(cascade(0))
             metricRow("Minutes", String(format: "%02d", vm.goalMinutes),
                       typed: { if let m = Int($0.filter(\.isNumber)) { vm.goalMinutes = min(59, max(0, m)) } },
                       // Carry through the hour instead of wrapping in place: at 3:55, "+" means
@@ -1479,11 +1538,11 @@ struct OnboardingFlow: View {
                       { if vm.goalMinutes >= 5 { vm.goalMinutes -= 5 }
                         else if vm.goalHours > 0 { vm.goalHours -= 1; vm.goalMinutes = 55 } },
                       { if vm.goalMinutes <= 50 { vm.goalMinutes += 5 }
-                        else if vm.goalHours < 9 { vm.goalHours += 1; vm.goalMinutes = 0 } }).reveal(cascade(1))
+                        else if vm.goalHours < 9 { vm.goalHours += 1; vm.goalMinutes = 0 } }).onboardingEntrance(cascade(1))
             if let t = vm.goalFinishTimeS, let m = vm.raceDistance?.meters, m > 0 {
-                Text("That's about \(Formatters.pace(secPerKm: t / (m / 1000), unit: .auto)), a strong target.")
+                Text("Target pace: \(Formatters.pace(secPerKm: t / (m / 1000), unit: useMetricDistance ? .metric : .imperial)). We'll check how this fits your starting point.")
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading).reveal(cascade(2))
+                    .frame(maxWidth: .infinity, alignment: .leading).onboardingEntrance(cascade(2))
             }
         }
     }
@@ -1496,19 +1555,19 @@ struct OnboardingFlow: View {
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.md)
             GlowGlyph(systemName: "bell.fill", tint: Theme.iridescent[1])
-                .reveal(0.02)
+                .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "A nudge before each run",
                               subtitle: "One reminder ahead of every planned session, and a heads-up when your week adapts. Nothing else.")
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
-                .reveal(0.08)
+                .onboardingEntrance(0.08)
             Spacer(minLength: Theme.Space.lg)
             // Only the phone's top half is drawn; the lower half dissolves straight into the buttons.
             phoneNotificationMockup
                 .frame(maxWidth: .infinity)
                 .frame(height: 330, alignment: .top)
                 .bottomFade(from: 0.45)
-                .reveal(0.16)
+                .onboardingEntrance(0.16, lift: 26)
             Spacer(minLength: 0)
             VStack(spacing: Theme.Space.xs) {
                 // Same reasoning as the Health beat: the notification prompt is a system
@@ -1541,21 +1600,22 @@ struct OnboardingFlow: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { remindersAdvanced = false }
                 }
             }
-            .reveal(0.26)
+            .onboardingEntrance(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear {
+        .task {
             notificationPopped = false
-            // Let the phone settle in first, then the reminder arrives a beat later — the real moment.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                withAnimation(reduceMotion ? .easeIn(duration: 0.3)
-                                           : .spring(response: 0.5, dampingFraction: 0.86)) {
-                    notificationPopped = true
-                }
+            // This task belongs to the page: leaving cancels the delayed banner entrance.
+            do { try await Task.sleep(for: .seconds(0.6)) } catch { return }
+            guard !Task.isCancelled, vm.step == .notifications else { return }
+            withAnimation(reduceMotion ? Motion.crossfade
+                                       : .spring(response: 0.5, dampingFraction: 0.86)) {
+                notificationPopped = true
             }
         }
+        .onDisappear { notificationPopped = false }
     }
 
 
@@ -1641,12 +1701,12 @@ struct OnboardingFlow: View {
         VStack(spacing: 0) {
             Spacer(minLength: Theme.Space.md)
             GlowGlyph(systemName: "location.north.fill", tint: Theme.iridescent[0])
-                .reveal(0.02)
+                .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Map your runs",
                               subtitle: "Your location traces every route and opens the map right where you are. Only while you're recording.")
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
-                .reveal(0.08)
+                .onboardingEntrance(0.08)
             Spacer(minLength: Theme.Space.md)
             // The app's own finished race: the Austin Marathon post-run (the same capture the
             // website's run detail uses), so the promise is a real traced route, not a stock map.
@@ -1659,10 +1719,9 @@ struct OnboardingFlow: View {
             // marathon was cut off at 330); the heading above is short, so the page still fits.
             .frame(height: 420, alignment: .top)
             .bottomFade(from: 0.72)
-            .reveal(0.16)
+            .onboardingEntrance(0.16, lift: 26)
             Spacer(minLength: 0)
-            // Permissions are settled before plan generation; the reveal and showcase still
-            // remain ahead, so this CTA advances into the build rather than raising checkout.
+            // Permissions settle before generation. The personal reveal leads into checkout.
             OnboardingCTA(title: "Continue", inFlight: locationRequestInFlight) {
                 guard !locationRequestInFlight else { return }
                 locationRequestInFlight = true
@@ -1678,7 +1737,7 @@ struct OnboardingFlow: View {
                 }
             }
                 .padding(.top, Theme.Space.sm)
-                .reveal(0.26)
+                .onboardingEntrance(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
@@ -1714,7 +1773,7 @@ struct OnboardingFlow: View {
             })
     }
 
-    /// Where onboarding actually ends: the showcase + paywall gate (or straight through for
+    /// Where onboarding actually ends: the personal plan's paywall gate (or straight through for
     /// entitled athletes), then the account beat. Called from the plan reveal's CTA.
     private func finishOnboarding() {
         leftPrimers = true   // defensive for deep links that jump directly to the reveal
@@ -1774,22 +1833,22 @@ struct OnboardingFlow: View {
     @ViewBuilder
     private func questionScaffold<C: View>(_ title: String, subtitle: String? = nil,
                                            @ViewBuilder _ content: () -> C) -> some View {
-        // One scroll for the whole question (title + options together) — the reliable pattern that
-        // always scrolls when the content overflows (the disciplines picker etc.). The serif title
-        // carries the welcome page's editorial voice through the flow; options stay in the clean UI face.
+        // Primary questions fit a compact phone at standard text size. Retain overflow scrolling
+        // for larger accessibility text and the keyboard, with optional detail in separate sheets.
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.lg + 4) {
+            VStack(alignment: .leading, spacing: 20) {
                 // Centered, in the display face — the question is the page's one headline; the
-                // options below carry the UI face. (The serif voice stays on the welcome.)
+                // options below carry the UI face.
                 OnboardingHeading(title: title, subtitle: subtitle)
-                    .padding(.top, Theme.Space.md)
+                    .padding(.top, 8)
                     .padding(.horizontal, Theme.Space.xs)
-                VStack(spacing: 14) { content() }
+                    .onboardingEntrance(0.02, lift: 10)
+                VStack(spacing: 10) { content() }
                     // Room for the floating cards' drop shadows — the scroll view clips otherwise.
                     .padding(.horizontal, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, Theme.Space.xl)
+            .padding(.bottom, 8)
         }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
@@ -1797,31 +1856,17 @@ struct OnboardingFlow: View {
     }
 
     /// Staggered entrance delay for the i-th element on a screen — the assemble cascade.
-    private func cascade(_ i: Int) -> Double { 0.08 + Double(i) * 0.06 }
+    private func cascade(_ i: Int) -> Double { 0.06 + Double(min(i, 5)) * 0.045 }
 
-    /// Apply a selection and, on the *first* pick of a screen, flash the affirmation micro-reward.
+    /// Remember explicit choices so recommendations never overwrite a deliberate selection.
     private func pick(_ apply: () -> Void) {
-        let firstTouch = !touchedSteps.contains(vm.step)
         apply()
-        guard firstTouch else { return }
         touchedSteps.insert(vm.step)
-        let lines = ["Got it.", "Nice pick.", "That shapes your plan.", "Noted."]
-        let line = lines[abs(vm.step.rawValue) % lines.count]
-        // The toast is retired in the glass pass (2026-08-27): the reference language has no
-        // chatter, and a chip rising over the cards read as noise. Kept as a no-op line so the
-        // first-pick bookkeeping (and its tests) stay put.
-        _ = line
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.4))
-            if affirmation == line { withAnimation(Motion.exit) { affirmation = nil } }
-        }
     }
 
-    /// Directional travel between steps: forward slides in from the right, back from the left.
-    /// Reduce Motion drops the offset to a plain crossfade.
     private var stepTransition: AnyTransition {
         guard !reduceMotion else { return .opacity }
-        let dx: CGFloat = 28
+        let dx: CGFloat = 20
         return .asymmetric(
             insertion: .opacity.combined(with: .offset(x: goingBack ? -dx : dx)),
             removal: .opacity.combined(with: .offset(x: goingBack ? dx : -dx))
@@ -1836,6 +1881,7 @@ struct OnboardingFlow: View {
     /// reveal. This is the single source of timing truth (the old self-timed view could be outrun by
     /// `finish` and cut the animation short — the bug the athlete kept seeing).
     private func buildPlan() async {
+        guard !Task.isCancelled, vm.step == .building else { return }
         let lines = vm.buildingLines()
         let n = max(1, lines.count)
 
@@ -1848,11 +1894,16 @@ struct OnboardingFlow: View {
             SKANConversion.record(.planBuilt)   // activation, for ad-campaign optimisation
         }
 
+        func wait(_ seconds: Double) async -> Bool {
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return false }
+            return !Task.isCancelled && vm.step == .building
+        }
+
         // Reduce Motion: no ticking theatre — build, show the finished state, hold briefly, reveal.
-        if UIAccessibility.isReduceMotionEnabled {
+        if reduceMotion {
             generate()
             buildCompleted = n; buildRing = 1
-            try? await Task.sleep(for: .seconds(0.5))
+            guard await wait(0.5) else { return }
             goNext(); return
         }
 
@@ -1862,16 +1913,17 @@ struct OnboardingFlow: View {
         withAnimation(.easeInOut(duration: Double(max(1, n - 1)) * tick + 0.3)) { buildRing = 0.85 }
         // Tick the lead-in lines one at a time; the last line stays spinning for the real work.
         for i in 0..<(n - 1) {
-            try? await Task.sleep(for: .seconds(tick))
+            guard await wait(tick) else { return }
             Haptics.selection()   // one tick per line landing — the build is felt, not just watched
-            withAnimation(.easeOut(duration: 0.35)) { buildCompleted = i + 1 }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.35)) { buildCompleted = i + 1 }
         }
         // "Finalizing your plan" is the spinning row now — generate behind it (main-thread cost hidden).
+        guard !Task.isCancelled, vm.step == .building else { return }
         generate()
         // Land the last checkmark + complete the ring, hold on the finished state, then reveal.
         Haptics.success()
-        withAnimation(.easeOut(duration: 0.4)) { buildCompleted = n; buildRing = 1 }
-        try? await Task.sleep(for: .seconds(0.85))
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.4)) { buildCompleted = n; buildRing = 1 }
+        guard await wait(0.85) else { return }
         goNext()
     }
 }

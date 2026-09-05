@@ -36,4 +36,8 @@ enum EstimateGate {
     }
 
     static func isEstimating(_ id: UUID) -> Bool { inFlight[id] != nil }
+
+    /// Guard both result application AND view-local cleanup; an old task must not remove the
+    /// replacement task's spinner or make its row editable while it is still estimating.
+    static func owns(_ id: UUID, token: Int) -> Bool { inFlight[id] == token }
 }

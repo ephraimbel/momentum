@@ -58,6 +58,7 @@ final class RunPauseUITests: XCTestCase {
         resume.tap()
         XCTAssertTrue(pause.waitForExistence(timeout: 5),
                       "Tapping Resume did not resume the run — the button never became 'Pause' again.")
+        finishRun(in: app)
     }
 
     /// THE FROZEN-PAGE TRIPWIRE: the live DISTANCE and TIME values must actually CHANGE while
@@ -128,14 +129,20 @@ final class RunPauseUITests: XCTestCase {
 
         // Leave no mid-run marker behind (this class's other test launches fresh and expects
         // Today, not a recovered save screen): finish the run — the marker clears at finish.
+        finishRun(in: app)
+    }
+
+    private func finishRun(in app: XCUIApplication) {
         app.buttons["Finish"].firstMatch.tap()
         let sheetFinish = app.sheets.buttons["Finish"]
         if sheetFinish.waitForExistence(timeout: 6) { sheetFinish.tap() }
-        _ = app.buttons["activityDone"].waitForExistence(timeout: 15)
+        XCTAssertTrue(app.buttons["activityDone"].waitForExistence(timeout: 15),
+                      "The finished workout never reached its save screen.")
     }
 
     /// Picks Run if it isn't already selected, then taps the start button.
     private func startRun(in app: XCUIApplication) {
+        ScrollTestSupport.dismissRecoveryIfPresent(app, timeout: 3)
         let startRun = app.buttons["Start run"]
         if !startRun.waitForExistence(timeout: 10) {
             // Not in a running discipline — open the activity picker and choose Run.

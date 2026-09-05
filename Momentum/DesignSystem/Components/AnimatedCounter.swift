@@ -37,7 +37,7 @@ struct CountUpHero: View {
     var delay: Double = 0
 
     @State private var shown = 0.0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         VStack(spacing: Theme.Space.xs) {
@@ -81,18 +81,28 @@ private struct RevealOnAppear: ViewModifier {
     let onceID: String?
     @State private var shown = false
     @State private var decided = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
+
+    init(delay: Double, onceID: String?) {
+        self.delay = delay
+        self.onceID = onceID
+        _shown = State(initialValue: onceID.map(RevealOnce.contains) ?? false)
+    }
 
     func body(content: Content) -> some View {
         content
             .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 14)
+            .offset(y: shown || reduceMotion ? 0 : 8)
             .onAppear {
-                guard !reduceMotion, !decided else { return }
+                guard !decided else { return }
                 decided = true
                 // Already welcomed this session → land finished, no fade, no lift.
-                guard onceID.map({ RevealOnce.claim($0) }) ?? true else { shown = true; return }
-                withAnimation(.easeOut(duration: 0.5).delay(delay)) { shown = true }
+                let firstAppearance = onceID.map({ RevealOnce.claim($0) }) ?? true
+                guard !reduceMotion, firstAppearance else { shown = true; return }
+                withAnimation(Motion.content.delay(delay)) { shown = true }
+            }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced { shown = true }
             }
     }
 }

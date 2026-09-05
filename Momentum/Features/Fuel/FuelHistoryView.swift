@@ -23,6 +23,9 @@ struct FuelHistoryView: View {
     @Environment(\.modelContext) private var context
     @State private var editing: Meal?
     @State private var query = ""
+    @State private var exportDocument = NutritionCSVDocument(text: "")
+    @State private var exporting = false
+    @State private var actionError: String?
     /// Search haystacks decoded ONCE per data change: `journalTitle` runs a JSONDecoder over the
     /// meal's items, and doing that for the whole year's window on every search keystroke janked
     /// the field for long-tenured athletes (audit 2026-08-11). Rebuilt on appear, on a meal
@@ -77,10 +80,40 @@ struct FuelHistoryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                     prompt: "Search meals — “pasta”, “gel”…")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: exportJournal) { Image(systemName: "square.and.arrow.up") }
+                    .accessibilityLabel("Export nutrition journal")
+            }
+        }
+        .fileExporter(isPresented: $exporting, document: exportDocument,
+                      contentType: .commaSeparatedText, defaultFilename: "momentum-nutrition") { result in
+            if case .failure = result { actionError = "The export could not be saved. Please try again." }
+        }
+        .alert("Couldn’t complete this action", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: { Text(actionError ?? "Please try again.") }
         .scrollDismissesKeyboard(.interactively)
         .sheet(item: $editing, onDismiss: { rebuildSearchIndex() }) { MealDetailSheet(meal: $0) }
         .onAppear { rebuildSearchIndex() }
         .onChange(of: meals.count) { rebuildSearchIndex() }
+    }
+
+    private func exportJournal() {
+        do {
+            // Export the whole local journal, regardless of the visible search/year window.
+            let all = try context.fetch(FetchDescriptor<Meal>(sortBy: [SortDescriptor(\.eatenAt)]))
+            let water = try context.fetch(FetchDescriptor<WaterEntry>())
+            var rows = all.map {
+                NutritionCSV.Row(id: $0.id, eatenAt: $0.eatenAt, name: $0.text, source: $0.source, nutrition: $0.nutrition)
+            }
+            rows += water.map {
+                NutritionCSV.Row(id: $0.id, eatenAt: $0.drankAt, name: "Water", source: "manual",
+                                 nutrition: .init(values: [.fluids: $0.amountMl]), kind: "water")
+            }
+            exportDocument = NutritionCSVDocument(text: NutritionCSV.encode(rows.sorted { $0.eatenAt < $1.eatenAt }))
+            exporting = true
+        } catch { actionError = "Your journal could not be read for export. Please try again." }
     }
 
     private func rebuildSearchIndex() {
@@ -245,27 +278,25 @@ struct FuelHistoryView: View {
             // behind), through the same shared definition, so this and a chip tap produce
             // byte-identical rows. No estimator, no waiting. Numberless meals decline: there is
             // nothing to copy, and re-logging a pending meal would just mint a second stranger.
-            if meal.carbsG != nil || meal.kcal != nil {
+            if !meal.nutrition.values.isEmpty {
                 Button {
                     let copy = Meal()
                     copy.text = meal.text
                     FuelLocalResolver.copyNumbers(from: meal, to: copy)
-                    withAnimation(Motion.standard) {
-                        context.insert(copy)
-                        try? context.save()
-                    }
-                    AppReview.recordMealLogged()
-                    Haptics.success()
+                    do {
+                        try MealNutritionStore.insert(copy, in: context)
+                        AppReview.recordMealLogged()
+                        Haptics.success()
+                    } catch { actionError = "This meal was not saved. Please try again." }
                 } label: { Label("Log again today", systemImage: "arrow.uturn.up") }
             }
             // Parity with the main journal's row menu — the sheet's Delete, one press closer.
             Button(role: .destructive) {
                 guard !EstimateGate.isEstimating(meal.id) else { return }
-                withAnimation(Motion.standard) {
-                    context.delete(meal)
-                    try? context.save()
-                }
-                Haptics.medium()
+                do {
+                    try MealNutritionStore.delete(meal, in: context)
+                    Haptics.medium()
+                } catch { actionError = "This meal could not be deleted. Please try again." }
             } label: { Label("Delete meal", systemImage: "trash") }
         }
     }

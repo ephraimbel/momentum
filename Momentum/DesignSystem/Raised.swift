@@ -171,12 +171,10 @@ extension View {
 
 /// Press feel for raised things: they sink a hair and lose a touch of light, like a real key.
 struct RaisedPressStyle: ButtonStyle {
-    var scale: CGFloat = 0.98
+    var scale: CGFloat = Motion.pressedScale
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .brightness(configuration.isPressed ? -0.03 : 0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.8), value: configuration.isPressed)
+            .modifier(PressFeedback(isPressed: configuration.isPressed, scale: scale))
     }
 }
 

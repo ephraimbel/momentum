@@ -22,7 +22,7 @@ struct OnboardingPaywallFlow: View {
     var onEntitled: (() -> Void)?
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     @State private var step: Int
     /// Direction of the last navigation, so the page transition slides the right way.
@@ -110,7 +110,7 @@ struct OnboardingPaywallFlow: View {
     /// this view is the onboarding-only hard gate, while ordinary in-app paywalls own their X.
     private var chrome: some View {
         HStack(spacing: Theme.Space.md) {
-            if step > 0 {
+            if step > 0, !startAtCheckout {
                 Button { back() } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.inkSecondary)

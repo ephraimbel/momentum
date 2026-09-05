@@ -78,16 +78,16 @@ struct HistoryDigestTests {
     }
 
     /// The History map card previews the full heatmap, so both resolve one basemap — and the two
-    /// DEFAULT styles pair with the appearance while a deliberate pick renders as chosen.
+    /// adaptive Realistic style follows appearance while every explicit pick stays literal.
     @Test func mapStylePairsWithTheAppearance() {
-        #expect(MapStyleOption.realistic.uriStyle(for: .dark) == .dark)
-        #expect(MapStyleOption.standard.uriStyle(for: .dark) == .dark)
-        #expect(MapStyleOption.realistic.uriStyle(for: .light) == .realistic)
-        #expect(MapStyleOption.standard.uriStyle(for: .light) == .standard)
+        #expect(MapStyleOption.realistic.renderedStyle(for: .dark) == .night)
+        #expect(MapStyleOption.standard.renderedStyle(for: .dark) == .standard)
+        #expect(MapStyleOption.realistic.renderedStyle(for: .light) == .realistic)
+        #expect(MapStyleOption.standard.renderedStyle(for: .light) == .standard)
         // Deliberate choices are never overridden, in either appearance.
         for deliberate in [MapStyleOption.satellite, .streets, .outdoors, .dark, .night, .dusk, .standardSatellite] {
-            #expect(deliberate.uriStyle(for: .dark) == deliberate)
-            #expect(deliberate.uriStyle(for: .light) == deliberate)
+            #expect(deliberate.renderedStyle(for: .dark) == deliberate)
+            #expect(deliberate.renderedStyle(for: .light) == deliberate)
         }
     }
 

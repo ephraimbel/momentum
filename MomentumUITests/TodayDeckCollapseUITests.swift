@@ -10,9 +10,19 @@ final class TodayDeckCollapseUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
     func testDeckCollapseAndExpandRoundTrip() {
+        roundTrip(reduceMotion: false)
+    }
+
+    func testDeckCollapseAndExpandWithReduceMotion() {
+        roundTrip(reduceMotion: true)
+    }
+
+    private func roundTrip(reduceMotion: Bool) {
         let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo"]
+        app.launchArguments = ["--seed-demo", "--awards-quiet"]
+        if reduceMotion { app.launchArguments.append("--ui-test-reduce-motion") }
         app.launch()
+        ScrollTestSupport.dismissRecoveryIfPresent(app, timeout: 3)
 
         // Settled Today: the expanded deck's Start is on screen. The collapsed state persists
         // across launches by design (@AppStorage), so a container that last ran collapsed is

@@ -47,6 +47,15 @@ enum SiriMealLogger {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
+        if let amount = HydrationInput.milliliters(in: trimmed) {
+            let water = WaterEntry(amountMl: Double(amount), drankAt: now)
+            context.insert(water)
+            do { try context.save() }
+            catch { context.delete(water); return nil }
+            return Receipt(mealID: water.id, title: "Water logged", body: "\(amount) ml water",
+                           resolved: true, dialog: "Logged \(amount) milliliters of water.")
+        }
+
         // Idempotency: an identical meal (same canonical key) logged moments ago answers this
         // ask — no duplicate row, no duplicate estimate.
         if let recent = recentDuplicate(of: trimmed, in: context, now: now) {
@@ -59,6 +68,7 @@ enum SiriMealLogger {
 
         let meal = Meal()
         meal.text = trimmed
+        meal.eatenAt = now
         let resolved: Bool
         if let remembered {
             FuelLocalResolver.copyNumbers(from: remembered, to: meal)
@@ -101,8 +111,9 @@ enum SiriMealLogger {
         guard let gateToken = EstimateGate.begin(id) else { return base }
         defer { EstimateGate.end(id, token: gateToken) }
 
-        meal.estimateAttempts += 1
-        try? context.save()
+        do {
+            try MealNutritionStore.update(meal, in: context) { meal.estimateAttempts += 1 }
+        } catch { return base }
         let run = estimate ?? { text in
             await FuelEstimator().estimate(text: text, sessionLabel: nil, durationS: nil)
         }
@@ -110,10 +121,14 @@ enum SiriMealLogger {
         guard !meal.isDeleted, meal.modelContext != nil else { return base }
         switch outcome {
         case .estimated(let e):
-            FuelEstimator.apply(e, to: meal)
-            meal.estimateAttempts = 0   // it resolved; nothing owed
-            try? context.save()
-            return receipt(for: meal, resolved: true)
+            guard FuelEstimator.isValid(e) else { return receipt(for: meal, resolved: false) }
+            do {
+                try MealNutritionStore.update(meal, in: context) {
+                    FuelEstimator.apply(e, to: meal)
+                    meal.estimateAttempts = 0
+                }
+                return receipt(for: meal, resolved: true)
+            } catch { return base }
         case .unavailable:
             meal.estimateAttempts = max(0, meal.estimateAttempts - 1)
             try? context.save()
@@ -143,9 +158,17 @@ enum SiriMealLogger {
     /// already-deleted meals (both no-op).
     static func undoMeal(id: UUID, in context: ModelContext) {
         let descriptor = FetchDescriptor<Meal>(predicate: #Predicate { $0.id == id })
-        guard let meal = (try? context.fetch(descriptor))?.first else { return }
-        context.delete(meal)
-        try? context.save()
+        if let meal = (try? context.fetch(descriptor))?.first {
+            try? MealNutritionStore.delete(meal, in: context)
+        } else {
+            let waterQuery = FetchDescriptor<WaterEntry>(predicate: #Predicate { $0.id == id })
+            guard let water = (try? context.fetch(waterQuery))?.first else { return }
+            do {
+                try context.save()
+                context.delete(water)
+                do { try context.save() } catch { context.rollback() }
+            } catch { return }
+        }
     }
 
     // MARK: Receipt

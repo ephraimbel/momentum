@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The single oversized control used for primary actions (start / stop / finish / log) — PRD §5.5.
-/// Press: scale → 0.97 with a light haptic (§6.2). Honors disabled.
+/// Shared subtle press response with a primary-action haptic (§6.2). Honors disabled/Reduce Motion.
 struct OversizedButton: View {
     /// `.glass` is `.outline` for controls that float over LIVE MEDIA — a map, a photo. Outline
     /// fills with `Color.clear`, so whatever is behind reads straight through the button: over the

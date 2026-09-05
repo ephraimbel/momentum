@@ -47,6 +47,9 @@ final class Meal {
     /// blob pattern as `structuredRepsData`. Totals on the meal are ALWAYS Σ items when items
     /// exist (kept in scalar fields so `FuelReadiness` and queries never decode JSON).
     var itemsData: Data?
+    /// Exact label/manual totals; scalar fields remain rounded for existing readout contracts.
+    /// Optional for lightweight migration of journals created before fractional entry.
+    var nutritionData: Data?
 
     /// "ai" | "manual" | "pending" — provenance of the numbers. Manual always wins.
     var source: String = "pending"
@@ -92,32 +95,36 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
     var satFatG: Int?
     var nova: Int?
 
-    /// This item rescaled to a new quantity — linear from per-unit values, rounded (everything ≈).
+    /// Missing label fields and a stable portion basis are optional for old stored blobs.
+    var unknownNutrients: [Nutrient]?
+    var portionBasis: MealPortionBasis?
+    var servingDescription: String?
+
+    /// Scale from the original numbers, never from an already-rounded portion.
     func scaled(to newQty: Double) -> MealItem {
-        guard qty > 0, newQty != qty else { var c = self; c.qty = max(0.5, newQty); return c }
-        let f = newQty / qty
-        var c = self
-        c.qty = newQty
-        c.kcal = Int((Double(kcal) * f).rounded())
-        c.carbsG = Int((Double(carbsG) * f).rounded())
-        c.proteinG = Int((Double(proteinG) * f).rounded())
-        c.fatG = Int((Double(fatG) * f).rounded())
-        c.sodiumMg = Int((Double(sodiumMg) * f).rounded())
-        c.fluidsMl = Int((Double(fluidsMl) * f).rounded())
-        c.potassiumMg = potassiumMg.map { Int((Double($0) * f).rounded()) }
-        c.magnesiumMg = magnesiumMg.map { Int((Double($0) * f).rounded()) }
-        c.ironMg = ironMg.map { ($0 * f * 10).rounded() / 10 }
-        c.calciumMg = calciumMg.map { Int((Double($0) * f).rounded()) }
-        c.fiberG = fiberG.map { Int((Double($0) * f).rounded()) }
-        c.sugarG = sugarG.map { Int((Double($0) * f).rounded()) }
-        c.satFatG = satFatG.map { Int((Double($0) * f).rounded()) }
-        // `nova` classifies the food, not the amount — it rides along unscaled.
-        return c
+        guard newQty.isFinite, newQty > 0, newQty <= 10_000,
+              qty.isFinite, qty > 0, newQty != qty else { return self }
+        let basis = portionBasis ?? MealPortionBasis(quantity: qty, nutrition: exactNutrition)
+        guard basis.quantity.isFinite, basis.quantity > 0 else { return self }
+        let factor = newQty / basis.quantity
+        var scaled = NutritionValues()
+        for field in Nutrient.allCases {
+            guard let value = basis.nutrition[field] else { continue }
+            let next = value * factor
+            guard next.isFinite, next >= 0, next <= 1_000_000_000 else { return self }
+            scaled[field] = field == .iron ? (next * 10).rounded() / 10 : next.rounded()
+        }
+        var copy = self
+        copy.qty = newQty
+        copy.nutrition = scaled
+        copy.portionBasis = basis
+        return copy
     }
 
     /// "2" / "1.5" — quantity with whole numbers kept whole.
     var qtyText: String {
-        qty == qty.rounded() ? String(Int(qty)) : String(format: "%.1f", qty)
+        guard qty.isFinite, qty > 0 else { return "—" }
+        return qty.formatted(.number.grouping(.never).precision(.fractionLength(0...3)))
     }
 
     /// "2 eggs" / "1.5 slices" / "1 cup" — the stepper's portion label. Units pluralize naturally;
@@ -147,29 +154,7 @@ extension Meal {
 
     /// Totals are ALWAYS Σ items when items exist — one source of truth for the engine.
     func applyTotals(from items: [MealItem]) {
-        guard !items.isEmpty else { return }
-        kcal = items.map(\.kcal).reduce(0, +)
-        carbsG = items.map(\.carbsG).reduce(0, +)
-        proteinG = items.map(\.proteinG).reduce(0, +)
-        fatG = items.map(\.fatG).reduce(0, +)
-        sodiumMg = items.map(\.sodiumMg).reduce(0, +)
-        fluidsMl = items.map(\.fluidsMl).reduce(0, +)
-        // Micros stay nil-preserving. Since 2026-07-21 the estimator no longer returns them
-        // (docs/FUEL-FLOW.md), so every item carries nil and an all-nil set must sum to nil,
-        // not 0 — a stored 0 would read as a measured zero to any future micro surface rather
-        // than as "never estimated". Historical meals that DO carry values still sum normally.
-        potassiumMg = Self.optionalSum(items.compactMap(\.potassiumMg))
-        magnesiumMg = Self.optionalSum(items.compactMap(\.magnesiumMg))
-        ironMg = Self.optionalSum(items.compactMap(\.ironMg))
-        calciumMg = Self.optionalSum(items.compactMap(\.calciumMg))
-        fiberG = Self.optionalSum(items.compactMap(\.fiberG))
-        sugarG = Self.optionalSum(items.compactMap(\.sugarG))
-        satFatG = Self.optionalSum(items.compactMap(\.satFatG))
-    }
-
-    /// Σ, but nil for an empty set — keeps "no data" distinct from a real zero.
-    private static func optionalSum<N: AdditiveArithmetic>(_ values: [N]) -> N? {
-        values.isEmpty ? nil : values.reduce(N.zero, +)
+        nutrition = NutritionValues.sum(items.map(\.exactNutrition))
     }
 
     /// Is running the estimator on this meal capable of doing anything? No numbers yet, and the

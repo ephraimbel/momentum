@@ -224,7 +224,46 @@ Recipes: `--fuel-health` self-pushes the page; `--meal-detail` opens the first t
 - Recipe: `--fuel-readout` self-opens the Today's-fueling sheet.
 
 ## Later (explicitly deferred)
-Add-an-item inside an existing meal · widgets/streak flair · fueling in MorningReadiness ·
+Widgets/streak flair · fueling in MorningReadiness ·
 fueling trends in Progress · refuel push notification · pre-race dinner reminder ·
 off-label serving sizes for scans ("3 crackers" of a 30 g serving).
 *(Day-history browsing + quick-repeat shipped 2026-07-16.)*
+
+
+## Nutrition journal reliability (2026-09-04)
+
+- **Add nutrition** opens a direct offline entry draft. Name, eaten-at date/time, energy,
+  carbs, protein, fat, sodium, fluids, fiber, sugars, saturated fat, potassium, magnesium,
+  iron, and calcium are editable. Fractions are accepted to two decimal places; blanks
+  mean unknown, and zero means a declared zero. Invalid input prevents Save.
+- **Daily totals** opens a date-selectable nutrition view with all 13 fields. Each nutrient
+  distinguishes a known zero, missing data, and a partial subtotal. It includes direct
+  entry and itemized meals and lets the athlete correct the day's entries.
+- **+250 ml** records a separate `WaterEntry` in hydration. Water never appears as a meal,
+  in usuals, or in food scores. Tap the fluids line to open Water, browse dates, log a custom
+  amount, or delete an entry. Water contributes to fluid totals and exports without changing
+  meal counts or dismissing the post-workout refuel prompt.
+  Explicit typed volumes such as “500 ml water” and “1.5 L of water” also resolve offline.
+- Item quantities retain their original nutrition basis across saves. Repeated portion
+  changes do not accumulate rounding errors. Removing the final item never restores its
+  former totals: add a replacement, enter totals explicitly, or delete the meal.
+- Switching an itemized meal to manual totals carries all nutrients, including edited
+  micros and fluids. Cancel never writes a draft; failed saves keep the draft open.
+  Time-only edits preserve any estimate arriving while the editor was open.
+- Schema V4 migrates journals in place. Precise nutrition is stored in an optional `Meal.nutritionData` blob, with rounded scalar
+  fields retained for existing consumers. The daily readout sums precise values before
+  rounding. Older meals fall back to their scalar fields without inventing precision.
+- Invalid/empty estimator responses and non-finite or negative barcode values are refused.
+  Undeclared barcode sodium and fluids remain unknown; the serving description survives logging.
+- History's **Export nutrition journal** action saves the entire local journal as CSV,
+  independent of the visible search or year window. It includes meal IDs, UTC timestamps,
+  names, source, meal/water entry type, and all nutrients; missing fields remain empty and formula-like names are escaped.
+- Meals are stored locally. The existing workout sync does **not** provide meal backup or
+  cross-device meal restoration. Export is available; account-level nutrition sync remains
+  separate work, and must not be advertised as implemented.
+
+Validation: the broader unit suite passed 1,944 tests before the hydration split. After the
+split, 86 focused nutrition, hydration, barcode, Siri, and schema-migration tests passed.
+Simulator checks passed for all-field manual entry and relaunch persistence, invalid-input
+cancellation, water-only logging/deletion, and the existing add-item flow. Light and dark
+screens were inspected. The final build-for-testing also passed.

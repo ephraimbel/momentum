@@ -26,7 +26,8 @@ struct FuelView: View {
     var showsDone = true
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
+    @ScaledMetric(relativeTo: .caption) private var mealStatusHeight = 20
     /// Bounded on purpose. The page judges TODAY and offers repeats from the recent past — it never
     /// needed every meal ever logged. `fetchLimit` runs AFTER the sort, and we sort by the very key
     /// we window on, so "newest 500" is exactly "the recent journal" (this is NOT the case
@@ -51,12 +52,17 @@ struct FuelView: View {
     @Query(FuelView.recentMeals) private var meals: [Meal]
     @Query(FuelView.recentWorkouts) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
+    @Query(sort: \WaterEntry.drankAt, order: .reverse) private var waterEntries: [WaterEntry]
 
     @State private var draft = ""
     /// In-flight estimates, retained by meal id so a Delete can CANCEL one before it comes back to a
     /// deleted SwiftData object (it also drives the shimmer, exactly like the old `Set<UUID>`).
     @State private var estimateTasks: [UUID: Task<Void, Never>] = [:]
     @State private var editing: Meal?
+    @State private var manualMeal: Meal?
+    @State private var showingNutrition = false
+    @State private var showingHydration = false
+    @State private var saveError: String?
     @State private var showingReadout = false
     @State private var showingGoals = false
     /// Drives the `.navigationDestination` for Meal history — a Button gates the push (a
@@ -143,19 +149,20 @@ struct FuelView: View {
                     // The dashboard reads top-down: the day's energy, its verdict (the strip
                     // judges the WHOLE day, so it lives up here), the gauges — then the composer
                     // (Amy: entry next) and the journal. History lives behind the calendar button.
-                    kcalHeadline.reveal(0)
-                    readoutStrip.reveal(0.05)
-                    ringsRow.reveal(0.10)
-                    fluidsLine.reveal(0.13)
-                    composer.reveal(0.16)
-                    usualsRow.reveal(0.20)
+                    kcalHeadline.reveal(0, once: "fuel.headline")
+                    readoutStrip.reveal(0.01, once: "fuel.readout")
+                    ringsRow.reveal(0.02, once: "fuel.rings")
+                    fluidsLine.reveal(0.03, once: "fuel.fluids")
+                    composer.reveal(0.04, once: "fuel.composer")
+                    nutritionActions
+                    usualsRow.reveal(0.05, once: "fuel.usuals")
                     // Discoverability for hands-free logging ("Hey Siri, log a meal in Momentum").
                     // Apple's own tip row; dismissible once, forever.
                     if siriTipVisible {
                         SiriTipView(intent: LogMealIntent(), isVisible: $siriTipVisible)
-                            .reveal(0.22)
+                            .reveal(0.06, once: "fuel.siri")
                     }
-                    todaysMeals.reveal(0.24)
+                    todaysMeals.reveal(0.06, once: "fuel.meals")
                     // No page-footer sources link here (owner call 2026-08-11: it lives in
                     // Settings → Science & sources).
                     // ⚠️ 1.4.1 NOTE: unlike Trends/Health, this page has NO ⓘ explainer sheets,
@@ -167,7 +174,6 @@ struct FuelView: View {
                 }
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
-                .animation(Motion.standard, value: readout.refuelDue)
             }
             // FUEL is a Pro pillar, but the page is "try-then-paywall" (user decision, mirrors the
             // AI coach): free athletes see the REAL page — honest empty rings/kcal, a live composer
@@ -231,7 +237,19 @@ struct FuelView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(item: $editing) { MealDetailSheet(meal: $0) }
+            .sheet(item: $editing, onDismiss: refreshDerived) { MealDetailSheet(meal: $0) }
+            .sheet(item: $manualMeal, onDismiss: refreshDerived) {
+                MealDetailSheet(meal: $0, isNew: true) {
+                    draft = ""
+                    voiceBase = ""
+                    mealLogged()
+                }
+            }
+            .sheet(isPresented: $showingNutrition, onDismiss: refreshDerived) { NutritionDaySheet() }
+            .sheet(isPresented: $showingHydration, onDismiss: refreshDerived) { HydrationSheet() }
+            .alert("Couldn’t save your meal", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+                Button("OK", role: .cancel) { saveError = nil }
+            } message: { Text(saveError ?? "Please try again.") }
             .sheet(isPresented: $showingGoals) { FuelGoalsSheet() }
             // Meal history — pushed only once the gated toolbar button has confirmed entitlement.
             .navigationDestination(isPresented: $showingHistory) { FuelHistoryView() }
@@ -257,7 +275,11 @@ struct FuelView: View {
             // First frame, and every return to the tab. Unconditional: it's also how a plan edit
             // made on the Plan tab reaches the carb target (the signature hashes plan IDENTITY, not
             // its session list — see `cacheSignature`).
-            .onAppear { refreshDerived() }
+            .onAppear {
+                do { try HydrationStore.moveWater(in: context) }
+                catch { saveError = "Older water entries could not be moved to hydration. Please try again." }
+                refreshDerived()
+            }
             // Any data change — a meal logged or deleted, an estimate landing, the adjuster saved,
             // a workout finishing, the day rolling over, the minute ticking.
             .onChange(of: cacheSignature) { refreshDerived() }
@@ -348,8 +370,14 @@ struct FuelView: View {
         // (the ProgressView lesson: engines bake "today" into their own math).
         h.combine(todayStart)
         h.combine(minuteTick)
+        for water in waterEntries {
+            if water.isDeleted { continue }
+            guard water.drankAt >= todayStart else { break }
+            h.combine(water.id); h.combine(water.drankAt); h.combine(water.amountMl)
+        }
         // Today's meals, BY CONTENT — this is the line that makes a landing estimate roll the rings.
         for m in todaySlice(since: todayStart) {
+            h.combine(m.id); h.combine(m.text); h.combine(m.note)
             h.combine(m.eatenAt)
             h.combine(m.kcal); h.combine(m.carbsG); h.combine(m.proteinG)
             h.combine(m.fatG); h.combine(m.sodiumMg)
@@ -363,7 +391,7 @@ struct FuelView: View {
             // item the athlete just deleted, which is precisely the promise the detail sheet makes
             // ("your hand outranks the estimate") read back to them as a lie. A few hundred bytes
             // per today-meal, against the engine run this cache exists to avoid.
-            h.combine(m.itemsData); h.combine(m.fluidsMl); h.combine(m.source)
+            h.combine(m.itemsData); h.combine(m.nutritionData); h.combine(m.fluidsMl); h.combine(m.source)
         }
         // Today's workouts, by content: they raise the energy floor, add sweat sodium, and are the
         // whole of `refuelDue`.
@@ -454,7 +482,7 @@ struct FuelView: View {
         let todayStart = Calendar.current.startOfDay(for: now)
         let today = todaySlice(since: todayStart)
         let r = FuelReadoutBuilder.readout(meals: today, plan: profiles.first?.plan,
-                                           workouts: Array(workouts), profile: profiles.first, now: now)
+                                           workouts: Array(workouts), profile: profiles.first, water: waterEntries, now: now)
         return (r, today, FuelTips.line(readout: r, now: now))
     }
 
@@ -528,10 +556,11 @@ struct FuelView: View {
                     Text(statusWord(r.status))
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                         .contentTransition(.opacity)
+                        .animation(Motion.crossfade, value: r.status)
                     Text(primaryLine(r))
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                         .monospacedDigit()
-                        .contentTransition(.numericText())
+                        .modifier(NumericFeedback(value: primaryLine(r)))
                     Spacer(minLength: 0)
                     // Count what is ACTUALLY in flight, not every numberless meal: a meal that hit
                     // the retry cap has no numbers and no task, and would otherwise claim to be
@@ -553,7 +582,7 @@ struct FuelView: View {
                     }
                     .frame(height: 5)
                     .clipShape(Capsule())
-                    .animation(Motion.lively, value: fraction)
+                    .animation(reduceMotion ? nil : Motion.content, value: fraction)
                     .animation(Motion.standard, value: r.status)
                 // WHY this target — the driving session, on the dashboard. The plan↔fuel link is
                 // the page's entire differentiator, and it lived one tap deep in the sheet; now it
@@ -597,8 +626,6 @@ struct FuelView: View {
         }
         .buttonStyle(.plain)
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .animation(Motion.standard, value: r)
-        .animation(Motion.standard, value: tip)
         .accessibilityLabel("Fueling readout")
         .accessibilityValue(
             (r.status == .fueled ? "about \(r.primaryValueG) grams of \(r.primaryLabel) banked, floor met"
@@ -623,7 +650,7 @@ struct FuelView: View {
                 Text("\(v.score)")
                     .font(.rounded(9, weight: .bold)).monospacedDigit()
                     .foregroundStyle(Theme.ink)
-                    .contentTransition(.numericText())
+                    .modifier(NumericFeedback(value: v.score))
             } else {
                 Circle().stroke(Theme.hairline, lineWidth: 2.5)
                 Image(systemName: "heart")
@@ -632,7 +659,7 @@ struct FuelView: View {
             }
         }
         .frame(width: 22, height: 22)
-        .animation(Motion.standard, value: cachedDayVerdict?.score)
+        .animation(reduceMotion ? nil : Motion.content, value: cachedDayVerdict?.score)
     }
 
     /// No-shame status words — "behind" never appears; a slow morning is just "building".
@@ -717,6 +744,7 @@ struct FuelView: View {
                     .padding(.vertical, 8)
             } else {
                 TextField(composerPrompt, text: $draft, axis: .vertical)
+                    .accessibilityIdentifier("fuel-composer")
                     .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.ink)
                     .lineLimit(1...4)
                     .focused($composing)
@@ -736,8 +764,8 @@ struct FuelView: View {
                     .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.background)
                     .frame(width: 34, height: 34)
                     .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
-                    .scaleEffect(canLog ? 1 : 0.92)
-                    .animation(Motion.lively, value: canLog)
+                    .scaleEffect(canLog || reduceMotion ? 1 : 0.96)
+                    .animation(Motion.selection, value: canLog)
             }
             .buttonStyle(.plain)
             .disabled(!canLog)
@@ -755,11 +783,10 @@ struct FuelView: View {
                                     restingOpacity: draft.isEmpty ? 0.65 : 1)
             }
         }
-        .shadow(color: (Theme.iridescent.first ?? .clear).opacity(composerGlow ? 0.35 : 0),
-                radius: composerGlow ? 9 : 0, y: 2)
-        .animation(Motion.reversible, value: composerGlow)
-        .animation(Motion.reversible, value: draft.isEmpty)
-        .animation(Motion.standard, value: voice.isRecording)
+        .animation(Motion.crossfade) { content in
+            content.shadow(color: (Theme.iridescent.first ?? .clear).opacity(composerGlow ? 0.35 : 0),
+                           radius: composerGlow ? 9 : 0, y: 2)
+        }
     }
 
     /// Awake while writing or dictating — focused, holding text, or the mic running.
@@ -816,6 +843,7 @@ struct FuelView: View {
     /// ground truth, and manual is what outranks estimates when these words come back typed —
     /// `MealTextKey.outranks`). No estimator, no note (nobody wrote coaching for this snack).
     private func logScanned(_ product: BarcodeFood.ScannedProduct, servings: Double) {
+        guard servings.isFinite, (0.001...10_000).contains(servings) else { return }
         let numbers = BarcodeFood.portion(of: product, servings: servings)
         let meal = Meal()
         meal.text = BarcodeFood.mealText(for: product, servings: servings)
@@ -826,14 +854,18 @@ struct FuelView: View {
                                potassiumMg: numbers.potassiumMg, magnesiumMg: nil,
                                ironMg: numbers.ironMg, calciumMg: numbers.calciumMg,
                                fiberG: numbers.fiberG, sugarG: numbers.sugarG,
-                               satFatG: numbers.satFatG, nova: product.nova)]
+                               satFatG: numbers.satFatG, nova: product.nova,
+                               unknownNutrients: product.sodiumIsKnown ? [.fluids] : [.fluids, .sodium])]
+        // Keep the package's portion basis visible after the scanner is dismissed.
+        meal.items = meal.items.map { item in
+            var copy = item
+            copy.servingDescription = product.servingDescription
+            copy.portionBasis = MealPortionBasis(quantity: 1, nutrition: BarcodeFood.nutrition(of: product))
+            return copy
+        }
         meal.source = "manual"
         meal.confidence = 1
-        withAnimation(Motion.standard) {
-            context.insert(meal)
-            try? context.save()
-            refreshDerived()
-        }
+        guard commitNewMeal(meal) else { return }
         mealLogged()
         Haptics.success()
     }
@@ -846,7 +878,7 @@ struct FuelView: View {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.1))
             guard editing == nil, !showingGoals, !showingHistory,
-                  !showingHealth, !showScanner, !showingReadout else { return }
+                  !showingHealth, !showScanner, !showingReadout, manualMeal == nil, !showingNutrition else { return }
             if AppReview.shouldRequestReview() { showRatingPrompt = true }
         }
     }
@@ -868,10 +900,11 @@ struct FuelView: View {
         guard canLog else { return }
         if voice.isRecording { voice.stop() }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = ""
-        voiceBase = ""
-        composing = false
-        log(text: text)
+        if log(text: text) {
+            draft = ""
+            voiceBase = ""
+            composing = false
+        }
     }
 
     /// The resolution ladder — one place, three rungs (FUEL-FLOW §2):
@@ -883,7 +916,9 @@ struct FuelView: View {
     /// Rungs 1–2 land with no shimmer: the searching beat exists because the app is genuinely
     /// searching, and on a local resolve it isn't. Deliberately does NOT touch composer state —
     /// the quick-log chips call this too, and a chip tap must never eat a draft mid-typing.
-    private func log(text: String) {
+    @discardableResult
+    private func log(text: String) -> Bool {
+        if let water = HydrationInput.milliliters(in: text) { return logWater(water) }
         // Plan-derived and meal-independent — read BEFORE the insert, while the cache token is
         // still current (reading it after lands on the stale-token fallback and pays a full
         // engine run for a string the plan already knew).
@@ -901,16 +936,13 @@ struct FuelView: View {
             resolvedLocally = FuelLocalResolver.applyStaples(to: meal, text: text)
         }
 
-        withAnimation(Motion.standard) {
-            context.insert(meal)
-            try? context.save()
-            refreshDerived()
-        }
+        guard commitNewMeal(meal) else { return false }
         mealLogged()
         // One event, one haptic. A local resolve never also fires the estimate's `Haptics.light()`
         // — two taps back to back read as a stutter, not as speed.
         Haptics.success()
         if !resolvedLocally { estimate(meal, sessionLabel: label) }
+        return true
     }
 
     /// Fire (or re-fire) the estimate for one meal. Manual numbers always survive (`apply` guards).
@@ -932,11 +964,17 @@ struct FuelView: View {
         if estimateTasks[id] == nil, EstimateGate.isEstimating(id) { return }
         estimateTasks[id]?.cancel()
         let gateToken = EstimateGate.take(id)
-        meal.estimateAttempts += 1
-        try? context.save()
+        do {
+            try MealNutritionStore.update(meal, in: context) { meal.estimateAttempts += 1 }
+        } catch {
+            EstimateGate.end(id, token: gateToken)
+            saveError = "Your meal is saved, but its estimate could not start. Please try again."
+            return
+        }
         let task = Task { @MainActor in
             defer { EstimateGate.end(id, token: gateToken) }
             let outcome = await estimator.estimate(text: meal.text, sessionLabel: sessionLabel, durationS: nil)
+            guard EstimateGate.owns(id, token: gateToken) else { return }
             // Cancellation normally gets here first, but a delete landing during the final
             // suspension point wouldn't be seen by it — `isDeleted` flips the moment
             // `context.delete` runs, and `modelContext` goes nil once the delete is processed.
@@ -946,13 +984,15 @@ struct FuelView: View {
             }
             switch outcome {
             case .estimated(let e):
-                withAnimation(Motion.standard) {
-                    FuelEstimator.apply(e, to: meal)
-                    meal.estimateAttempts = 0   // it resolved; nothing owed
-                    try? context.save()
+                do {
+                    try MealNutritionStore.update(meal, in: context) {
+                        FuelEstimator.apply(e, to: meal)
+                        meal.estimateAttempts = 0
+                    }
+                    try HydrationStore.moveWater(from: [meal], in: context)
                     refreshDerived()
-                }
-                Haptics.light()
+                    Haptics.light()
+                } catch { saveError = "Your meal is saved, but its nutrition estimate could not be saved. Please try again." }
             case .unavailable:
                 // Never asked, never billed — refund the attempt so the meal is still due when
                 // there's a network again. Floored at 0 against any double-refund.
@@ -961,7 +1001,7 @@ struct FuelView: View {
             case .declined:
                 break   // the function answered and we still have no numbers — the attempt stands
             }
-            withAnimation(Motion.standard) { estimateTasks[id] = nil }
+            estimateTasks[id] = nil
         }
         estimateTasks[id] = task
     }
@@ -985,6 +1025,57 @@ struct FuelView: View {
         }
     }
 
+    private func commitNewMeal(_ meal: Meal) -> Bool {
+        do {
+            try MealNutritionStore.insert(meal, in: context)
+            refreshDerived()
+            return true
+        } catch {
+            saveError = "Your meal wasn’t saved. Your typed draft is still here; please try again."
+            return false
+        }
+    }
+
+    private var nutritionActions: some View {
+        HStack(spacing: Theme.Space.md) {
+            Button {
+                guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+                let meal = Meal()
+                meal.text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                manualMeal = meal
+                composing = false
+            } label: { Label("Add nutrition", systemImage: "plus.circle") }
+            .accessibilityIdentifier("fuel-manual-entry")
+            Spacer(minLength: 0)
+            Button {
+                guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+                showingNutrition = true
+            } label: { Label("Daily totals", systemImage: "list.bullet.rectangle") }
+            .accessibilityIdentifier("fuel-daily-nutrition")
+        }
+        .font(.rounded(Theme.FontSize.caption, weight: .semibold))
+        .foregroundStyle(Theme.ink)
+        .buttonStyle(.plain)
+        .frame(minHeight: 44)
+    }
+
+    @discardableResult
+    private func logWater(_ milliliters: Int) -> Bool {
+        guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return false }
+        let water = WaterEntry(amountMl: Double(milliliters))
+        context.insert(water)
+        do {
+            try context.save()
+            refreshDerived()
+            Haptics.success()
+        } catch {
+            context.delete(water)
+            saveError = "Your water wasn’t saved. Please try again."
+            return false
+        }
+        return true
+    }
+
     // MARK: The day's energy — one perfectly centered number, and the target it's aiming at
 
     /// The biggest numeral on the page answers "how much"; the caption beneath now answers "of how
@@ -998,11 +1089,16 @@ struct FuelView: View {
         return VStack(spacing: 2) {
             Text(r.kcal.formatted())
                 .font(.display(30, weight: .black)).monospacedDigit().foregroundStyle(Theme.ink)
-                .contentTransition(.numericText())
+                .modifier(NumericFeedback(value: r.kcal))
             Text(r.kcalIsGoal ? "of \(r.kcalFloor.formatted()) kcal today" : "of \(r.kcalFloor.formatted())+ kcal")
                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 .monospacedDigit()
-                .contentTransition(.numericText())
+                .modifier(NumericFeedback(value: r.kcalFloor))
+            let known = todayMeals.filter { $0.kcal != nil }.count
+            if known < todayMeals.count {
+                Text("Energy recorded for \(known) of \(todayMeals.count) entries")
+                    .font(.rounded(Theme.FontSize.label)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+            }
             if let note = r.goalNote {
                 Text(note)
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -1011,8 +1107,6 @@ struct FuelView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .animation(Motion.standard, value: r.kcal)
-        .animation(Motion.standard, value: r.kcalFloor)   // a finished workout raises the floor — roll it
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Energy")
         .accessibilityValue("about \(r.kcal) of \(r.kcalFloor) kilocalories")
@@ -1045,7 +1139,6 @@ struct FuelView: View {
             FuelRing(value: r.sodiumMg, floor: r.sodiumFloorMg, label: "sodium", index: 3, tint: Theme.Fuel.sodium)
         }
         .padding(.vertical, Theme.Space.xs)
-        .animation(Motion.standard, value: r)
     }
 
     /// Hydration, as a whisper under the rings (2026-08-15) — fluids were captured on every meal
@@ -1053,20 +1146,27 @@ struct FuelView: View {
     /// gauge to race. Earns nothing; the rings own the iridescent arrivals.
     private var fluidsLine: some View {
         let r = readout
-        return HStack(spacing: 5) {
-            Image(systemName: "drop.fill")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Theme.inkTertiary)
-            Text("≈\(litersText(r.fluidsMl)) of \(litersText(r.fluidsFloorMl))+ fluids")
+        return HStack(spacing: Theme.Space.sm) {
+            Button {
+                guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+                showingHydration = true
+            } label: {
+                Label("≈\(litersText(r.fluidsMl)) of \(litersText(r.fluidsFloorMl))+ fluids", systemImage: "drop")
                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(Theme.inkTertiary)
-                .contentTransition(.numericText())
+                .foregroundStyle(Theme.inkSecondary)
+                .accessibilityLabel("Fluids, about \(r.fluidsMl) of \(r.fluidsFloorMl) milliliters or more")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("fuel-water-log")
+            Spacer(minLength: 0)
+            Button { logWater(250) } label: {
+                Text("+250 ml").font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+                    .padding(.horizontal, 10).frame(minHeight: 44)
+            }
+            .foregroundStyle(Theme.Fuel.sodium)
+            .accessibilityLabel("Log 250 milliliters of water")
+            .accessibilityIdentifier("fuel-water-250")
         }
-        .frame(maxWidth: .infinity)
-        .animation(Motion.standard, value: r.fluidsMl)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Fluids")
-        .accessibilityValue("about \(litersText(r.fluidsMl)) of \(litersText(r.fluidsFloorMl)) or more")
     }
 
     /// "850 ml" below a liter, "1.2 L" from there — the compact drink grammar.
@@ -1185,11 +1285,7 @@ struct FuelView: View {
         let meal = Meal()
         meal.text = source.text
         FuelLocalResolver.copyNumbers(from: source, to: meal)
-        withAnimation(Motion.standard) {
-            context.insert(meal)
-            try? context.save()
-            refreshDerived()
-        }
+        guard commitNewMeal(meal) else { return }
         mealLogged()   // a re-logged usual is still the athlete using the app
         Haptics.success()
     }
@@ -1286,7 +1382,6 @@ struct FuelView: View {
                 }
                 .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             }
-            .animation(Motion.standard, value: rows.map(\.id))
         }
     }
 
@@ -1317,6 +1412,7 @@ struct FuelView: View {
         // estimating rendered as "Couldn't estimate" and was editable mid-flight (opening the
         // sheet then saving wiped the just-landed numbers).
         let isEstimating = estimateTasks[meal.id] != nil || EstimateGate.isEstimating(meal.id)
+        let displayTitle = title(meal, cacheValid: cacheValid)
         // Once resolved, the title is the AI's clean item list ("Eggs ×2 · Toast · Coffee") —
         // the athlete's raw words stay on the model and in the detail sheet.
         return Button {
@@ -1328,10 +1424,11 @@ struct FuelView: View {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: Theme.Space.sm) {
-                        Text(title(meal, cacheValid: cacheValid))
+                        Text(displayTitle)
                             .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                             .lineLimit(2).multilineTextAlignment(.leading)
                             .contentTransition(.opacity)
+                            .animation(Motion.crossfade, value: displayTitle)
                         Spacer(minLength: 0)
                         // The meal's health score, in its band's ink — cached per refresh like
                         // the title (`healthVerdict` decodes items). No numbers yet, no chip.
@@ -1354,14 +1451,17 @@ struct FuelView: View {
                         } else if let numbers = meal.journalNumbersText {
                             numbers
                                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
+                                .modifier(NumericFeedback(value: [meal.kcal, meal.carbsG, meal.proteinG, meal.fatG]))
                                 .transition(.opacity)
                         } else {
                             Text("Couldn't estimate — tap to set the numbers")
-                                .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.purple)
+                                .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.Fuel.protein)
                                 .transition(.opacity)
                         }
                     }
-                    .animation(Motion.standard, value: isEstimating)
+                    // Keep the estimating line's space when numbers arrive. Long/large text may
+                    // still grow naturally; never clip it to achieve a fixed-height illusion.
+                    .frame(minHeight: mealStatusHeight, alignment: .leading)
                     if let note = meal.note, !note.isEmpty {
                         Text(note).font(.rounded(Theme.FontSize.label, weight: .medium))
                             .foregroundStyle(Theme.inkTertiary).lineLimit(2)
@@ -1400,31 +1500,21 @@ struct FuelView: View {
             // "Again": the second helping / the repeat coffee — a fresh now-stamped copy through
             // the same shared numbers path History's "Log again today" uses. No AI call, no
             // gating (it spends nothing and copies the athlete's own data).
-            if !isEstimating, meal.carbsG != nil || meal.kcal != nil {
+            if !isEstimating, !meal.nutrition.values.isEmpty {
                 Button {
-                    let copy = Meal()
-                    copy.text = meal.text
-                    copy.eatenAt = Date()
-                    FuelLocalResolver.copyNumbers(from: meal, to: copy)
-                    withAnimation(Motion.standard) {
-                        context.insert(copy)
-                        try? context.save()
-                        refreshDerived()
-                    }
-                    mealLogged()
-                    Haptics.success()
+                    guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
+                    repeatMeal(meal)
                 } label: { Label("Log it again", systemImage: "plus.circle") }
             }
             Button(role: .destructive) {
                 // Cancel FIRST: an in-flight estimate must never come back to a deleted model.
                 estimateTasks[meal.id]?.cancel()
                 estimateTasks[meal.id] = nil
-                withAnimation(Motion.standard) {
-                    context.delete(meal)
-                    try? context.save()
+                do {
+                    try MealNutritionStore.delete(meal, in: context)
                     refreshDerived()
-                }
-                Haptics.medium()
+                    Haptics.medium()
+                } catch { saveError = "This meal could not be deleted. Please try again." }
             } label: { Label("Delete meal", systemImage: "trash") }
         }
         .accessibilityLabel("Meal: \(meal.text)")
@@ -1748,7 +1838,7 @@ private struct FuelRing: View {
     var small = false
     /// The metric's ink while filling (Theme.Fuel); iridescence still owns the arrival.
     var tint: Color = Theme.ink
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @State private var drawn = false
 
     private var fraction: CGFloat { min(1, CGFloat(value) / CGFloat(max(1, floor))) }
@@ -1768,13 +1858,12 @@ private struct FuelRing: View {
                     // The premium halo: each arc glows its own color, softly (static, never pulsing).
                     .shadow(color: (fueled ? Theme.iridescent.first ?? tint : tint).opacity(0.45),
                             radius: small ? 3.5 : 5)
-                    .animation(Motion.lively, value: fraction)
+                    .animation(reduceMotion ? nil : Motion.content, value: fraction)
                     .animation(Motion.standard, value: fueled)
                 Text(compact(value))
                     .font(.rounded(small ? 10 : 11, weight: .bold)).monospacedDigit()
                     .foregroundStyle(Theme.ink)
-                    .contentTransition(.numericText())
-                    .animation(Motion.standard, value: value)
+                    .modifier(NumericFeedback(value: value))
                     .lineLimit(1)
                     .minimumScaleFactor(0.65)
                     .frame(width: small ? 28 : 34)
@@ -1807,7 +1896,7 @@ private struct FuelRing: View {
 /// gradient sweep. Transform-only (an offset highlight over a fixed base, never layout); Reduce
 /// Motion → the static "Estimating…" line instead.
 private struct EstimatingShimmer: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @State private var sweep = false
 
     var body: some View {
@@ -1841,524 +1930,5 @@ private struct EstimatingShimmer: View {
             )
             .clipShape(Capsule())
             .animation(.linear(duration: 1.25).repeatForever(autoreverses: false).delay(delay), value: sweep)
-    }
-}
-
-// MARK: - Meal detail (portions first; the athlete always outranks the estimate)
-
-/// The refine beat (FUEL-FLOW §4). Itemized meals get per-item portion steppers (±½, floor ½ —
-/// stepping − at the floor removes the item, Amy-style) with totals recomputed live as Σ items;
-/// meals without items (offline logs, pre-itemization history) fall back to direct total fields,
-/// and "Set totals by hand" converts an itemized meal for athletes who'd rather own the numbers.
-/// Any numbers change marks the meal `manual`, which a later AI estimate never overwrites.
-/// Eaten-at is editable (a forgotten lunch lands right); Delete lives here too.
-struct MealDetailSheet: View {
-    @Bindable var meal: Meal
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var context
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    @State private var items: [MealItem] = []
-    @State private var eatenAt = Date()
-    /// true = editing the five totals directly (no items, or the athlete chose to own them).
-    @State private var totalsMode = false
-    /// The athlete touched numbers (steppers, removal, mode switch) — marks the meal `manual`.
-    @State private var numbersDirty = false
-    /// The sheet's height. Reading opens at .medium; TYPING promotes to .large — in totals mode
-    /// the five number fields otherwise sit half-buried under the medium fold with the keyboard
-    /// on top of them (real fingers scroll-fight it; XCUITest's taps land on the page behind).
-    @State private var detent: PresentationDetent = .medium
-
-    @State private var carbs = ""
-    @State private var kcal = ""
-    @State private var protein = ""
-    @State private var fat = ""
-    @State private var sodium = ""
-
-    /// The add-an-item lane ("oh — I also had a coke", full-tracker pass 2026-08-20). Resolves
-    /// through the offline staples rung ONLY: instant, free, and the numbers are label-grade.
-    /// A phrase the pantry doesn't know gets an honest nudge to log it as its own meal (where
-    /// the AI sizes it) — never a fabricated zero-calorie item.
-    @State private var addItemText = ""
-    @State private var addItemMiss = false
-    @FocusState private var addingItem: Bool
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    if !meal.text.isEmpty {
-                        Text(meal.text)
-                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    // The coach's one line, where the meal is examined — the row truncates it.
-                    if let note = meal.note, !note.isEmpty {
-                        Text(note)
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    // The health verdict, LIVE — recomputed from the working items, so stepping
-                    // a portion or removing a food rolls the gauge in real time.
-                    if let verdict = liveVerdict {
-                        scoreHero(verdict)
-                    }
-                    if totalsMode {
-                        totalsFields
-                    } else {
-                        itemsCard
-                        Button("Set totals by hand") { switchToTotals() }
-                            .font(.rounded(Theme.FontSize.label, weight: .semibold))
-                            .foregroundStyle(Theme.inkTertiary)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                            .padding(.top, -Theme.Space.sm)
-                    }
-                    // Everything the numbers know — the complete facts panel (macros with their
-                    // sugar/fiber/sat-fat sublines, then every micro the meal carries).
-                    nutritionCard
-                    eatenAtRow
-                    Button(role: .destructive) {
-                        context.delete(meal)
-                        try? context.save()
-                        Haptics.medium()
-                        dismiss()
-                    } label: {
-                        Text("Delete meal").font(.rounded(Theme.FontSize.body, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .padding(.top, Theme.Space.md)
-                }
-                .padding(Theme.Space.lg)
-                .animation(Motion.standard, value: totalsMode)
-            }
-            .background(Theme.background)
-            .navigationTitle("Meal")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Save") { save() }.fontWeight(.bold) }
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            }
-            .onAppear(perform: load)
-        }
-        .presentationDetents([.medium, .large], selection: $detent)
-    }
-
-    // MARK: The health verdict (live — steppers roll the gauge)
-
-    /// Facts for whatever the athlete is currently looking at: the working items, or in totals
-    /// mode the typed fields as one pseudo-item (quality fields ride from the meal; NOVA is
-    /// per-item and unknowable for hand totals).
-    private var liveFacts: [HealthScore.Facts] {
-        guard totalsMode else { return items.map(\.healthFacts) }
-        guard let k = Int(kcal), k > 0 else { return [] }
-        return [HealthScore.Facts(name: meal.text, kcal: k, carbsG: Int(carbs) ?? 0,
-                                  proteinG: Int(protein) ?? 0, fatG: Int(fat) ?? 0,
-                                  sodiumMg: Int(sodium) ?? 0, fiberG: meal.fiberG,
-                                  sugarG: meal.sugarG, satFatG: meal.satFatG,
-                                  potassiumMg: meal.potassiumMg, nova: nil)]
-    }
-
-    private var liveVerdict: HealthScore.Verdict? { HealthScore.aggregate(liveFacts) }
-
-    /// The gauge beside its plain-words explanation — what the score is and what moved it.
-    private func scoreHero(_ verdict: HealthScore.Verdict) -> some View {
-        HStack(spacing: Theme.Space.lg) {
-            HealthScoreGauge(verdict: verdict, diameter: 84)
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Text("HEALTH SCORE")
-                    .font(.rounded(10, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkTertiary)
-                if let line = HealthScore.driversLine(verdict.drivers) {
-                    Text(line)
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                        .foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(provenanceLine)
-                    .font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(Theme.Space.md)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .animation(Motion.standard, value: verdict.score)
-    }
-
-    /// Where these numbers came from — the honesty footnote ("your hand outranks the estimate"
-    /// works better when the sheet says whose hand is on the numbers right now).
-    private var provenanceLine: String {
-        switch meal.source {
-        case "manual": return "Your numbers. Every score reads ≈."
-        case "ai": return "AI estimate — your edits outrank it. Every score reads ≈."
-        default: return "Estimate pending. Every score reads ≈."
-        }
-    }
-
-    // MARK: The complete facts panel
-
-    /// The complete facts panel. In ITEMS mode it is the meal's whole story — live Σ over the
-    /// working items, so steppers roll every cell. In TOTALS mode the five editable fields above
-    /// already own the macros, so the grid carries ONLY what they don't (quality facts, micros,
-    /// fluids) and disappears entirely when the meal knows none of them — a pending offline log
-    /// never shows a wall of dashes. nil = "—", never a fabricated zero.
-    @ViewBuilder
-    private var nutritionCard: some View {
-        let t = totals
-        let itemsLive = !totalsMode && !items.isEmpty
-        let fluidsV = itemsLive ? (t.fluids > 0 ? t.fluids : nil) : meal.fluidsMl.flatMap { $0 > 0 ? $0 : nil }
-        let fiberV = itemsLive ? Self.optionalSum(items.compactMap(\.fiberG)) : meal.fiberG
-        let sugarV = itemsLive ? Self.optionalSum(items.compactMap(\.sugarG)) : meal.sugarG
-        let satFatV = itemsLive ? Self.optionalSum(items.compactMap(\.satFatG)) : meal.satFatG
-        let kV = itemsLive ? Self.optionalSum(items.compactMap(\.potassiumMg)) : meal.potassiumMg
-        let mgV = itemsLive ? Self.optionalSum(items.compactMap(\.magnesiumMg)) : meal.magnesiumMg
-        let feV = itemsLive ? Self.optionalSum(items.compactMap(\.ironMg)) : meal.ironMg
-        let caV = itemsLive ? Self.optionalSum(items.compactMap(\.calciumMg)) : meal.calciumMg
-        let detailKnown = fiberV != nil || sugarV != nil || satFatV != nil || kV != nil
-            || mgV != nil || feV != nil || caV != nil || fluidsV != nil
-        if itemsLive || detailKnown {
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                Text("NUTRITION")
-                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Theme.inkTertiary)
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())],
-                          alignment: .leading, spacing: Theme.Space.md) {
-                    if itemsLive {
-                        factCell("Energy", "\(t.kcal) kcal", tint: Theme.inkSecondary)
-                        factCell("Carbs", "\(t.carbs) g", tint: Theme.Fuel.carbs)
-                        factCell("Protein", "\(t.protein) g", tint: Theme.Fuel.protein)
-                        factCell("Fat", "\(t.fat) g", tint: Theme.Fuel.fat)
-                    }
-                    factCell("Fiber", fiberV.map { "\($0) g" })
-                    factCell("Sugars", sugarV.map { "\($0) g" })
-                    factCell("Saturated fat", satFatV.map { "\($0) g" })
-                    if itemsLive {
-                        factCell("Sodium", "\(t.sodium) mg", tint: Theme.Fuel.sodium)
-                    }
-                    factCell("Potassium", kV.map { "\($0) mg" })
-                    factCell("Magnesium", mgV.map { "\($0) mg" })
-                    factCell("Iron", feV.map { ironText($0) + " mg" })
-                    factCell("Calcium", caV.map { "\($0) mg" })
-                    if let fluidsV {
-                        factCell("Fluids", "\(fluidsV) ml")
-                    }
-                }
-            }
-            .padding(Theme.Space.md)
-            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        }
-    }
-
-    /// One fact: the value in its metric's ink (macros keep the ring binding; quality facts and
-    /// micros stay monochrome), "—" for a value honestly not estimated.
-    private func factCell(_ label: String, _ value: String?, tint: Color = Theme.ink) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value.map { "≈\($0)" } ?? "—")
-                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                .foregroundStyle(value == nil ? Theme.inkTertiary : tint)
-                .contentTransition(.numericText())
-            Text(label).font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// Σ, but nil for an empty set — mirrors `Meal.applyTotals`: "no data" is never a zero.
-    private static func optionalSum<N: AdditiveArithmetic>(_ values: [N]) -> N? {
-        values.isEmpty ? nil : values.reduce(N.zero, +)
-    }
-
-    /// Iron with a decimal only when it earns one — same rule as the readout sheet.
-    private func ironText(_ v: Double) -> String {
-        v == v.rounded() ? String(Int(v)) : String(format: "%.1f", v)
-    }
-
-    private func load() {
-        items = meal.items
-        totalsMode = items.isEmpty
-        // A totals-only meal opens ONTO the typing fields — give them typing room at once.
-        if totalsMode { detent = .large }
-        eatenAt = meal.eatenAt
-        carbs = meal.carbsG.map(String.init) ?? ""
-        kcal = meal.kcal.map(String.init) ?? ""
-        protein = meal.proteinG.map(String.init) ?? ""
-        fat = meal.fatG.map(String.init) ?? ""
-        sodium = meal.sodiumMg.map(String.init) ?? ""
-    }
-
-    // MARK: Items — portion truth belongs to the athlete
-
-    private var itemsCard: some View {
-        VStack(spacing: 0) {
-            ForEach(items) { item in
-                itemRow(item)
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .leading)))
-                Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            }
-            addItemRow
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            totalsFooter
-        }
-        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .animation(Motion.standard, value: items.map(\.id))
-    }
-
-    /// A quiet last row: "＋ add an item" grows the meal from the offline pantry, live-rolling
-    /// the Σ footer and the score gauge like every stepper does.
-    private var addItemRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.inkTertiary)
-                TextField("Add an item — banana, 2 eggs…", text: $addItemText)
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.ink)
-                    .focused($addingItem)
-                    .submitLabel(.done)
-                    .onSubmit(addItem)
-                    .onChange(of: addItemText) { addItemMiss = false }
-                    // Typing needs the tall sheet, same as the totals fields (the detent rule).
-                    .onChange(of: addingItem) { _, focused in if focused { detent = .large } }
-            }
-            if addItemMiss {
-                Text("Not in the offline pantry — log it as its own meal and the AI will size it.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 10)
-        .animation(Motion.standard, value: addItemMiss)
-        .accessibilityLabel("Add an item")
-    }
-
-    private func addItem() {
-        let text = addItemText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        guard let newItems = FuelLocalResolver.composeItems(text) else {
-            addItemMiss = true
-            Haptics.light()
-            return
-        }
-        numbersDirty = true
-        withAnimation(Motion.standard) { items.append(contentsOf: newItems) }
-        addItemText = ""
-        Haptics.success()
-    }
-
-    private func itemRow(_ item: MealItem) -> some View {
-        // Each food's own verdict as a quiet dot in its band's ink — pure arithmetic per render
-        // (no decode; the items are already in hand).
-        let itemVerdict = HealthScore.score(item.healthFacts)
-        return HStack(spacing: Theme.Space.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Circle().fill(Theme.Fuel.score(itemVerdict.band))
-                        .frame(width: 7, height: 7)
-                        .accessibilityLabel("Health score \(itemVerdict.score)")
-                    Text(item.name)
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                        .lineLimit(1)
-                }
-                (Text("\(item.kcal) kcal").foregroundColor(Theme.inkTertiary)
-                    + Text(" · ").foregroundColor(Theme.inkTertiary)
-                    + Text("\(item.carbsG) g carbs").foregroundColor(Theme.Fuel.carbs)
-                    + Text(" · ").foregroundColor(Theme.inkTertiary)
-                    + Text("\(item.proteinG) g protein").foregroundColor(Theme.Fuel.protein))
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
-                    .contentTransition(.numericText())
-            }
-            Spacer(minLength: Theme.Space.sm)
-            stepper(item)
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 10)
-        .contextMenu {
-            Button(role: .destructive) { remove(item) } label: { Label("Remove item", systemImage: "trash") }
-        }
-        .animation(Motion.standard, value: item)
-    }
-
-    /// ±½ serving; − at the ½ floor removes the item (the natural "actually, none of that").
-    private func stepper(_ item: MealItem) -> some View {
-        HStack(spacing: 2) {
-            stepButton("minus", label: "Less \(item.name)") { adjust(item, by: -0.5) }
-            Text(item.portionLabel)
-                .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-                .foregroundStyle(Theme.ink)
-                .contentTransition(.numericText())
-                .frame(minWidth: 56)
-            stepButton("plus", label: "More \(item.name)") { adjust(item, by: 0.5) }
-        }
-        .padding(3)
-        .background(Capsule().fill(Theme.background.opacity(0.7)))
-        .overlay(Capsule().stroke(Theme.hairline))
-    }
-
-    private func stepButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.inkSecondary)
-                .frame(width: 26, height: 26)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
-    private func adjust(_ item: MealItem, by delta: Double) {
-        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
-        numbersDirty = true
-        if delta < 0, items[i].qty <= 0.5 {
-            withAnimation(Motion.standard) { _ = items.remove(at: i) }
-            Haptics.medium()
-            if items.isEmpty { switchToTotals(prefillFromMeal: true) }
-        } else {
-            let target = max(0.5, items[i].qty + delta)
-            withAnimation(Motion.standard) { items[i] = items[i].scaled(to: target) }
-            Haptics.light()
-        }
-    }
-
-    private func remove(_ item: MealItem) {
-        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
-        numbersDirty = true
-        withAnimation(Motion.standard) { _ = items.remove(at: i) }
-        Haptics.medium()
-        if items.isEmpty { switchToTotals(prefillFromMeal: true) }
-    }
-
-    /// Live Σ over the working items — always agrees with what Save will write.
-    private var totals: (kcal: Int, carbs: Int, protein: Int, fat: Int, sodium: Int, fluids: Int) {
-        (items.map(\.kcal).reduce(0, +), items.map(\.carbsG).reduce(0, +),
-         items.map(\.proteinG).reduce(0, +), items.map(\.fatG).reduce(0, +),
-         items.map(\.sodiumMg).reduce(0, +), items.map(\.fluidsMl).reduce(0, +))
-    }
-
-    private var totalsFooter: some View {
-        let t = totals
-        let dot = Text(" · ").foregroundColor(Theme.inkTertiary)
-        var line = Text("≈\(t.kcal) kcal").foregroundColor(Theme.inkSecondary)
-            + dot + Text("\(t.carbs) g carbs").foregroundColor(Theme.Fuel.carbs)
-            + dot + Text("\(t.protein) g protein").foregroundColor(Theme.Fuel.protein)
-            + dot + Text("\(t.fat) g fat").foregroundColor(Theme.Fuel.fat)
-            + dot + Text("\(t.sodium) mg sodium").foregroundColor(Theme.Fuel.sodium)
-        if t.fluids > 0 { line = line + dot + Text("\(t.fluids) ml").foregroundColor(Theme.inkSecondary) }
-        return line
-            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
-            .contentTransition(.numericText())
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.md)
-            .animation(Motion.standard, value: t.kcal + t.carbs + t.protein + t.fat + t.sodium)
-    }
-
-    /// Swap to direct total fields — from the button (prefill = live Σ) or when the last item is
-    /// removed (prefill = the meal's stored numbers, so nothing silently zeroes).
-    private func switchToTotals(prefillFromMeal: Bool = false) {
-        if prefillFromMeal {
-            carbs = meal.carbsG.map(String.init) ?? ""
-            kcal = meal.kcal.map(String.init) ?? ""
-            protein = meal.proteinG.map(String.init) ?? ""
-            fat = meal.fatG.map(String.init) ?? ""
-            sodium = meal.sodiumMg.map(String.init) ?? ""
-        } else {
-            let t = totals
-            carbs = String(t.carbs); kcal = String(t.kcal); protein = String(t.protein)
-            fat = String(t.fat); sodium = String(t.sodium)
-        }
-        numbersDirty = true
-        withAnimation(Motion.standard) {
-            totalsMode = true
-            detent = .large   // typing room — the fields must never hide under the medium fold
-        }
-        Haptics.light()
-    }
-
-    // MARK: Direct totals (no items to lean on)
-
-    private var totalsFields: some View {
-        VStack(spacing: 0) {
-            numberRow("Carbs", unit: "g", text: $carbs)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            numberRow("Energy", unit: "kcal", text: $kcal)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            numberRow("Protein", unit: "g", text: $protein)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            numberRow("Fat", unit: "g", text: $fat)
-            Rectangle().fill(Theme.hairline).frame(height: 0.5)
-            numberRow("Sodium", unit: "mg", text: $sodium)
-        }
-        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-    }
-
-    private func numberRow(_ label: String, unit: String, text: Binding<String>) -> some View {
-        HStack {
-            Text(label).font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-            Spacer()
-            TextField("—", text: text)
-                .keyboardType(.numberPad)
-                .multilineTextAlignment(.trailing)
-                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                .foregroundStyle(Theme.ink)
-                .frame(width: 90)
-            Text(unit).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .frame(width: 32, alignment: .leading)
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 12)
-    }
-
-    // MARK: When it was eaten
-
-    private var eatenAtRow: some View {
-        HStack {
-            Text("Eaten").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-            Spacer()
-            DatePicker("", selection: $eatenAt, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
-                .labelsHidden()
-        }
-        .padding(.horizontal, Theme.Space.md)
-        .padding(.vertical, 6)
-        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Eaten at")
-    }
-
-    // MARK: Save
-
-    private var fieldsChanged: Bool {
-        Int(carbs) != meal.carbsG || Int(kcal) != meal.kcal || Int(protein) != meal.proteinG
-            || Int(fat) != meal.fatG || Int(sodium) != meal.sodiumMg
-    }
-
-    private func save() {
-        // ALL-blank totals mean "no numbers entered", never "erase the numbers": a sheet opened
-        // while an estimate was in flight snapshots empty fields, and saving a time-only edit
-        // was wiping the just-landed (paid) estimate to an all-nil manual meal that could never
-        // re-estimate.
-        let totalsBlank = carbs.isEmpty && kcal.isEmpty && protein.isEmpty
-            && fat.isEmpty && sodium.isEmpty
-        if totalsMode, !totalsBlank {
-            let changed = numbersDirty || fieldsChanged
-            meal.itemsData = nil
-            meal.carbsG = Int(carbs)
-            meal.kcal = Int(kcal)
-            meal.proteinG = Int(protein)
-            meal.fatG = Int(fat)
-            meal.sodiumMg = Int(sodium)
-            if changed { meal.source = "manual" }
-        } else if !totalsMode, numbersDirty {
-            meal.items = items   // totals recompute as Σ items
-            meal.source = "manual"
-        }
-        // A time-only edit deliberately does NOT mark the meal manual — a pending estimate can
-        // still fill the numbers for a meal whose clock the athlete just corrected.
-        meal.eatenAt = eatenAt
-        try? context.save()
-        Haptics.success()
-        dismiss()
     }
 }

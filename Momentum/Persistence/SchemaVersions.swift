@@ -56,6 +56,34 @@ enum SchemaV1: VersionedSchema {
 
         init() {}
     }
+
+    /// Frozen pre-precision meal shape (V1–V3). Keep this stable when the live journal evolves.
+    @Model
+    final class Meal {
+        var id: UUID = UUID()
+        var eatenAt: Date = Date()
+        var text: String = ""
+        @Attribute(.externalStorage) var photoData: Data?
+        var kcal: Int?
+        var carbsG: Int?
+        var proteinG: Int?
+        var fatG: Int?
+        var sodiumMg: Int?
+        var fluidsMl: Int?
+        var potassiumMg: Int?
+        var magnesiumMg: Int?
+        var ironMg: Double?
+        var calciumMg: Int?
+        var fiberG: Int?
+        var sugarG: Int?
+        var satFatG: Int?
+        var itemsData: Data?
+        var source: String = "pending"
+        var note: String?
+        var confidence: Double?
+        var estimateAttempts: Int = 0
+        init() {}
+    }
 }
 
 /// Release 1 of the running planner adds only isolated, scalar-ID sidecar tables. No V1 model class
@@ -80,7 +108,7 @@ enum SchemaV2: VersionedSchema {
             CoachingEvent.self,
             AppNotification.self,
             DailyCheckin.self,
-            Meal.self,
+            SchemaV1.Meal.self,
             RunningSeasonRecord.self,
             RunningEventRecord.self,
             PlanMetadataRecord.self,
@@ -104,12 +132,21 @@ enum SchemaV3: VersionedSchema {
     }
 }
 
+/// Fractional nutrition is one optional field; preserve all historical schema checksums.
+enum SchemaV4: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(4, 0, 0) }
+    static var models: [any PersistentModel.Type] {
+        SchemaV3.models.filter { ObjectIdentifier($0) != ObjectIdentifier(SchemaV1.Meal.self) } + [Meal.self, WaterEntry.self]
+    }
+}
+
 enum MomentumMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self, SchemaV3.self] }
+    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self] }
     static var stages: [MigrationStage] {
         [
             .lightweight(fromVersion: SchemaV1.self, toVersion: SchemaV2.self),
             .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self),
+            .lightweight(fromVersion: SchemaV3.self, toVersion: SchemaV4.self),
         ]
     }
 }

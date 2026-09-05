@@ -2,9 +2,8 @@ import XCTest
 
 /// Every tab must stay smooth after the glass pass (owner ask 2026-08-27: "make sure the app is
 /// still fast and responsive"). Each test opens a page, records the wall-clock cost of a scroll
-/// burst (`XCTClockMetric`, baseline-free so sim variance never fails a run), then proves the
-/// page still answers: its first button is hittable after the burst. A page doing per-frame
-/// engine work shows up as a long, noisy duration; a memoized page is flat.
+/// burst, including the system's scrolling/deceleration hitch metrics, then proves the page still
+/// answers. Simulator results are diagnostic; establish regression baselines on a physical device.
 final class PagesScrollPerfUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
@@ -12,9 +11,11 @@ final class PagesScrollPerfUITests: XCTestCase {
         app.launchArguments = ["--seed-demo"] + args
         app.launch()
         sleep(UInt32(settle))
-        let surface = app.scrollViews.firstMatch
-        guard surface.waitForExistence(timeout: 10) else { return }
-        measure(metrics: [XCTClockMetric()]) {
+        ScrollTestSupport.dismissRecoveryIfPresent(app)
+        guard let surface = ScrollTestSupport.pageSurface(in: app) else { return }
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        measure(metrics: [XCTClockMetric(), XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
             surface.swipeUp(velocity: .fast)
             surface.swipeDown(velocity: .fast)
         }
@@ -42,5 +43,32 @@ final class PagesScrollPerfUITests: XCTestCase {
         burst(XCUIApplication(),
               args: ["--profile-tab", "--profile-community", "--feed-global", "--ui-test-social"],
               settle: 8)
+    }
+}
+
+/// Recording tests intentionally exercise recovery and may leave a recoverable sample workout.
+/// Keep it, but close its prompt before measuring. Never accidentally benchmark the alert's
+/// small text scroll view (which is also returned by `app.scrollViews.firstMatch`).
+enum ScrollTestSupport {
+    static func dismissRecoveryIfPresent(_ app: XCUIApplication, timeout: TimeInterval = 0) {
+        let recovery = app.alerts["Unfinished run found"]
+        if recovery.waitForExistence(timeout: timeout) {
+            recovery.buttons["Cancel"].tap()
+            XCTAssertTrue(recovery.waitForNonExistence(timeout: 5), "Recovery prompt did not close.")
+        }
+    }
+
+    static func pageSurface(in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement? {
+        XCTAssertTrue(app.scrollViews.firstMatch.waitForExistence(timeout: 10),
+                      "Expected page scroll view never appeared.", file: file, line: line)
+        guard let surface = app.scrollViews.allElementsBoundByIndex
+            .filter({ $0.isHittable })
+            .max(by: { $0.frame.height < $1.frame.height }),
+              surface.frame.height > app.frame.height * 0.5 else {
+            XCTFail("No full-page scroll surface is reachable; do not measure a nested control or alert.",
+                    file: file, line: line)
+            return nil
+        }
+        return surface
     }
 }

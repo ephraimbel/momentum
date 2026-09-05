@@ -171,10 +171,11 @@ struct OnboardingFlowTests {
         // Step order: the coach-interview arc holds (broad → specific → consent → commitment).
         let steps = vm.steps
         func idx(_ s: OnboardingViewModel.Step) throws -> Int { try #require(steps.firstIndex(of: s)) }
-        #expect(try idx(.name) < idx(.identity))             // your name → your @handle
-        #expect(try idx(.identity) < idx(.goal))             // identity settles before training questions
+        #expect(steps.first == .name)
+        #expect(try idx(.race) < idx(.experience))           // destination → starting point
         #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
-        #expect(try idx(.injuries) < idx(.race))             // before the race specifics
+        #expect(try idx(.runVolume) < idx(.injuries))        // baseline stays together
+        #expect(try idx(.metrics) < idx(.days))              // starting point → training week
         #expect(try idx(.experience) < idx(.health))         // running level + pace → recovery consent
         #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
         #expect(try idx(.intensity) < idx(.notifications))   // decisions → required permission context
@@ -277,4 +278,71 @@ struct OnboardingFlowTests {
         #expect(untimed.hasPrefix("Building toward your 5K on "))
         #expect(!untimed.localizedCaseInsensitiveContains("ready"))
     }
+    @Test func shorterInterviewKeepsEveryPlanInputAndWalksBackwards() {
+        let vm = OnboardingViewModel()
+        vm.goal = .stayConsistent
+        vm.calibrationMode = .feel
+        vm.paceFeel = .regular
+        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 10)
+        #expect(vm.steps.contains(.name))
+        #expect(!vm.steps.contains(.identity))
+        #expect(!vm.steps.contains(.units))
+        #expect(!vm.steps.contains(.preferredDays))
+        #expect(!vm.steps.contains(.why))
+        for step in [OnboardingViewModel.Step.experience, .runVolume, .injuries, .metrics, .days, .session, .intensity] {
+            #expect(vm.steps.contains(step))
+        }
+        vm.step = .account
+        var backwards: [OnboardingViewModel.Step] = [vm.step]
+        while vm.canGoBack {
+            vm.back()
+            backwards.append(vm.step)
+        }
+        #expect(backwards == Array(vm.steps.reversed()))
+        #expect(vm.step == .name)
+        vm.activities = [.run, .strength]
+        #expect(vm.steps.contains(.equipment))
+        #expect(vm.steps.contains(.hybridFocus))
+        #expect(!vm.steps.contains(.strengthSplit))
+        vm.experience = .new
+        #expect(!vm.steps.contains(.runVolume))
+    }
+
+    @Test func startingFitnessRequiresAnAnswerAndProgressFinishesBeforeReveal() {
+        let vm = OnboardingViewModel()
+        vm.step = .experience
+        #expect(!vm.canAdvance)
+        vm.calibrationMode = .feel
+        vm.paceFeel = .newRunner
+        #expect(vm.canAdvance)
+        vm.step = .health
+        #expect(vm.progress > 0 && vm.progress < 1)
+        vm.step = .notifications
+        #expect(vm.progress == 1)
+        vm.step = .primers
+        #expect(vm.progress == 1)
+    }
+
+    @Test func identityStartsTheFlowAndKeepsCustomUsernames() {
+        let vm = OnboardingViewModel()
+        #expect(vm.step == .name)
+        #expect(!vm.canAdvance)
+        vm.name = "Maya Rivera"
+        vm.suggestHandle(afterEditing: "")
+        #expect(!vm.handle.isEmpty)
+        #expect(vm.canAdvance)
+        vm.handle = "maya_runs"
+        vm.name = "Maya R"
+        vm.suggestHandle(afterEditing: "Maya Rivera")
+        #expect(vm.handle == "maya_runs")
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: vm.draft()))
+        #expect(restored.name == "Maya R")
+        #expect(restored.handle == "maya_runs")
+        vm.handle = "admin"
+        #expect(!vm.canAdvance)
+        vm.handle = ""
+        #expect(!vm.canAdvance)
+    }
+
 }

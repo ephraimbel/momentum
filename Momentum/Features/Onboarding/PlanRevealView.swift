@@ -11,15 +11,15 @@ import SwiftUI
 ///  2. **The ascent.** The seal draws its check, the headline arrives, and the path card lands
 ///     with one spent aurora pulse. The block's weekly volume is drawn as terrain that a runner
 ///     glyph runs along — a comet tail behind it, each week's gridline lighting as it passes,
-///     the peak flaring once, the runner arriving at the goal beacon as the confetti falls.
+///     the peak flaring once and the runner arriving at the goal beacon.
 ///     The stat tiles stand up off the page one after another and tally in the order the light
 ///     crosses them; the CTA rises and catches that light once.
-///  3. **With the reader.** Everything below the fold arrives when it is scrolled to: the chips
-///     one at a time, the first week's strip filling, the session rows dealt.
+///  3. **With the reader.** One scroll holds the briefing, complete first week and block outlook.
+///     Every session is open; the path and later sections arrive when they enter the viewport.
 ///
 /// Every light on this page travels ONCE and ends off its own view, so the settled page is
 /// perfectly still and readable. Reduce Motion: no overture, no motion — the finished page.
-/// Built from `OnboardingKit`'s raised surfaces so it reads as the same object as the questions.
+/// Uses `OnboardingKit` surfaces to match the interview and its optional detail sheets.
 struct PlanRevealView: View {
     let vm: OnboardingViewModel
     let profile: UserProfile?
@@ -27,6 +27,10 @@ struct PlanRevealView: View {
 
     // MARK: Act I — the overture
     @State private var overtureMounted = true
+    @State private var arrivalStarted = false
+    @State private var pathStarted = false
+    @State private var pathReached = false
+    @State private var pathIn = 0.0
     @State private var titleLetters = 0.0   // one clock; each letter reads its own eased slice
     @State private var titleLine = 0.0      // the start line drawing outward from the centre
     @State private var titleSheen = 0.0     // one specular pass through the letters
@@ -68,19 +72,9 @@ struct PlanRevealView: View {
     /// Whether the stat tiles are on screen. Their ghosts are the only continuous clocks on this
     /// page, and a `TimelineView` running behind six weeks of plan the athlete has scrolled to is
     /// pure heat — the paywall gates its own tile arts the same way.
-    @State private var tilesOnScreen = true
-    /// When the plan-landed confetti started falling. Nil = not falling. A DATE rather than an
-    /// animated 0…1: `withAnimation` interpolates modifier values, it does not re-run a body every
-    /// frame, so a fall computed inside the body from an animated Double renders exactly once, at
-    /// its final position. The pieces need their own clock, like every other loop on this page.
-    @State private var confettiStart: Date?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var tilesOnScreen = false
+    @ReducedMotionPreference private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.requestReview) private var requestReview
-    /// The review line is spent once — tapping it hands the athlete to the rating sheet, and the
-    /// row settles into a thank-you rather than sitting there asking twice.
-    @State private var reviewTapped = false
-
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
@@ -120,58 +114,6 @@ struct PlanRevealView: View {
     private var planWeekCount: Int { derived.weekCount }
     private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
 
-    /// A quiet, opt-in line above the reveal's CTA (owner call 2026-08-28, twice, with the 5.6.3
-    /// rejection history spelled out both times): "Leave a review to help more runners join
-    /// momentum."
-    ///
-    /// Tapping it raises Apple's own rating sheet in place — the athlete rates without ever leaving
-    /// onboarding, which is the whole point (owner: "just popup the review so they can do it in app
-    /// really easy"). It shipped for one afternoon as a link out to the App Store; the round trip
-    /// cost more athletes than the guideline risk was ever going to.
-    ///
-    /// What keeps this as far from the rejected beat as it can get while still being an in-app
-    /// sheet: it is never raised on its own. Nothing appears until the athlete taps a line they had
-    /// to choose to read, Continue is live the whole time and gated on nothing, and there is no
-    /// screen of its own — the reveal is still a plan reveal. The removed beat was a full step that
-    /// stood between the reveal and the checkout and asked without being asked.
-    ///
-    /// Tapping latches `recordRated`, so an athlete who rates here is never asked again after a
-    /// workout or a meal. iOS still owns whether the sheet actually appears (three per 365 days),
-    /// so the line settles into its thank-you either way — there is no way to know, and a tap that
-    /// visibly did nothing would read as broken.
-    private func tapReview() {
-        guard !reviewTapped else { return }
-        Haptics.light()
-        AppReview.recordRated()
-        withAnimation(Motion.standard) { reviewTapped = true }
-        // After the row has settled, or the sheet arrives over a view mid-animation and iOS
-        // quietly drops it (the same beat `WorkoutRunner` waits out).
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.45))
-            requestReview()
-        }
-    }
-
-    @ViewBuilder
-    private var reviewLine: some View {
-        if reviewTapped {
-            Text("Thanks for helping momentum grow.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                .foregroundStyle(Theme.inkTertiary)
-                .transition(.opacity)
-        } else {
-            Button { tapReview() } label: {
-                Text("Leave a review to help more runners join momentum")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium))
-                    .foregroundStyle(Theme.inkTertiary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Leave a review for momentum on the App Store")
-        }
-    }
-
     /// A narrow specular band travelling left to right, for masking onto whatever should catch the
     /// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of
     /// the animation are a clean no-op — nothing to fade in or out.
@@ -191,47 +133,11 @@ struct PlanRevealView: View {
         ScrollView {
             VStack(spacing: Theme.Space.lg) {
                 hero
-                blockCurveCard
+                animatedTrainingPath
+                trainingBriefing
                     .opacity(reduceMotion ? 1 : artifactIn)
-                    .scaleEffect(reduceMotion ? 1 : 0.955 + artifactIn * 0.045, anchor: .top)
-                    .offset(y: reduceMotion ? 0 : 26 * (1 - artifactIn))
-                    // A single aurora pulse makes the generated plan feel like the thing that just
-                    // arrived, then spends itself completely so the chart is quiet and readable.
-                    // One bell-shaped flash: invisible at 0, brightest halfway, invisible at rest.
-                    // Derived per FRAME (`Clocked`) — computed in the body it would read sin(π) = 0
-                    // on the very first frame and the pulse would never exist.
-                    .background {
-                        Clocked(t: artifactGlow) { g in
-                            RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-                                .fill(LinearGradient(colors: Theme.iridescentDeep,
-                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                                .blur(radius: 26)
-                                .scaleEffect(0.94 + g * 0.10)
-                                .opacity(max(0, sin(g * .pi)) * 0.36)
-                        }
-                    }
-                    .overlay {
-                        Clocked(t: artifactGlow) { g in
-                            RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-                                .strokeBorder(LinearGradient(colors: Theme.iridescentDeep,
-                                                             startPoint: .leading, endPoint: .trailing),
-                                              lineWidth: 1.5)
-                                .scaleEffect(0.99 + g * 0.025)
-                                .opacity(max(0, sin(g * .pi)) * 0.85)
-                        }
-                    }
-                statTiles
-                // Below the fold, everything arrives WHEN THE ATHLETE DOES. `.reveal()` runs off
-                // `onAppear`, and in a non-lazy stack inside a ScrollView that fires for every
-                // child at mount — so the chips, the first week and the whole ladder used to play
-                // their entrance against the inside of the screen, seconds before anyone scrolled
-                // to them. Arriving to find it already finished is the difference between a page
-                // that assembles for you and a page that was assembled before you got there.
-                if let weeks = vm.weeksToRace { raceCountdown(weeks).revealOnScroll() }
-                reflectionChips.revealOnScroll()
-                if vm.intensity == .podium, vm.running { podiumOutlook.revealOnScroll().id("podium") }
-                firstWeek.revealOnScroll()
-                laterWeeks.id("plan").revealOnScroll()
+                    .offset(y: reduceMotion ? 0 : 16 * (1 - artifactIn))
+                detailedPlan
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, Theme.Space.lg)
@@ -255,49 +161,39 @@ struct PlanRevealView: View {
         .ignoresSafeArea(edges: .top)
         // Status-bar scrim: scrolled content dissolves under the clock instead of colliding with it.
         .overlay(alignment: .top) {
-            LinearGradient(colors: [OnboardingStyle.canvas(colorScheme).opacity(0.92),
-                                    OnboardingStyle.canvas(colorScheme).opacity(0)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: topInset + 10)
+            LinearGradient(stops: [
+                .init(color: OnboardingStyle.canvas(colorScheme), location: 0),
+                .init(color: OnboardingStyle.canvas(colorScheme), location: topInset / (topInset + 16)),
+                .init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 1),
+            ], startPoint: .top, endPoint: .bottom)
+                .frame(height: topInset + 16)
                 .ignoresSafeArea(edges: .top)
                 .allowsHitTesting(false)
         }
         .scrollIndicators(.hidden)
-        // Over the page, never in it: a fixed overlay, so the fall doesn't scroll away halfway
-        // down and doesn't lengthen the content. Mounted only for the ~3s it takes to land.
-        .overlay {
-            if let started = confettiStart {
-                RevealConfetti(start: started)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
-        }
+        .scrollBounceBehavior(.basedOnSize)
+        .accessibilityIdentifier("onboarding.reveal.scroll")
         #if DEBUG
-        .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-plan") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-                    withAnimation { proxy.scrollTo("plan", anchor: .top) }
-                }
-            }
-            // `--reveal-review`: fire the review line's action on arrival. simctl can't tap, and
-            // the sheet it raises is a system surface, so this is the only way to see the beat in
-            // the sim: `--seed-demo --onboarding --onboarding-reveal --reveal-review`.
-            if ProcessInfo.processInfo.arguments.contains("--reveal-review") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { tapReview() }
-            }
-            if ProcessInfo.processInfo.arguments.contains("--reveal-scroll-podium") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
-                    withAnimation { proxy.scrollTo("podium", anchor: .center) }
-                }
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            let target = args.contains("--reveal-scroll-plan") ? "plan"
+                : args.contains("--reveal-scroll-podium") ? "podium"
+                : args.contains("--reveal-scroll-week-one") ? "week-one" : nil
+            if let target {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled else { return }
+                proxy.scrollTo(target, anchor: .top)
             }
         }
         #endif
-        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Theme.Space.sm) {
-                reviewLine
-                    .opacity(reduceMotion ? 1 : ctaIn)
-                OnboardingCTA(title: "This looks great") { onContinue() }
+                Text("Your plan is the start. Coaching continues as you train.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                OnboardingCTA(title: "Continue with Momentum Pro") { onContinue() }
+                    .accessibilityIdentifier("onboarding.reveal.continue")
                     // The ink capsule catches the light once as it settles — the same band that
                     // crossed the tiles, so the page's one light source is consistent.
                     .overlay { sheenBand(ctaSheen, strength: 0.28).clipShape(Capsule()) }
@@ -342,7 +238,14 @@ struct PlanRevealView: View {
         .onAppear(perform: animateIn)
         .onDisappear {
             sequence?.cancel()
-            confettiStart = nil
+            settleArrival()
+        }
+        .onChange(of: reduceMotion) { _, reduced in
+            if reduced {
+                sequence?.cancel()
+                settleArrival()
+            }
+        }
         }
         }
     }
@@ -362,7 +265,7 @@ struct PlanRevealView: View {
     /// the type. Below it, the outcome sentence.
     private var hero: some View {
         Clocked(t: heroIn) { h in
-        VStack(spacing: Theme.Space.md) {
+        VStack(spacing: 12) {
             HStack(spacing: 7) {
                 // Drawn, not stamped. This badge is the first thing on the page and its whole job
                 // is to say "done" — so it does the gesture rather than asserting it.
@@ -392,7 +295,7 @@ struct PlanRevealView: View {
             .scaleEffect(0.82 + revealStage(h, 0.00, 0.32) * 0.18)
             VStack(spacing: 0) {
                 Text("Your plan,")
-                    .font(.display(42, weight: .semibold))
+                    .font(.display(44, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                 // The one moment on this page that is purely about THEM, so it is the one thing
                 // given a specular pass. The band is masked to the letterforms, so the light moves
@@ -412,7 +315,7 @@ struct PlanRevealView: View {
             .scaleEffect(0.965 + revealStage(h, 0.16, 0.42) * 0.035)
             .offset(y: 12 * (1 - revealStage(h, 0.16, 0.42)))
             Text(vm.projectedOutcome())
-                .font(.rounded(18, weight: .regular))
+                .font(.rounded(15, weight: .regular))
                 .foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
@@ -437,7 +340,7 @@ struct PlanRevealView: View {
     /// "Maya." when we have a first name, "ready." otherwise.
     /// One definition, drawn twice: once as the name, once as the mask its light travels through.
     private var heroNameText: some View {
-        Text(heroName).font(.display(42, weight: .semibold))
+        Text(heroName).font(.display(44, weight: .semibold))
     }
 
     private var firstName: String? {
@@ -832,6 +735,87 @@ struct PlanRevealView: View {
         .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
     }
 
+    /// Use the generated opening schedule, including any split or availability compromises.
+    @ViewBuilder
+    private var trainingBriefing: some View {
+        if let first = weeksGrouped.first {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                sectionLabel("YOUR TRAINING BRIEFING")
+                Text(openingSchedule(first.sessions))
+                    .font(.rounded(15, weight: .semibold))
+                    .monospacedDigit().foregroundStyle(Theme.ink)
+                Text(vm.calibrationMode == .time
+                     ? "Starting paces from your recent result. Refined through your sessions and feedback."
+                     : "Starting effort from your answers. Refined through your sessions and feedback.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.md)
+            .onboardingCard()
+        }
+    }
+
+    private func openingSchedule(_ sessions: [PlannedSession]) -> String {
+        let days = Set(sessions.map { Calendar.current.startOfDay(for: $0.date) }).sorted()
+        let labels = days.map { $0.formatted(.dateTime.weekday(.abbreviated)) }.joined(separator: " · ")
+        return "\(days.count) training days to begin\n\(labels)"
+    }
+
+    private var animatedTrainingPath: some View {
+        blockCurveCard
+            .opacity(reduceMotion ? 1 : pathIn)
+            .scaleEffect(reduceMotion ? 1 : 0.955 + pathIn * 0.045, anchor: .top)
+            .offset(y: reduceMotion ? 0 : 26 * (1 - pathIn))
+            .onScrollVisibilityChange(threshold: 0.08) { visible in
+                pathReached = visible
+                if visible { startPath() }
+            }
+            // A single aurora pulse makes the generated plan feel like the thing that just
+            // arrived, then spends itself completely so the chart is quiet and readable.
+            // One bell-shaped flash: invisible at 0, brightest halfway, invisible at rest.
+            // Derived per FRAME (`Clocked`) — computed in the body it would read sin(π) = 0
+            // on the very first frame and the pulse would never exist.
+            .background {
+                Clocked(t: artifactGlow) { g in
+                    RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+                        .fill(LinearGradient(colors: Theme.iridescentDeep,
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .blur(radius: 26)
+                        .scaleEffect(0.94 + g * 0.10)
+                        .opacity(max(0, sin(g * .pi)) * 0.36)
+                }
+            }
+            .overlay {
+                Clocked(t: artifactGlow) { g in
+                    RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
+                        .strokeBorder(LinearGradient(colors: Theme.iridescentDeep,
+                                                     startPoint: .leading, endPoint: .trailing),
+                                      lineWidth: 1.5)
+                        .scaleEffect(0.99 + g * 0.025)
+                        .opacity(max(0, sin(g * .pi)) * 0.85)
+                }
+            }
+    }
+
+    private var detailedPlan: some View {
+        VStack(spacing: Theme.Space.lg) {
+                firstWeek.id("week-one")
+                statTiles
+                // Below the fold, everything arrives WHEN THE ATHLETE DOES. `.reveal()` runs off
+                // `onAppear`, and in a non-lazy stack inside a ScrollView that fires for every
+                // child at mount — so the chips, the first week and the whole ladder used to play
+                // their entrance against the inside of the screen, seconds before anyone scrolled
+                // to them. Arriving to find it already finished is the difference between a page
+                // that assembles for you and a page that was assembled before you got there.
+                if let weeks = vm.weeksToRace { raceCountdown(weeks).revealOnScroll() }
+                reflectionChips.revealOnScroll()
+                if vm.intensity == .podium, vm.running { podiumOutlook.revealOnScroll().id("podium") }
+                laterWeeks.id("plan").revealOnScroll()
+        }
+    }
+
     // MARK: Week 1 — the seven-day strip + the sessions
 
     @ViewBuilder
@@ -848,8 +832,9 @@ struct PlanRevealView: View {
                 // the last row is waiting on an animation instead of on the reader.
                 VStack(spacing: 10) {
                     ForEach(Array(first.sessions.enumerated()), id: \.element.persistentModelID) { i, session in
-                        SessionDisclosureRow(session: session, profile: profile, distanceUnit: distanceUnit,
-                                             startExpanded: i == 0)
+                        PlanSessionCard(session: session, distanceUnit: distanceUnit)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("onboarding.reveal.session.\(i)")
                             .revealOnScroll(Double(min(i, 6)) * 0.055)
                     }
                 }
@@ -858,52 +843,88 @@ struct PlanRevealView: View {
         }
     }
 
-    // MARK: Later weeks — the ladder
+    // MARK: Later weeks — the block outlook
 
     @ViewBuilder
     private var laterWeeks: some View {
         let rest = Array(weeksGrouped.dropFirst())
         if !rest.isEmpty {
-            VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
+            VStack(alignment: .leading, spacing: 12) {
                 sectionLabel("THE WEEKS AHEAD")
-                // Each row carries its own week as a BAR, scaled against the block's peak. Six rows
-                // of "10.5 mi / 11.5 mi / 8 mi" is a list you have to read and hold in your head;
-                // the same six with a bar behind them is the build, the down week and the peak,
-                // read in one glance — the shape the curve at the top of the page already drew,
-                // repeated where the detail lives. Same lavender, same peak emphasis.
+                Text("Your volume and training rhythm through the rest of the block.")
+                    .font(.rounded(14, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 let ladderPeak = max(rest.map(weekVolume).max() ?? 1, 0.0001)
+                let blockPeak = max(weeksGrouped.map(weekVolume).max() ?? 1, 0.0001)
                 VStack(spacing: 0) {
                     ForEach(Array(rest.enumerated()), id: \.element.week) { i, group in
-                        if i > 0 { Rectangle().fill(Theme.hairline).frame(height: 0.5).padding(.leading, 18) }
-                        let v = weekVolume(group)
-                        let isPeak = v >= ladderPeak - 0.0001
-                        HStack(spacing: Theme.Space.md) {
-                            Text("Week \(group.week)")
-                                .font(.rounded(15, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
-                            Spacer(minLength: Theme.Space.sm)
-                            WeekStrip(sessions: group.sessions, compact: true)
-                            Text(weekSummary(group.sessions))
-                                .font(.rounded(13, weight: .medium)).monospacedDigit()
-                                .foregroundStyle(isPeak ? Theme.ink : Theme.inkSecondary)
-                                .frame(width: 64, alignment: .trailing)
+                        if i > 0 {
+                            Rectangle()
+                                .fill(Theme.hairline)
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 18)
                         }
-                        .padding(.horizontal, 18).padding(.vertical, 12)
-                        .background {
-                            // Bottom-anchored and 2pt tall: a baseline the row sits on, not a fill
-                            // behind the type. Measured off the ROW, not `containerRelativeFrame`
-                            // — that reports the scroll container's width, so the peak week's bar
-                            // ran the full page and out through the side of the card.
-                            GeometryReader { geo in
-                                let full = max(0, geo.size.width - 36)
-                                Capsule()
-                                    .fill(isPeak ? Theme.purple.opacity(0.55) : Theme.purple.opacity(0.22))
-                                    .frame(width: max(10, full * (v / ladderPeak)), height: 2)
-                                    .padding(.leading, 18)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                                    .padding(.bottom, 4)
+                        let v = weekVolume(group)
+                        let isPeak = v >= blockPeak - 0.0001
+                        VStack(spacing: 14) {
+                            HStack(alignment: .top, spacing: Theme.Space.md) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Week \(group.week)")
+                                        .font(.rounded(12, weight: .bold))
+                                        .tracking(1.2)
+                                        .textCase(.uppercase)
+                                        .monospacedDigit()
+                                        .foregroundStyle(Theme.inkTertiary)
+                                    Text(weekDateRange(group))
+                                        .font(.rounded(15, weight: .semibold))
+                                        .monospacedDigit()
+                                        .foregroundStyle(Theme.ink)
+                                }
+                                Spacer(minLength: Theme.Space.sm)
+                                if isPeak {
+                                    Text("PEAK")
+                                        .font(.rounded(9, weight: .bold))
+                                        .tracking(0.8)
+                                        .foregroundStyle(Theme.purpleDeep)
+                                        .padding(.horizontal, 9)
+                                        .padding(.vertical, 5)
+                                        .background(Capsule().fill(Theme.purpleTint))
+                                }
+                                Text(weekSummary(group.sessions))
+                                    .font(.display(22, weight: .bold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Theme.ink)
+                                    .frame(minWidth: 64, alignment: .trailing)
                             }
+
+                            HStack(spacing: Theme.Space.sm) {
+                                Text(weekWorkMix(group.sessions).uppercased())
+                                    .font(.rounded(10, weight: .bold))
+                                    .tracking(0.65)
+                                    .foregroundStyle(Theme.inkTertiary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                                Spacer(minLength: Theme.Space.sm)
+                                WeekStrip(sessions: group.sessions, compact: true)
+                            }
+
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Theme.hairline)
+                                    Capsule()
+                                        .fill(isPeak ? Theme.purple : Theme.purple.opacity(0.38))
+                                        .frame(width: max(12, geo.size.width * min(1, v / ladderPeak)))
+                                }
+                            }
+                            .frame(height: 3)
                             .allowsHitTesting(false)
                         }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 16)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityIdentifier("onboarding.reveal.week.\(group.week)")
                     }
                 }
                 .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
@@ -931,30 +952,48 @@ struct PlanRevealView: View {
         return "\(sessions.count) sess."
     }
 
+    /// The block is bucketed from the first generated session, so the dates shown here use that
+    /// same seven-day anchor. The label is compact but unambiguous across a month boundary.
+    private func weekDateRange(_ group: (week: Int, sessions: [PlannedSession])) -> String {
+        guard let planStart = weeksGrouped.first?.sessions.map(\.date).min(),
+              let start = Calendar.current.date(byAdding: .day, value: (group.week - 1) * 7,
+                                                to: planStart),
+              let end = Calendar.current.date(byAdding: .day, value: 6, to: start) else {
+            return "UPCOMING"
+        }
+        let startMonth = start.formatted(.dateTime.month(.abbreviated)).uppercased()
+        let endMonth = end.formatted(.dateTime.month(.abbreviated)).uppercased()
+        let startDay = start.formatted(.dateTime.day())
+        let endDay = end.formatted(.dateTime.day())
+        return startMonth == endMonth
+            ? "\(startMonth) \(startDay)–\(endDay)"
+            : "\(startMonth) \(startDay)–\(endMonth) \(endDay)"
+    }
+
+    /// A truthful one-line description of what fills the seven day rhythm beside it.
+    private func weekWorkMix(_ sessions: [PlannedSession]) -> String {
+        let runs = sessions.filter { $0.discipline == .running }.count
+        let strength = sessions.filter { $0.discipline == .strength }.count
+        let rides = sessions.filter { $0.discipline == .cycling }.count
+        let walks = sessions.filter { $0.discipline == .walking }.count
+        var parts: [String] = []
+        if runs > 0 { parts.append("\(runs) run\(runs == 1 ? "" : "s")") }
+        if strength > 0 { parts.append("\(strength) strength") }
+        if rides > 0 { parts.append("\(rides) ride\(rides == 1 ? "" : "s")") }
+        if walks > 0 { parts.append("\(walks) walk\(walks == 1 ? "" : "s")") }
+        return parts.isEmpty ? "\(sessions.count) sessions" : parts.joined(separator: " · ")
+    }
+
     // MARK: Reveal orchestration
 
     /// The whole arrival as one timed sequence, in seconds from appear. Every beat is placed
     /// relative to `T`, the moment the overture lifts — which depends on how long the name is,
     /// since each letter takes its own beat to land.
     private func animateIn() {
+        guard !arrivalStarted else { return }
+        arrivalStarted = true
         guard !reduceMotion else {
-            // Every band ends off its own view and every stage reads 1, so the finished frame is
-            // simply the still page. The celebration is still marked, once, the house way.
-            overtureMounted = false
-            shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
-            shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
-            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1; ctaSheen = 1
-            checkDraw = 1; chipsIn = 1; heroIn = 1; artifactIn = 1; statsIn = 1; ctaIn = 1
-            arrivalHalo = 1; artifactGlow = 1; pathArrival = 1; pageIn = 1
-            statsStarted = true
-            confettiStart = .now
-            Haptics.celebration()
-            sequence?.cancel()
-            sequence = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(RevealConfettiScatter.restTotal + 0.2))
-                guard !Task.isCancelled else { return }
-                confettiStart = nil
-            }
+            settleArrival()
             return
         }
         Haptics.warm()
@@ -979,21 +1018,15 @@ struct PlanRevealView: View {
         withAnimation(.easeOut(duration: 1.15).delay(T + 0.22)) { arrivalHalo = 1 }
         withAnimation(.easeInOut(duration: 0.92).delay(T + 0.58)) { nameSheen = 1 }
         withAnimation(.spring(response: 0.74, dampingFraction: 0.80).delay(T + 0.46)) { artifactIn = 1 }
-        withAnimation(.easeInOut(duration: 1.34).delay(T + 0.54)) { artifactGlow = 1 }
-        withAnimation(Motion.pen(1.42).delay(T + 0.74)) { curveIn = 1 }
         // The tiles: see `startStats` — their beat is here, but they wait to be seen.
         revealClock = Date()
         statsBeat = T + 0.98
         startStats()
         withAnimation(.spring(response: 0.56, dampingFraction: 0.78).delay(T + 1.42)) { ctaIn = 1 }
         withAnimation(.easeInOut(duration: 0.9).delay(T + 1.9)) { ctaSheen = 1 }
-        withAnimation(.spring(response: 0.50, dampingFraction: 0.80).delay(T + 1.88)) { calloutIn = true }
-        withAnimation(.easeOut(duration: 0.72).delay(T + 2.02)) { pathArrival = 1 }
-        withAnimation(.easeInOut(duration: 0.86).delay(T + 2.40)) { curveGleam = 1 }
 
-        // The haptics belong to the MOMENTS, not to the function call: a tick as each letter lands,
-        // a press as the card lands, and the success beat as the runner reaches the goal — never a
-        // buzz against a blank page.
+        // The haptics belong to the moments: a tick as each letter lands and a press as the page
+        // settles. The reveal finishes quietly, in the same restrained grammar as the interview.
         sequence?.cancel()
         sequence = Task { @MainActor in
             let clock = ContinuousClock()
@@ -1009,18 +1042,36 @@ struct PlanRevealView: View {
             }
             guard await at(T + 0.46) else { return }
             Haptics.light()
-            guard await at(T + 1.92) else { return }
-            confettiStart = .now
-            guard await at(T + 2.26) else { return }
-            Haptics.celebration()
-            guard await at(T + 1.92 + RevealConfettiScatter.total + 0.25) else { return }
-            confettiStart = nil
-        }
-        // The overture leaves the tree once it is gone — a full-screen layer with nothing on it is
-        // still a layer the compositor has to consider.
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(T + 0.8))
+            guard await at(T + 0.8) else { return }
             overtureMounted = false
+            startPath()
+        }
+    }
+
+    private func startPath() {
+        guard pathReached, !overtureMounted, !pathStarted, !reduceMotion else { return }
+        pathStarted = true
+        withAnimation(.spring(response: 0.62, dampingFraction: 0.86)) { pathIn = 1 }
+        withAnimation(.easeInOut(duration: 1.1)) { artifactGlow = 1 }
+        withAnimation(Motion.pen(1.4).delay(0.15)) { curveIn = 1 }
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(1.2)) { calloutIn = true }
+        withAnimation(.easeOut(duration: 0.72).delay(1.35)) { pathArrival = 1 }
+        withAnimation(.easeInOut(duration: 0.86).delay(1.7)) { curveGleam = 1 }
+    }
+
+    /// Finish presentation on interruption or an accessibility change. Returning from checkout
+    /// never replays the overture or leaves delayed animation state over the readable plan.
+    private func settleArrival() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            overtureMounted = false
+            shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
+            shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
+            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1; ctaSheen = 1
+            checkDraw = 1; chipsIn = 1; heroIn = 1; artifactIn = 1; statsIn = 1; ctaIn = 1
+            arrivalHalo = 1; artifactGlow = 1; pathArrival = 1; pageIn = 1; pathIn = 1
+            statsStarted = true; pathStarted = true
         }
     }
 }
@@ -1680,24 +1731,16 @@ private struct WeekStrip: View, Animatable {
     }
 }
 
-// MARK: - Expandable session card
+// MARK: - Complete first-week session card
 
-/// A plan session that expands to the concrete work: every lift's sets/reps, or a run's mileage,
+/// A plan session showing all of the concrete work: every lift's sets/reps, or a run's mileage,
 /// pace, rep breakdown and — for long runs — fueling guidance.
-private struct SessionDisclosureRow: View {
+private struct PlanSessionCard: View {
     let session: PlannedSession
-    let profile: UserProfile?
     let distanceUnit: DistanceUnit
-    let startExpanded: Bool
-
-    @State private var expanded = false
 
     var body: some View {
         VStack(spacing: 0) {
-            Button {
-                Haptics.selection()
-                withAnimation(.snappy(duration: 0.26)) { expanded.toggle() }
-            } label: {
                 HStack(spacing: Theme.Space.md) {
                     VStack(spacing: 1) {
                         Text(session.date.formatted(.dateTime.weekday(.abbreviated)).uppercased())
@@ -1715,27 +1758,18 @@ private struct SessionDisclosureRow: View {
                         Text(detail).font(.rounded(13, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     }
                     Spacer(minLength: 0)
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.inkTertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0))
+
                 }
                 .padding(.horizontal, 16).padding(.vertical, 14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
 
-            if expanded {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     Divider().overlay(Theme.hairline)
                     if session.discipline == .strength { strengthDetail } else { runDetail }
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
-                .transition(.opacity)
-            }
         }
-        .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
-        .onAppear { if startExpanded { expanded = true } }
+        .onboardingCard()
     }
 
     private var strengthDetail: some View {
@@ -1868,7 +1902,7 @@ private struct RevealTileGhost: View, Animatable {
     /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
     private var draw: Double { min(1, max(0, (clock - Double(index) * 0.11) / 0.62)) }
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     /// Each tile keeps its own clock, and the three periods share no common factor. On matched
     /// clocks the row pulses in unison and reads as one metronome — three drifting loops read as
@@ -2076,7 +2110,7 @@ private struct DrawnCheck: View, Animatable {
 private struct RevealOnScroll: ViewModifier {
     let delay: Double
     @State private var shown = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     func body(content: Content) -> some View {
         content
@@ -2089,277 +2123,12 @@ private struct RevealOnScroll: ViewModifier {
                 guard visible, !shown, !reduceMotion else { return }
                 withAnimation(.easeOut(duration: 0.5).delay(delay)) { shown = true }
             }
+            .onChange(of: reduceMotion) { _, reduced in
+                if reduced { shown = true }
+            }
     }
 }
 
 private extension View {
     func revealOnScroll(_ delay: Double = 0) -> some View { modifier(RevealOnScroll(delay: delay)) }
-}
-
-// MARK: - The plan landed
-
-/// A single fall of confetti as the plan arrives — the one unearned flourish on this page, and it
-/// is earned: the athlete answered twenty questions and this is the moment the answer exists.
-///
-/// Seventy-two pieces rendered in one Canvas—not seventy-two SwiftUI views. Saturated paper,
-/// circles, diamond glints and curled streamers fire from two side cannons plus a smaller crown
-/// burst. The palette is the brand aurora at full depth: violet, blue, rose, lavender and orchid,
-/// so it reads as real colourful confetti without importing a random party-store rainbow. Depth,
-/// flutter, spin and gravity make it burst, turn and fall before the layer unmounts completely.
-///
-/// Deterministic: the pieces are generated once from a fixed seed, never in `body`. Random numbers
-/// in a view body re-roll on every frame, and the confetti would seethe rather than fall.
-///
-/// The geometry lives in `RevealConfettiScatter` — a pure model with no SwiftUI in it, so the
-/// scatter and the fall are pinned by `PlanRevealConfettiTests` rather than by eye.
-private struct RevealConfetti: View {
-    /// When the fall began. Its own clock, via `TimelineView` — see the note on `confettiStart`.
-    let start: Date
-
-    /// Reduce Motion is not a suggestion, and a `TimelineView(.animation)` ticks straight through
-    /// it — it is a display link, not an animation. So the branch is taken BEFORE the timeline
-    /// exists: under Reduce Motion there is no clock on this view at all, and the celebration is
-    /// the house degrade (static, one crossfade), never a slower shower.
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// The still treatment's only animated value, and it is an opacity — a transform, not a layout.
-    @State private var restFade = 0.0
-
-    /// The page's aurora at brand depth. The normal stops are designed as translucent background
-    /// washes; paper drawn in them looked almost white, which is why the old shower felt anaemic.
-    private func tint(_ i: Int) -> Color {
-        Theme.iridescentDeep[i % Theme.iridescentDeep.count]
-    }
-
-    var body: some View {
-        if reduceMotion {
-            still
-        } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { ctx in
-                let elapsed = ctx.date.timeIntervalSince(start) - RevealConfettiScatter.lead
-                field(min(1, max(0, elapsed / RevealConfettiScatter.fall)))
-            }
-        }
-    }
-
-    /// Reduce Motion: the same scatter, standing still, brought in and taken away on one crossfade.
-    /// Nothing travels, nothing turns, nothing repeats — the moment is still marked, and the
-    /// vestibular system is left alone.
-    private var still: some View {
-        confettiCanvas(progress: nil)
-        .opacity(restFade)
-        .onAppear {
-            withAnimation(.easeOut(duration: RevealConfettiScatter.restIn)
-                .delay(RevealConfettiScatter.restLead)) { restFade = 1 }
-            withAnimation(.easeInOut(duration: RevealConfettiScatter.restOut)
-                .delay(RevealConfettiScatter.restLead + RevealConfettiScatter.restIn
-                       + RevealConfettiScatter.restHold)) { restFade = 0 }
-        }
-    }
-
-    private func field(_ progress: Double) -> some View {
-        confettiCanvas(progress: progress)
-    }
-
-    /// One Canvas draw call for the entire shower. The previous implementation mounted a SwiftUI
-    /// view per piece on every display-link tick; Canvas keeps the richer field cheaper than the
-    /// old 26-piece version while still drawing at 60 fps.
-    private func confettiCanvas(progress: Double?) -> some View {
-        Canvas(opaque: false, rendersAsynchronously: true) { context, size in
-            for p in RevealConfettiScatter.pieces {
-                let at: RevealConfettiScatter.Placement?
-                if let progress {
-                    at = RevealConfettiScatter.placement(p, progress: progress, in: size)
-                } else {
-                    at = RevealConfettiScatter.restingPlacement(p, in: size)
-                }
-                guard let at else { continue }
-
-                var piece = context
-                piece.opacity = at.opacity
-                piece.translateBy(x: at.x, y: at.y)
-                piece.rotate(by: .degrees(at.angle))
-                piece.scaleBy(x: at.foreshortening, y: 1)
-                let width = p.width * p.depth
-                let length = p.length * p.depth
-                let rect = CGRect(x: -width / 2, y: -length / 2, width: width, height: length)
-                switch p.kind {
-                case .paper:
-                    piece.fill(Path(roundedRect: rect, cornerRadius: width * 0.22),
-                               with: .color(tint(p.hue)))
-                case .circle:
-                    let diameter = width * 1.2
-                    piece.fill(Path(ellipseIn: CGRect(x: -diameter / 2, y: -diameter / 2,
-                                                      width: diameter, height: diameter)),
-                               with: .color(tint(p.hue)))
-                case .spark:
-                    var diamond = Path()
-                    diamond.move(to: CGPoint(x: 0, y: -length / 2))
-                    diamond.addLine(to: CGPoint(x: width / 2, y: 0))
-                    diamond.addLine(to: CGPoint(x: 0, y: length / 2))
-                    diamond.addLine(to: CGPoint(x: -width / 2, y: 0))
-                    diamond.closeSubpath()
-                    piece.fill(diamond, with: .color(tint(p.hue)))
-                case .streamer:
-                    var curl = Path()
-                    curl.move(to: CGPoint(x: 0, y: -length / 2))
-                    curl.addCurve(to: CGPoint(x: 0, y: length / 2),
-                                  control1: CGPoint(x: width * 1.4, y: -length * 0.18),
-                                  control2: CGPoint(x: -width * 1.4, y: length * 0.18))
-                    piece.stroke(curl, with: .color(tint(p.hue)),
-                                 style: StrokeStyle(lineWidth: max(1.8, width * 0.72),
-                                                    lineCap: .round))
-                }
-            }
-        }
-    }
-}
-
-/// The confetti's geometry with no SwiftUI in it: one fixed scatter and the pure function that
-/// places a piece at a moment in the fall. Split out so it can be tested — the seed, the spread and
-/// the invariant that matters most (every piece is spent by the end, so nothing is left drawn over
-/// the plan) are pinned in `PlanRevealConfettiTests` rather than trusted.
-enum RevealConfettiScatter {
-    /// Held before the first piece moves, so the fall begins as the hero settles rather than
-    /// against a blank screen; `total` is the whole thing including the hold.
-    static let lead = 0.08
-    static let fall = 3.05
-    static var total: Double { lead + fall }
-
-    /// The Reduce Motion still: in, hold, out — and gone. Deliberately shorter than the fall; a
-    /// motionless scatter that outstays a second reads as debris rather than as a celebration.
-    static let restLead = 0.10
-    static let restIn = 0.34
-    static let restHold = 0.42
-    static let restOut = 0.78
-    static var restTotal: Double { restLead + restIn + restHold + restOut }
-
-    /// How long the layer stays mounted, so the caller can tear it down at the right moment in
-    /// either mode. Nothing may keep drawing — or ticking — past this.
-    static func duration(reduceMotion: Bool) -> Double { reduceMotion ? restTotal : total }
-
-    enum Kind: Int, CaseIterable {
-        case paper
-        case circle
-        case spark
-        case streamer
-    }
-
-    struct Piece {
-        let originX: Double      // two side cannons plus a smaller crown emitter
-        let originY: Double
-        let delay: Double        // two quick deterministic volleys, never one flat curtain
-        let velocityX: Double
-        let velocityY: Double    // negative launches upward before gravity wins
-        let gravity: Double
-        let spin: Double         // turns over the fall
-        let drift: Double        // small flutter on top of the ballistic path
-        let driftRate: Double
-        let length: CGFloat
-        let width: CGFloat
-        let depth: CGFloat
-        let alpha: Double
-        let hue: Int
-        let kind: Kind
-    }
-
-    struct Placement {
-        let x: CGFloat
-        let y: CGFloat
-        let angle: Double
-        let opacity: Double
-        let foreshortening: CGFloat
-    }
-
-    /// A full celebration, still cheap because all seventy-two pieces share one Canvas draw call.
-    static let count = 72
-    static let peakOpacity = 1.0
-
-    /// One deterministic scatter, built at type load. A tiny LCG rather than `Double.random`, so
-    /// the layout is identical on every launch and every screenshot.
-    static let pieces: [Piece] = {
-        var seed: UInt64 = 0x5EED_10AF
-        func next() -> Double {
-            seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            return Double((seed >> 33) & 0xFFFFFF) / Double(0xFFFFFF)
-        }
-        return (0..<count).map { i in
-            let kind: Kind = switch i % 10 {
-            case 0: .spark
-            case 1: .circle
-            case 2: .streamer
-            default: .paper
-            }
-            let emitter = i % 5
-            let originX: Double
-            let originY: Double
-            let velocityX: Double
-            let velocityY: Double
-            if emitter <= 1 {
-                originX = -0.04 + next() * 0.035
-                originY = 0.22 + next() * 0.08
-                velocityX = 0.28 + next() * 0.34
-                velocityY = -(0.48 + next() * 0.32)
-            } else if emitter <= 3 {
-                originX = 1.005 + next() * 0.035
-                originY = 0.22 + next() * 0.08
-                velocityX = -(0.28 + next() * 0.34)
-                velocityY = -(0.48 + next() * 0.32)
-            } else {
-                originX = 0.42 + next() * 0.16
-                originY = -0.08 + next() * 0.03
-                velocityX = -0.24 + next() * 0.48
-                velocityY = 0.05 + next() * 0.12
-            }
-            let volley = i % 9 == 0 ? 0.05 : 0
-            let authoredLength: CGFloat = kind == .streamer
-                ? 17 + CGFloat(next()) * 11
-                : 8 + CGFloat(next()) * 11
-            let authoredWidth: CGFloat = kind == .streamer
-                ? 3.0 + CGFloat(next()) * 2.0
-                : 3.4 + CGFloat(next()) * 3.6
-            return Piece(originX: originX, originY: originY,
-                         delay: min(0.15, next() * 0.10 + volley),
-                         velocityX: velocityX, velocityY: velocityY,
-                         gravity: 1.55 + next() * 0.38,
-                         spin: 1.4 + next() * 4.4,
-                         drift: 0.008 + next() * 0.028,
-                         driftRate: 0.80 + next() * 1.60,
-                         length: authoredLength,
-                         width: authoredWidth,
-                         depth: 0.78 + CGFloat(next()) * 0.52,
-                         alpha: 0.82 + next() * 0.18,
-                         hue: i % 5,
-                         kind: kind)
-        }
-    }()
-
-    /// Where a piece is at `progress` (0…1 across the fall), or nil before it has started.
-    /// Side pieces fire upward and inward; crown pieces open outward from above. Gravity then pulls
-    /// every path through the page, with a paper-flip foreshortening and a long clean fade.
-    static func placement(_ p: Piece, progress: Double, in size: CGSize) -> Placement? {
-        let t = min(1, max(0, (progress - p.delay) / max(0.01, 1 - p.delay)))
-        guard t > 0 else { return nil }
-        let fade = t < 0.045 ? t / 0.045 : (t > 0.76 ? max(0, (1 - t) / 0.24) : 1)
-        let twinkle = p.kind == .spark ? 0.78 + 0.22 * sin(t * .pi * 6) : 1
-        let sway = sin(t * .pi * 2 * p.driftRate) * p.drift * sin(t * .pi)
-        let flip: CGFloat = p.kind == .paper
-            ? 0.22 + 0.78 * abs(CGFloat(cos(t * .pi * (2.2 + p.spin * 0.35))))
-            : 1
-        return Placement(x: (p.originX + p.velocityX * t + sway) * size.width,
-                         y: (p.originY + p.velocityY * t + p.gravity * t * t) * size.height,
-                         angle: t * 360 * p.spin,
-                         opacity: peakOpacity * p.alpha * fade * twinkle,
-                         foreshortening: flip)
-    }
-
-    /// The still frame Reduce Motion gets. The same pieces, spread down the upper page — a piece
-    /// frozen at the crest of the cannons. Opacity is the layer's, not the piece's.
-    static func restingPlacement(_ p: Piece, in size: CGSize) -> Placement {
-        let t = 0.44 - p.delay * 0.35
-        return Placement(x: (p.originX + p.velocityX * t) * size.width,
-                         y: (p.originY + p.velocityY * t + p.gravity * t * t) * size.height,
-                         angle: t * 360 * p.spin,
-                         opacity: peakOpacity * p.alpha,
-                         foreshortening: 1)
-    }
 }

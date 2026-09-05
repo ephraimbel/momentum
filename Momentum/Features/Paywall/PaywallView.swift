@@ -20,7 +20,7 @@ struct PaywallView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(Services.self) private var services
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     @State private var selected: PaywallProduct.Period = .annual
     @State private var revealed = false
@@ -129,7 +129,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                     .lineLimit(2).minimumScaleFactor(0.82)
-                Text("Built from your current fitness, availability, and recovery.")
+                Text("Built around your fitness and schedule. Adapts as you train.")
                     .font(.rounded(12, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
@@ -749,8 +749,10 @@ private struct TileArt: View {
         let yaw: Double = 7 * sin(phase * .pi * 2)
         let lift: CGFloat = CGFloat(-0.4 * sin(phase * .pi * 2))
         return ZStack(alignment: .bottomTrailing) {
-            Text("🏁")
-                .font(.system(size: 25))
+            // Bundled artwork keeps the original glyph without depending on emoji-font fallback.
+            Image(.paywallRaceFlag)
+                .resizable().scaledToFit()
+                .frame(width: 30, height: 30)
                 .rotation3DEffect(.degrees(yaw), axis: (x: 0, y: 1, z: 0),
                                   anchor: .leading, perspective: 0.5)
                 .offset(y: lift)
@@ -780,8 +782,9 @@ private struct TileArt: View {
         let sparkX: [CGFloat] = [-12, -13.5, -8]
         let sparkY: [CGFloat] = [-9, -2, -13]
         return ZStack {
-            Text("🍎")
-                .font(.system(size: 25))
+            Image(.paywallFuelApple)
+                .resizable().scaledToFit()
+                .frame(width: 30, height: 30)
                 .offset(y: bob)
                 .frame(width: 30, height: 30)
             ForEach(0..<3, id: \.self) { i in

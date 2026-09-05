@@ -30,11 +30,13 @@ enum FuelLocalResolver {
     /// candidates out of the window.
     static func candidates(in context: ModelContext) -> [Meal] {
         var descriptor = FetchDescriptor<Meal>(
-            predicate: #Predicate<Meal> { $0.carbsG != nil && $0.source != "pending" },
+            predicate: #Predicate<Meal> {
+                $0.source != "pending" && ($0.carbsG != nil || $0.kcal != nil || $0.nutritionData != nil)
+            },
             sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]
         )
         descriptor.fetchLimit = candidateLimit
-        return (try? context.fetch(descriptor)) ?? []
+        return ((try? context.fetch(descriptor)) ?? []).filter { !$0.nutrition.values.isEmpty }
     }
 
     /// The remembered meal whose text canonicalizes to the same key, or nil.
@@ -85,6 +87,7 @@ enum FuelLocalResolver {
     /// locally-resolved meal. No new field, no bookkeeping, no SwiftData migration.
     static func copyNumbers(from source: Meal, to meal: Meal) {
         meal.itemsData = source.itemsData
+        meal.nutritionData = source.nutritionData
         meal.kcal = source.kcal
         meal.carbsG = source.carbsG
         meal.proteinG = source.proteinG

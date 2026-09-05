@@ -14,6 +14,7 @@ struct HandleField: View {
     var boxed: Bool = false
     /// Onboarding shows a gentle hint when checks can't run (guest offline); Edit Profile stays quiet.
     var showsOfflineHint: Bool = false
+    var onAvailabilityChange: ((Availability) -> Void)? = nil
 
     enum Availability: Equatable { case idle, checking, available, taken, reserved, unknown }
     @State private var availability: Availability = .idle
@@ -30,6 +31,7 @@ struct HandleField: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .keyboardType(.asciiCapable)
+                    .submitLabel(.done)
                     .onChange(of: handle) { _, new in
                         let normalized = SocialPrivacy.normalizedHandle(new)
                         if normalized != new { handle = normalized }
@@ -43,6 +45,7 @@ struct HandleField: View {
             statusLine
         }
         .task(id: handle) { await check() }
+        .onChange(of: availability) { _, state in onAvailabilityChange?(state) }
     }
 
     // MARK: Status

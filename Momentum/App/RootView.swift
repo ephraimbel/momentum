@@ -120,6 +120,19 @@ struct RootView: View {
             || showOnboarding || showRecoveryPrompt || recoverySave != nil
     }
 
+    private func routeCoachNavigation(afterDismissal: Bool = false) {
+        guard let nav = coach.consumeNavigation(afterDismissal: afterDismissal) else { return }
+        switch nav {
+        case .startToday: selection = .today
+        case .viewPlanWeek, .raceBriefing, .planSettings: selection = .plan
+        case .viewProgress: selection = .progress
+        case .viewHealth:
+            selection = .progress
+            router.pendingProgressSegment = "Health"
+        }
+        if nav == .planSettings { coach.wantsPlanSettings = true }
+    }
+
     private var mainBody: some View {
         @Bindable var paywall = paywall
         @Bindable var coach = coach
@@ -232,23 +245,16 @@ struct RootView: View {
                 }
                 // The ONE coach chat surface — every entry point (Today's floating button, Settings)
                 // opens the same thread through `CoachPresenter`. Free to talk; Apply is the Pro gate.
-                .fullScreenCover(isPresented: $coach.isPresented) {
+                .fullScreenCover(isPresented: $coach.isPresented, onDismiss: {
+                    routeCoachNavigation(afterDismissal: true)
+                }) {
                     CoachChatView { coach.close() }
                 }
-                // A nav card tapped in the chat: the chat dismissed itself; steer the shell.
+                // Notifications also use this mailbox without opening the coach. Chat-originated
+                // requests wait for onDismiss above instead of guessing the cover's duration.
                 .onChange(of: coach.pendingNav) { _, nav in
-                    guard let nav else { return }
-                    coach.pendingNav = nil
-                    switch nav {
-                    case .startToday: selection = .today
-                    case .viewPlanWeek, .raceBriefing: selection = .plan
-                    case .planSettings: selection = .plan   // PlanView opens its settings sheet (coachWantsSettings)
-                    case .viewProgress: selection = .progress
-                    case .viewHealth:                       // Progress → Health segment (RECOVERY-HUB-PLAN §2)
-                        selection = .progress
-                        router.pendingProgressSegment = "Health"
-                    }
-                    if nav == .planSettings { coach.wantsPlanSettings = true }
+                    guard nav != nil else { return }
+                    routeCoachNavigation()
                 }
                 // Cross-tab requests (Today's morning readout → Progress · Health). Consume-then-nil:
                 // the same destination can be asked for again later, and a stale one never re-fires.

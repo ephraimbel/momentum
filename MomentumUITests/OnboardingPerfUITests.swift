@@ -25,7 +25,7 @@ final class OnboardingPerfUITests: XCTestCase {
     /// up rather than dropping taps or wedging mid-transition.
     func testEveryStepStaysResponsive() {
         let app = XCUIApplication()
-        app.launchArguments = ["--onboarding", "--onboarding-guest", "--debug-free"]
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--debug-free", "--onboarding-goal"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]; if b.exists { b.tap(); return true }
@@ -33,10 +33,7 @@ final class OnboardingPerfUITests: XCTestCase {
             return false
         }
         app.launch(); app.tap()
-        let name = app.textFields["Your name"]
-        XCTAssertTrue(name.waitForExistence(timeout: 20), "name step never appeared")
-        name.tap(); name.typeText("Maya")
-
+        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 20))
         var advanced = 0
         var stalls: [String] = []
         for i in 0..<16 {
@@ -44,8 +41,11 @@ final class OnboardingPerfUITests: XCTestCase {
             if app.staticTexts["What supports your running?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()
             }
-            if app.staticTexts["What's your main goal?"].exists, !app.buttons["Continue"].isEnabled {
+            if app.staticTexts["What are we training for?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Stay consistent"].firstMatch.tap()
+            }
+            if app.staticTexts["Tell us about your running."].exists, !app.buttons["Continue"].isEnabled {
+                app.staticTexts["Easy jogger"].firstMatch.tap()
             }
             let heading = app.staticTexts.firstMatch.label
             guard let cont = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
@@ -103,4 +103,97 @@ final class OnboardingPerfUITests: XCTestCase {
         password.tap(); password.typeText("hunter2hunter2")
         XCTAssertTrue(app.buttons["Sign in"].exists, "primary CTA vanished while typing")
     }
+    func testCombinedScheduleKeepsChoicesAndUnitsWhenGoingBack() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-days", "--ui-test-reduce-motion"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Let's shape your training week."].waitForExistence(timeout: 20))
+        app.buttons["4 training days"].tap()
+        app.buttons["Monday"].tap()
+        app.buttons["Thursday"].tap()
+        XCTAssertTrue(app.buttons["Monday"].isSelected)
+        XCTAssertTrue(app.buttons["Thursday"].isSelected)
+        app.buttons["onboarding.distanceUnits"].tap()
+        app.buttons["Kilometres"].tap()
+        app.buttons["Continue"].tap()
+        XCTAssertTrue(app.staticTexts["How much time do you have?"].waitForExistence(timeout: 5))
+        app.buttons["Back"].tap()
+        XCTAssertTrue(app.staticTexts["Let's shape your training week."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Monday"].isSelected)
+        XCTAssertTrue(app.buttons["Thursday"].isSelected)
+        XCTAssertTrue(app.buttons["onboarding.distanceUnits"].label.contains("km"))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "onboarding-combined-schedule"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    @MainActor
+    func testPrimaryQuestionsFitWithoutScrolling() {
+        let app = XCUIApplication()
+        let pages: [(String, String)] = [
+            ("--onboarding-goal", "Become a stronger runner"),
+            ("--onboarding-race", "Target finish time"),
+            ("--onboarding-experience", "Recent running result"),
+            ("--onboarding-experience-hybrid", "Lifting experience"),
+            ("--onboarding-volume", "Increase Build up to"),
+            ("--onboarding-metrics", "Increase Weight"),
+            ("--onboarding-musclefocus", "Core"),
+            ("--onboarding-injuries", "No injuries, I'm all clear"),
+            ("--onboarding-equipment", "Lifting split"),
+            ("--onboarding-session", "75+ min"),
+            ("--onboarding-intensity", "Podium"),
+            ("--onboarding-intensity-short", "Podium")
+        ]
+        for (argument, label) in pages {
+            app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", argument, "--ui-test-reduce-motion"]
+            app.launch()
+            let choice = argument == "--onboarding-equipment" ? app.buttons["onboarding.liftingSplit"]
+                : argument == "--onboarding-experience-hybrid" ? app.buttons["onboarding.liftingExperience"]
+                : app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
+            let found = choice.waitForExistence(timeout: 15)
+            if !found {
+                let failure = XCTAttachment(screenshot: app.screenshot())
+                failure.name = argument + "-missing-control"
+                failure.lifetime = .keepAlways
+                add(failure)
+            }
+            XCTAssertTrue(found, "Missing final control on \(argument)")
+            XCTAssertTrue(choice.isHittable, "\(label) requires scrolling")
+            XCTAssertLessThanOrEqual(choice.frame.maxY, app.buttons["Continue"].frame.minY,
+                                     "\(label) sits under Continue")
+            XCTAssertGreaterThanOrEqual(app.buttons["Continue"].frame.minX, app.frame.minX + 22,
+                                        "\(argument) widens the shared page margins")
+            XCTAssertLessThanOrEqual(app.buttons["Continue"].frame.maxX, app.frame.maxX - 22)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = argument
+            shot.lifetime = .keepAlways
+            add(shot)
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testNameAndUsernameShareTheFirstPageAndSurviveBack() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--ui-test-reduce-motion"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Let's make it yours."].waitForExistence(timeout: 15))
+        let name = app.textFields["Your name"]
+        let username = app.textFields["Handle"]
+        XCTAssertTrue(name.isHittable && username.isHittable)
+        name.tap()
+        name.typeText("Alex Mora\n")
+        username.tap()
+        let suggested = username.value as? String ?? ""
+        let custom = "alex_qa_\(UUID().uuidString.prefix(8).lowercased())"
+        username.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: suggested.count) + custom + "\n")
+        app.buttons["Continue"].tap()
+        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 5))
+        app.buttons["Back"].tap()
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        XCTAssertEqual(name.value as? String, "Alex Mora")
+        XCTAssertEqual(username.value as? String, custom)
+    }
+
 }

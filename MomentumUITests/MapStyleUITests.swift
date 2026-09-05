@@ -1,9 +1,9 @@
 import XCTest
 
-/// Map style consistency (decision 2026-07-09): the Strava-style picker sheet with live previews,
+/// Map style consistency (decision 2026-07-09): the shared picker sheet with cached previews,
 /// satellite as a selectable option, and — the regression that motivated it — the personal heatmap
 /// keeping its heat layers when the base style changes. Dumps PNGs for visual inspection.
-final class MapStyleUITests: XCTestCase {
+@MainActor final class MapStyleUITests: XCTestCase {
 
     private let dumpDir = "/private/tmp/claude-501/-Users-ephraimbelachew-momentum/dab5c7b2-3f47-4a9d-a69d-e9360d163b0c/scratchpad"
 
@@ -11,6 +11,10 @@ final class MapStyleUITests: XCTestCase {
 
     private func dump(_ app: XCUIApplication, _ name: String) {
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/\(name).png"))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     /// Today → layers button → picker sheet: every pickable style listed (satellite included),
@@ -71,7 +75,7 @@ final class MapStyleUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo", "--debug-pro", "--progress-tab"]
         app.launch()
-        app.tap()
+        ScrollTestSupport.dismissRecoveryIfPresent(app, timeout: 3)
 
         // Progress → History → the heatmap look-back card.
         let history = app.buttons["History"]
@@ -90,25 +94,21 @@ final class MapStyleUITests: XCTestCase {
         // Switch the base style — the heat must re-apply on the new style.
         let layers = app.buttons["Map style"]
         XCTAssertTrue(layers.waitForExistence(timeout: 5), "Layers button missing on heatmap.")
-        layers.tap()
-        XCTAssertTrue(app.staticTexts["Map style"].waitForExistence(timeout: 5))
-        dump(app, "verify_heatmap_sheet")
-        let dark = app.buttons["Dark"].firstMatch
-        if !dark.waitForExistence(timeout: 3) { app.swipeUp() }   // medium detent may clip the list
-        XCTAssertTrue(dark.waitForExistence(timeout: 3), "Dark option not reachable in picker.")
-        dark.tap()
-        // Dismiss by swiping the sheet itself (a bare app.swipeDown can land on the map and
-        // pitch the camera instead), and wait until it's actually gone before re-opening.
         let sheetTitle = app.staticTexts["Map style"]
-        var dismissTries = 0
-        while sheetTitle.exists && dismissTries < 5 {
-            sheetTitle.swipeDown(velocity: .fast)
-            usleep(800_000)
-            dismissTries += 1
+        // Dusk → Night shares a URI, while Dark replaces it: both paths must keep the heat.
+        for label in ["Dusk", "Night", "Dark"] {
+            layers.tap()
+            XCTAssertTrue(sheetTitle.waitForExistence(timeout: 5))
+            let option = app.buttons[label].firstMatch
+            XCTAssertTrue(option.waitForExistence(timeout: 3), "\(label) missing from picker.")
+            option.tap()
+            XCTAssertTrue(app.buttons["\(label), selected"].firstMatch.waitForExistence(timeout: 3))
+            app.buttons["mapStyleDone"].tap()
+            XCTAssertTrue(sheetTitle.waitForNonExistence(timeout: 5))
+            sleep(2)   // Mapbox style load + heat re-apply + tiles, for the visual assertion
+            XCTAssertTrue(mapped.exists, "Heatmap stats vanished after switching to \(label).")
+            dump(app, "verify_heatmap_\(label)")
         }
-        sleep(3)   // style load + heat re-apply + tiles
-        XCTAssertTrue(mapped.exists, "Heatmap stats vanished after style switch.")
-        dump(app, "verify_heatmap_after_style_switch")
 
         // Back to the default for the next session.
         layers.tap()

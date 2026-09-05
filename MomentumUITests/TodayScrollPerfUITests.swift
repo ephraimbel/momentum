@@ -14,9 +14,11 @@ final class TodayScrollPerfUITests: XCTestCase {
         // The sport chip in the floating header opens the picker ("Change activity — Run selected").
         let picker = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH 'Change activity'")).firstMatch
-        if picker.waitForExistence(timeout: 20) { picker.tap() }
+        XCTAssertTrue(picker.waitForExistence(timeout: 20), "Today's sport picker never appeared.")
+        picker.tap()
         let weight = app.buttons["Weight Training"].firstMatch
-        if weight.waitForExistence(timeout: 6) { weight.tap() }
+        XCTAssertTrue(weight.waitForExistence(timeout: 6), "Weight Training is missing from the picker.")
+        weight.tap()
     }
 
     /// Wall-clock cost of a scroll burst on the strength home. A page doing per-frame engine work
@@ -27,16 +29,13 @@ final class TodayScrollPerfUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo"]
         app.launch()
-        app.tap()
+        ScrollTestSupport.dismissRecoveryIfPresent(app, timeout: 3)
         openStrengthHome(app)
 
-        let surface = app.scrollViews.firstMatch
-        guard surface.waitForExistence(timeout: 10) else {
-            // No scroll surface (a build where the sport switch didn't land) — don't fail the
-            // suite on a navigation miss; the responsiveness test below still covers the page.
-            return
-        }
-        measure(metrics: [XCTClockMetric()]) {
+        guard let surface = ScrollTestSupport.pageSurface(in: app) else { return }
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+        measure(metrics: [XCTClockMetric(), XCTOSSignpostMetric.scrollingAndDecelerationMetric], options: options) {
             surface.swipeUp(velocity: .fast)
             surface.swipeDown(velocity: .fast)
         }
@@ -49,13 +48,11 @@ final class TodayScrollPerfUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--seed-demo"]
         app.launch()
-        app.tap()
+        ScrollTestSupport.dismissRecoveryIfPresent(app, timeout: 3)
         openStrengthHome(app)
 
-        let surface = app.scrollViews.firstMatch
-        if surface.waitForExistence(timeout: 10) {
-            for _ in 0..<6 { surface.swipeUp(velocity: .fast); surface.swipeDown(velocity: .fast) }
-        }
+        guard let surface = ScrollTestSupport.pageSurface(in: app) else { return }
+        for _ in 0..<6 { surface.swipeUp(velocity: .fast); surface.swipeDown(velocity: .fast) }
         // The deck survived the burst and still answers a tap.
         let start = app.buttons["todayDeckStart"]
         let peek = app.buttons["todayPeekStart"]

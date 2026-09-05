@@ -60,13 +60,17 @@ enum RaceCatalog {
         let name: String
         let city: String
         let country: String
-        let flag: String            // emoji — reads instantly, ships nothing
+        // Artwork source only. Keeping this private to the catalog prevents views from rendering
+        // Text(race.flag) and reintroducing the missing-emoji-font regression.
+        fileprivate let flag: String
         let region: Region
         /// Distances offered on the event's weekend — flagship first (what the row leads with).
         let distances: [RaceDistance]
         let rule: DateRule
 
         var flagship: RaceDistance { distances[0] }
+
+        var flagArtworkName: String { "RaceFlag-\(country)" }
 
         func nextDate(after date: Date = Date(), calendar: Calendar = .current) -> Date? {
             rule.nextOccurrence(after: date, calendar: calendar)

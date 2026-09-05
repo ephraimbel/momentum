@@ -102,11 +102,14 @@ struct TodayView: View {
     /// The composer's "Adjust details" hand-off — set after its sheet dismisses, presents the
     /// full manual form pre-filled with the parse.
     @State private var manualPrefill: LogWorkoutPrefill?
+    @State private var pendingLogAdjustment: LogWorkoutPrefill?
     /// DEBUG deep link only (`--log-activity-draft`): opens the composer holding this text.
     @State private var logActivityDraft: String?
     @State private var showInjuryReport = false
     @State private var showCheckin = false
     @State private var showLifeHappens = false
+    private enum CheckinDestination { case injury, life }
+    @State private var pendingCheckinDestination: CheckinDestination?
     /// The morning readout for the deck's utility line — one honest 0–100, computed off-render.
     @State private var morningReadiness: MorningReadiness?
     /// Throttles the appear-time orchestration — `onAppear` re-fires on every tab switch.
@@ -165,13 +168,16 @@ struct TodayView: View {
     @State private var cachedPlanState: PlanStateLine?
     @State private var confirmResume = false
     @State private var showSportPicker = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     // The Today map zoomed all the way out to the globe of everyone on Momentum (no separate tab).
     // `--world` opens straight on the globe (DEBUG deep link for deterministic sim verification).
     @State private var worldMode = debugFlag("--world")
     // Basemap is decoupled from `worldMode` so the satellite↔light swap never lands mid-fly (a style
     // reload during a camera animation cancels it). We flip this only when the fly has settled.
     @State private var mapShowsGlobe = debugFlag("--world")
+    @State private var globeTransition = MapGlobeTransition()
+    @State private var pendingGlobeViewport: Viewport?
+    @State private var presenceTask: Task<Void, Never>?
     @State private var liveCount = 0
     @State private var selectedAthlete: CommunityAthlete?
     // DEBUG marketing capture (--marketing-hero, pair with --seed-demo): trace a real seeded run's
@@ -363,6 +369,16 @@ struct TodayView: View {
             // granted it, just pull a fresh fix to center on them.
             if locator.isAuthorized { locator.refreshLocation() }
         }
+        .onDisappear {
+            presenceTask?.cancel()
+            presenceTask = nil
+            // The map can remain mounted beneath another tab. Invalidate old completions and
+            // settle the chosen mode so coming back cannot replay a half-finished transition.
+            if worldMode, let globe = pendingGlobeViewport { viewport = globe }
+            mapShowsGlobe = worldMode
+            pendingGlobeViewport = nil
+            globeTransition.settle(inWorld: worldMode)
+        }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
         .onChange(of: workouts.count) { lastBootstrap = nil; bootstrapIfNeeded() }
         // Any signature change (new plan, session added/removed, workout landed, day rollover)
@@ -417,13 +433,6 @@ struct TodayView: View {
         .onAppear {
             if mapStyle.requiresPro, !services.paywall.isEntitled(to: .mapStyles) { mapStyle = .realistic }
         }
-        // Re-tilt the camera when switching to/from 3D Satellite (and other layers reset it flat).
-        // Never via followPuck without authorization — the puck viewport spins up Mapbox's location
-        // provider, which would prompt for permission from a style change (the ask stays contextual:
-        // Start or recenter, never a re-skin).
-        .onChange(of: mapStyle) { retiltCamera() }
-        // The 2D/3D toggle re-frames through the same path a layer change does.
-        .onChange(of: mapPerspectiveRaw) { retiltCamera() }
         // The recorder itself is no longer attached here: launch state lives on
         // `router.workoutLaunch` and the ONE `WorkoutRunner` overlay is mounted above the whole
         // tab shell in `RootView` (shared-map pass 2026-08-19) — Today and Plan write the same
@@ -446,22 +455,34 @@ struct TodayView: View {
         }
         .sheet(isPresented: $showNotifications) { NotificationsView() }
         .sheet(isPresented: $showLogWorkout) { LogWorkoutView(initialType: activity) }
-        .sheet(isPresented: $showLogActivity) {
+        .sheet(isPresented: $showLogActivity, onDismiss: {
+            let next = pendingLogAdjustment
+            pendingLogAdjustment = nil
+            if let next { manualPrefill = next }
+        }) {
             LogActivityView(initialDraft: logActivityDraft ?? "") { prefill in
-                // Sheet swap: let the composer finish dismissing before the editor presents
-                // (the same beat the deep links use — same-tick presentation misbehaves).
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { manualPrefill = prefill }
+                // Commit the destination now; present only when the composer actually dismisses.
+                pendingLogAdjustment = prefill
+                showLogActivity = false
             }
         }
         .sheet(item: $manualPrefill) { LogWorkoutView(prefill: $0) }
         .sheet(isPresented: $showInjuryReport) { InjuryReportSheet(profile: profiles.first) }
-        .sheet(isPresented: $showCheckin) {
+        .sheet(isPresented: $showCheckin, onDismiss: {
+            let next = pendingCheckinDestination
+            pendingCheckinDestination = nil
+            switch next {
+            case .injury: showInjuryReport = true
+            case .life: showLifeHappens = true
+            case nil: break
+            }
+        }) {
             CheckinSheet(profile: profiles.first, onPain: {
-                // "Something hurts" routes straight into the injury loop.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showInjuryReport = true }
+                pendingCheckinDestination = .injury
+                showCheckin = false
             }, onLife: {
-                // "Life's in the way" routes into the pause/ease sheet.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLifeHappens = true }
+                pendingCheckinDestination = .life
+                showCheckin = false
             })
         }
         .sheet(isPresented: $showLifeHappens) { LifeHappensSheet(profile: profiles.first) }
@@ -986,6 +1007,11 @@ struct TodayView: View {
         // only turn it on once the athlete has actually granted location (never up front on arrival).
         .onStyleLoaded { _ in
             mapStyleReady = true   // animated by the opacity binding in `body` — fade, don't pop
+            // Ignore a late event from the outgoing street style. The globe flight needs the
+            // Standard style's globe projection, not a flat basemap that snaps to Earth at arrival.
+            if proxy.map?.styleURI == .standard, let ticket = globeTransition.mapReady() {
+                flyToGlobe(ticket: ticket)
+            }
             #if DEBUG
             // The marathon hero owns the camera (frame the course) and shows no puck — a "you are
             // here" dot parked downtown only distracts from the course.
@@ -994,6 +1020,10 @@ struct TodayView: View {
             if locator.isAuthorized { BrandPuck.apply(to: proxy) }
         }
         .onChange(of: locator.isAuthorized) { _, granted in if granted { BrandPuck.apply(to: proxy) } }
+        // Read the actual camera only when the style/perspective changes, not on every frame.
+        // A re-skin must not discard the athlete's pan/zoom or silently resume location-following.
+        .onChange(of: mapStyle) { retiltCamera(camera: proxy.map?.cameraState) }
+        .onChange(of: mapPerspectiveRaw) { retiltCamera(camera: proxy.map?.cameraState) }
         .ignoresSafeArea()
         }
     }
@@ -1217,7 +1247,7 @@ struct TodayView: View {
         VStack(spacing: 8) {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17, weight: .bold)).foregroundStyle(Theme.ink)
-                .rotationEffect(.degrees(railOpen ? 90 : 0))
+                .rotationEffect(.degrees(railOpen && !reduceMotion ? 90 : 0))
                 .frame(width: 44, height: 44).momentumGlass(in: Circle())
                 .overlay(alignment: .topTrailing) {
                     if !railOpen, unreadCount > 0 || hasUnseenCoachNews {
@@ -1229,7 +1259,7 @@ struct TodayView: View {
                 }
                 .mapSafeTap(railOpen ? "Close controls" : "More") {
                     Haptics.light()
-                    withAnimation(reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.8)) { railOpen.toggle() }
+                    withAnimation(reduceMotion ? Motion.crossfade : Motion.panel) { railOpen.toggle() }
                 }
                 .accessibilityHint("Notifications, coach, the world and map style")
             if railOpen {
@@ -1237,7 +1267,7 @@ struct TodayView: View {
                 fanItem(coachButton.momentumGlass(in: Circle()), index: 1)
                 fanItem(globeButton.momentumGlass(in: Circle()), index: 2)
                 if isCardio {
-                    fanItem(MapLayersButton(style: $mapStyle, previewCenter: locator.lastCoordinate), index: 3)
+                    fanItem(MapLayersButton(style: $mapStyle, previewCenter: lastKnownCoordinate), index: 3)
                 }
             }
         }
@@ -1245,12 +1275,14 @@ struct TodayView: View {
 
     /// One fanned control: fades and slides in from the disc above, later items a beat behind.
     private func fanItem<V: View>(_ v: V, index: Int) -> some View {
-        let d = reduceMotion ? 0 : Double(index) * 0.045
-        return v.transition(
-            .asymmetric(insertion: .opacity.combined(with: .offset(y: -10))
-                            .animation(.spring(response: 0.38, dampingFraction: 0.8).delay(d)),
-                        removal: .opacity.combined(with: .offset(y: -6))
-                            .animation(.easeOut(duration: 0.16).delay(Double(3 - index) * 0.02))))
+        // Reduce Motion must remove the offsets themselves, not only the stagger delay.
+        let d = Double(index) * 0.02
+        let transition: AnyTransition = reduceMotion ? .opacity :
+            .asymmetric(insertion: .opacity.combined(with: .offset(y: -6))
+                            .animation(Motion.panel.delay(d)),
+                        removal: .opacity.combined(with: .offset(y: -4))
+                            .animation(Motion.exit))
+        return v.transition(transition)
     }
 
     /// A clean header card floating over the map (Runna-style): profile + notifications on the left, the
@@ -1403,7 +1435,7 @@ struct TodayView: View {
         if reduceMotion {
             deckCollapsed = collapsed
         } else {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { deckCollapsed = collapsed }
+            withAnimation(Motion.panel) { deckCollapsed = collapsed }
         }
     }
 
@@ -1423,7 +1455,7 @@ struct TodayView: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { peekHeight = $0 }
                     // Same edge as the deck's exit, so collapse/expand reads as one surface
                     // condensing at the bottom of the screen — not two unrelated crossfades.
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             } else {
                 deck
                     .padding(.horizontal, Theme.Space.md)
@@ -1433,7 +1465,7 @@ struct TodayView: View {
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deckHeight = $0 }
                     // Slides down as it leaves, so collapsing still reads as the deck getting out of
                     // the map's way rather than a bare cross-fade.
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
 
             // The map's own controls sit OUTSIDE that branch — they belong to the map, not to either
@@ -1708,17 +1740,21 @@ struct TodayView: View {
     /// Re-frame the camera at the current tilt — after a layer change (some styles reset it flat)
     /// or a 2D/3D flip. Re-tilting only makes sense over a place we can actually point at: an
     /// un-located athlete keeps the flat world view rather than being tipped into a pitched globe.
-    private func retiltCamera() {
+    private func retiltCamera(camera: CameraState?) {
         guard !worldMode, !marketingHero else { return }
         let target: Viewport
-        if locator.isAuthorized {
+        if let camera, mapStyleReady, canCenterMap {
+            target = MapStyleCamera.retilted(viewport, camera: camera, pitch: explorePitch,
+                                            authorized: locator.isAuthorized)
+        } else if locator.isAuthorized {
             target = .followPuck(zoom: 15, pitch: explorePitch)
         } else if let coord = lastKnownCoordinate {
             target = .camera(center: coord, zoom: 13.5, pitch: explorePitch)
         } else {
             target = Self.unlocatedViewport
         }
-        withAnimation(Motion.standard) { viewport = target }
+        if reduceMotion { viewport = target }
+        else { withViewportAnimation(.easeInOut(duration: Motion.normal)) { viewport = target } }
     }
 
     private var recenterButton: some View {
@@ -1905,18 +1941,14 @@ struct TodayView: View {
     /// native `.fly` runs the cinematic zoom-out → arc → settle, so the planet eases into frame instead
     /// of a flat linear zoom.
     private func enterWorld() {
+        guard !worldMode else { return }
         Haptics.light()
         // Snapshot the globe's dots once per entry — filtering the ~950-athlete directory through
         // the blocklist on every mid-flight render was 3 full passes per frame.
         globeDots = communityAthletes
         let target = lastKnownCoordinate ?? CLLocationCoordinate2D(latitude: 20, longitude: 0)
         let globe = Viewport.camera(center: target, zoom: 1.3, pitch: 0)
-        // On a strength day the map has never MOUNTED (the strength home replaces it, and
-        // `mapWasShown` only flips for cardio) — SwiftUI inserts it in this very transaction, and
-        // a viewport animation scheduled against a Map that doesn't exist yet is dropped on the
-        // floor: the map appeared already parked at the globe, no zoom-out, mid-load flash (owner
-        // report 2026-07-30). Mount it first at the street camera and give the insertion one beat;
-        // the same cinematic fly then runs from the street exactly as it does from the cardio map.
+        // A strength-first map waits for the actual style-ready event, never a guessed delay.
         let needsMount = !mapWasShown
         mapWasShown = true
         if needsMount, case .idle = viewport {
@@ -1924,43 +1956,68 @@ struct TodayView: View {
             // `.idle` (an uninitialized camera flies from nowhere).
             viewport = .camera(center: target, zoom: 13.5, pitch: 0)
         }
-        withAnimation(Motion.reversible) { worldMode = true }
-        mapShowsGlobe = true   // satellite earth; set before the fly so it's loaded as we pull back
+        pendingGlobeViewport = globe
+        let needsGlobeStyle = !mapShowsGlobe && mapStyle.styleURI != .standard
+        let canFly = mapStyleReady && !needsGlobeStyle
+        let ticket = globeTransition.enter(mapReady: canFly || reduceMotion)
+        withAnimation(Motion.crossfade) { worldMode = true }
+        // Prepare the globe projection BEFORE flying. A URI change waits for onStyleLoaded;
+        // Standard's lighting-only presets need no reload and can fly immediately.
+        mapShowsGlobe = true
         if reduceMotion {
             viewport = globe
-        } else if needsMount {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                guard worldMode else { return }   // exited again within the mount beat
-                withViewportAnimation(.fly(duration: 2.4)) { viewport = globe }
-            }
-        } else {
-            withViewportAnimation(.fly(duration: 2.4)) { viewport = globe }
+            if globeTransition.entered(ticket) { mapShowsGlobe = true }
+            pendingGlobeViewport = nil
+        } else if canFly {
+            flyToGlobe(ticket: ticket)
         }
-        Task { liveCount = await services.presence.refresh(appearOnMap: onMap) }
+        presenceTask?.cancel()
+        presenceTask = Task { @MainActor in
+            let count = await services.presence.refresh(appearOnMap: onMap)
+            guard !Task.isCancelled, globeTransition.revision == ticket, worldMode else { return }
+            liveCount = count
+        }
+    }
+
+    private func flyToGlobe(ticket: UUID) {
+        guard worldMode, globeTransition.revision == ticket,
+              let globe = pendingGlobeViewport else { return }
+        withViewportAnimation(.fly(duration: 2.4)) {
+            viewport = globe
+        } completion: { _ in
+            // A user pan can interrupt the fly. Keep their camera and finish transition ownership.
+            guard worldMode, globeTransition.entered(ticket) else { return }
+            mapShowsGlobe = true
+            pendingGlobeViewport = nil
+        }
     }
 
     /// Fly back in to the user's position and bring the cards back. The basemap stays on the satellite
     /// style for the whole fly (swapping it mid-animation cancels the fly), then crossfades to the
     /// street style once the camera has settled.
     private func exitWorld() {
+        guard worldMode else { return }
         Haptics.light()
+        presenceTask?.cancel()
+        presenceTask = nil
+        pendingGlobeViewport = nil
+        let ticket = globeTransition.exit()
         // Target the user's position — the live puck if we have a fix, else their last workout's
         // neighborhood — so the camera reliably leaves the globe (followPuck alone does nothing without
         // a live location).
         let me = locator.lastLocation ?? lastKnownCoordinate
         let home: Viewport = me.map { .camera(center: $0, zoom: 15, pitch: explorePitch) }
-            ?? .followPuck(zoom: 15, pitch: explorePitch)
-        withAnimation(Motion.reversible) { worldMode = false }
+            ?? (locator.isAuthorized ? .followPuck(zoom: 15, pitch: explorePitch) : Self.unlocatedViewport)
+        withAnimation(Motion.crossfade) { worldMode = false }
         if reduceMotion {
             viewport = home
-            mapShowsGlobe = false
+            if globeTransition.exited(ticket) { mapShowsGlobe = false }
         } else {
-            let fly = 1.8
-            withViewportAnimation(.fly(duration: fly)) { viewport = home }
-            // Swap satellite → street only after the camera lands, so the fly is never interrupted.
-            DispatchQueue.main.asyncAfter(deadline: .now() + fly) {
-                guard !worldMode else { return }   // didn't re-enter the globe meanwhile
-                withAnimation(.easeInOut(duration: 0.4)) { mapShowsGlobe = false }
+            withViewportAnimation(.fly(duration: 1.8)) {
+                viewport = home
+            } completion: { _ in
+                guard !worldMode, globeTransition.exited(ticket) else { return }
+                mapShowsGlobe = false
             }
         }
     }
@@ -1992,7 +2049,9 @@ struct TodayView: View {
             .highPriorityGesture(TapGesture().onEnded { exitWorld() })
             .accessibilityElement()
             .accessibilityLabel("Back to Today")
+            .accessibilityValue(globeTransition.phase == .world ? "Globe ready" : "Moving to globe")
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { exitWorld() }
     }
 
     private var worldHeader: some View {

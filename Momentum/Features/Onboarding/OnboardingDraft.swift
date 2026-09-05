@@ -174,20 +174,37 @@ extension OnboardingViewModel {
         recentRunSeconds = d.recentRunSeconds ?? recentRunSeconds
         healthRestingHR = d.importedRestingHR
         plannedRaceName = d.plannedRaceName
-        step = placedStep
+        let currentStep = Self.currentStep(for: placedStep)
+        step = currentStep
         // Cross-version skew guard: single fields fall back to defaults on unknown rawValues
         // (that's the draft's resilience design), which can leave `placedStep` gated OFF under
         // the restored answers — e.g. resumed onto `.race` with the goal defaulted away from
         // racing. `advance()`/`back()` both no-op silently when the current step isn't in
         // `steps`, a permanent dead Continue. Refuse the draft instead; the restored answers
         // stay as harmless prefills for the fresh run-through.
-        guard steps.contains(placedStep) else {
-            step = Step.allCases.first ?? step
+        guard steps.contains(currentStep) else {
+            step = .name
             return false
+        }
+        // Race setup moved ahead of baseline questions. An older draft may have reached those
+        // questions before ever selecting a race; collect the missing destination on resume.
+        if goal == .raceDistance, raceDistance == nil,
+           let raceIndex = steps.firstIndex(of: .race),
+           let currentIndex = steps.firstIndex(of: step), currentIndex > raceIndex {
+            step = .race
+        }
+        // Earlier interviews collected identity later. Keep every training answer, but collect
+        // missing profile details before resuming an interview that now starts with them.
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || SocialPrivacy.normalizedHandle(handle).isEmpty
+            || SocialPrivacy.isReservedHandle(SocialPrivacy.normalizedHandle(handle)) {
+            step = .name
         }
         // Answers restored up to here were the athlete's own — per-step prefills (the intensity
         // recommendation) must not overwrite them on re-entry. See `restoredAtOrPast`.
-        restoredStep = placedStep
+        // A migration may send navigation back to missing identity/race details. The original
+        // checkpoint still records which later choices belong to the athlete, not a prefill.
+        restoredStep = currentStep
         return true
     }
 

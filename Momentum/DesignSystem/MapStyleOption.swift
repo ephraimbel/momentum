@@ -81,8 +81,8 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     }
 
     /// Same base styles as a `StyleURI`, for UIKit `MapView`s (the heatmap) that load a style by
-    /// URI. A URI can't carry the Standard light preset — Dusk/Night fall back to Standard day
-    /// there, which only affects the heatmap backdrop.
+    /// URI. A URI can't carry the Standard light preset; UIKit hosts must also apply
+    /// `standardLightPreset` after loading (as HeatmapMapView and the picker snapshotter do).
     var styleURI: StyleURI {
         switch self {
         case .standard: .light
@@ -103,8 +103,17 @@ enum MapStyleOption: String, CaseIterable, Identifiable {
     /// DEFAULT dark-mode map dark. Anyone wanting a fixed day/dusk/night/dark look picks that style
     /// (Dusk, Night, Dark are their own picker choices).
     func mapboxStyle(for scheme: ColorScheme) -> MapboxMaps.MapStyle {
-        if scheme == .dark, self == .realistic { return .standard(lightPreset: .night) }
-        return mapboxStyle
+        renderedStyle(for: scheme).mapboxStyle
+    }
+
+    /// Shared by live maps and picker previews. Only the adaptive default follows appearance;
+    /// an explicit Light, Dusk or Night selection must remain literal.
+    func renderedStyle(for scheme: ColorScheme) -> MapStyleOption {
+        self == .realistic && scheme == .dark ? .night : self
+    }
+
+    func availableStyle(hasPro: Bool) -> MapStyleOption {
+        requiresPro && !hasPro ? .realistic : self
     }
 
     /// URI variant for snapshot/UIKit surfaces — literal in either appearance. (A URI can't carry
@@ -209,94 +218,6 @@ extension MapStyleOption {
     }
 }
 
-// MARK: - Preview snapshots
-
-/// Renders one static preview image per (style, area) via Mapbox's `Snapshotter` and caches it for
-/// the app's lifetime. The picker used to run a LIVE map engine per row — with nine styles that's
-/// nine GPU render loops behind a sheet animation, which is exactly where the jank came from. A
-/// snapshot is rendered once, joins in-flight requests, and every later open is instant.
-@MainActor
-enum MapStylePreviews {
-    private static var cache: [String: UIImage] = [:]
-    private static var active: [String: Snapshotter] = [:]
-    private static var tokens: [String: AnyCancelable] = [:]
-    private static var waiters: [String: [CheckedContinuation<UIImage?, Never>]] = [:]
-
-    /// The Snapshotter hard-draws the logo + attribution strip into the image with no opt-out.
-    /// Attribution lives on the live map this sheet floats over, so previews render this much
-    /// taller and crop the strip away — thumbnails are UI chrome, not a map.
-    private static let attributionStripPt: CGFloat = 28
-
-    /// On-disk copies of the rendered previews (Caches — the system may prune, we just re-render).
-    /// The in-memory cache dies with the process, so every cold launch used to pay up to nine
-    /// Snapshotter renders on the first picker open; now only a style/area never seen before does.
-    private static var diskDir: URL? {
-        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-        else { return nil }
-        let dir = base.appendingPathComponent("MapStylePreviews", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private static func diskURL(for key: String) -> URL? {
-        diskDir?.appendingPathComponent(key.replacingOccurrences(of: "|", with: "_") + ".jpg")
-    }
-
-    static func snapshot(_ option: MapStyleOption, center: CLLocationCoordinate2D,
-                         size: CGSize) async -> UIImage? {
-        // Bucket the center (~2 km) so tiny GPS drift between opens doesn't defeat the cache.
-        let key = "\(option.rawValue)|\(Int(center.latitude * 50))|\(Int(center.longitude * 50))"
-        if let hit = cache[key] { return hit }
-        if let url = diskURL(for: key), let data = try? Data(contentsOf: url),
-           let image = UIImage(data: data, scale: UIScreen.main.scale) {
-            cache[key] = image
-            return image
-        }
-
-        return await withCheckedContinuation { continuation in
-            waiters[key, default: []].append(continuation)
-            guard active[key] == nil else { return }   // join the in-flight render
-
-            let padded = CGSize(width: size.width, height: size.height + attributionStripPt)
-            let snapshotter = Snapshotter(options: MapSnapshotOptions(
-                size: padded, pixelRatio: UIScreen.main.scale))
-            active[key] = snapshotter
-            snapshotter.styleURI = option.styleURI
-            snapshotter.setCamera(to: CameraOptions(center: center, zoom: 13.8,
-                                                    pitch: option.explorePitch))
-            tokens[key] = snapshotter.onStyleLoaded.observeNext { _ in
-                if let preset = option.standardLightPreset {
-                    try? snapshotter.style.setStyleImportConfigProperty(
-                        for: "basemap", config: "lightPreset", value: preset)
-                }
-                snapshotter.start(overlayHandler: nil) { result in
-                    let image = (try? result.get()).map { cropBottomStrip($0, to: size) }
-                    if let image {
-                        cache[key] = image
-                        // Persist off the main actor — the picker sheet is mid-scroll/animation.
-                        if let url = diskURL(for: key) {
-                            Task.detached(priority: .utility) { [data = image.jpegData(compressionQuality: 0.85)] in
-                                if let data { try? data.write(to: url) }
-                            }
-                        }
-                    }
-                    (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
-                    active[key] = nil
-                    tokens[key] = nil
-                }
-            }
-        }
-    }
-
-    private static func cropBottomStrip(_ image: UIImage, to size: CGSize) -> UIImage {
-        guard let cg = image.cgImage else { return image }
-        let scale = image.scale
-        let rect = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
-        guard let cropped = cg.cropping(to: rect) else { return image }
-        return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
-    }
-}
-
 // MARK: - Layers control
 
 /// Strava-style layers control — a floating glass button that opens the style picker sheet. Shared
@@ -316,6 +237,7 @@ struct MapLayersButton: View {
     /// Inside a shared glass rail (Today's vertical control stack) the button draws no glass of
     /// its own — the rail is the surface.
     var bare = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         // A map glyph, not the 3D-layers stack — this button picks the MAP's look (user call 2026-07-16).
@@ -325,8 +247,9 @@ struct MapLayersButton: View {
             .mapSafeTap("Map style") { showPicker = true }
         .sheet(isPresented: $showPicker) {
             MapStylePickerSheet(style: $style, previewCenter: previewCenter)
-                .presentationDetents([.medium, .large])
+                .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
                 .presentationDragIndicator(.visible)
+                .presentationCornerRadius(32)
         }
     }
 }
@@ -338,6 +261,11 @@ struct MapStylePickerSheet: View {
     @Binding var style: MapStyleOption
     var previewCenter: CLLocationCoordinate2D? = nil
     @Environment(PaywallController.self) private var paywall
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var usesRows: Bool { dynamicTypeSize >= .accessibility3 }
+    private var columns: Int { usesRows ? 1 : (dynamicTypeSize.isAccessibilitySize ? 2 : 3) }
 
     /// Previews frame the athlete's area when the host map knows it; a scenic downtown otherwise.
     private var center: CLLocationCoordinate2D {
@@ -345,21 +273,53 @@ struct MapStylePickerSheet: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                Text("Map style")
-                    .font(.display(22, weight: .black)).foregroundStyle(Theme.ink)
-                    .padding(.top, Theme.Space.lg)
-                group("REALISTIC", MapStyleOption.realisticSet)
-                group("CLASSIC", MapStyleOption.classicSet)
-                // The "World" globe row is gone with the social layer (2026-07-16) — the picker is
-                // purely map styles now.
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Map style")
+                        .font(.display(22, weight: .black)).foregroundStyle(Theme.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    if !dynamicTypeSize.isAccessibilitySize { scopeNote }
+                }
+                Spacer(minLength: 0)
+                Button("Done") { dismiss() }
+                    .font(.rounded(14, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 16).frame(minHeight: 44)
+                    .background(Theme.surface, in: Capsule())
+                    .buttonStyle(RaisedPressStyle())
+                    .accessibilityIdentifier("mapStyleDone")
             }
-            .padding(.horizontal, Theme.Space.lg)
-            .padding(.bottom, Theme.Space.xl)
+            .padding(.horizontal, Theme.Space.lg).padding(.top, Theme.Space.lg)
+            .padding(.bottom, Theme.Space.md)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    // At accessibility sizes, explanatory text scrolls away so the pinned header
+                    // doesn't consume the browsing area. Navigation itself stays full-size.
+                    if dynamicTypeSize.isAccessibilitySize { scopeNote }
+                    group("REALISTIC", MapStyleOption.realisticSet)
+                    group("CLASSIC", MapStyleOption.classicSet)
+                    Text("Realistic follows your app’s light or dark appearance. Other styles stay as shown.")
+                        .font(.rounded(12, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.top, 2).padding(.bottom, Theme.Space.xl)
+            }
+            .scrollIndicators(.hidden)
+            .accessibilityIdentifier("mapStyleOptions")
         }
-        .scrollIndicators(.hidden)
         .background(Theme.background)
+        .nestedPaywallHost()
+        .onAppear { normalizeSelection() }
+        .onChange(of: paywall.isPro) { normalizeSelection() }
+    }
+
+    private var scopeNote: some View {
+        Text("Applies to all your maps.")
+            .font(.rounded(13, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func group(_ title: String, _ options: [MapStyleOption]) -> some View {
@@ -371,91 +331,121 @@ struct MapStylePickerSheet: View {
             // in the accessibility tree even below the medium-detent fold, and there's no cell
             // pop-in while the sheet scrolls.
             Grid(horizontalSpacing: Theme.Space.sm, verticalSpacing: Theme.Space.md) {
-                ForEach(Array(stride(from: 0, to: options.count, by: 3)), id: \.self) { start in
-                    GridRow {
-                        ForEach(options[start..<min(start + 3, options.count)]) { option in
+                ForEach(Array(stride(from: 0, to: options.count, by: columns)), id: \.self) { start in
+                    GridRow(alignment: .top) {
+                        ForEach(options[start..<min(start + columns, options.count)]) { option in
                             let locked = option.requiresPro && !paywall.isEntitled(to: .mapStyles)
                             StylePreviewCell(option: option, center: center,
-                                             selected: option == style, locked: locked) {
+                                             selected: option == style, locked: locked, usesRow: usesRows) {
                                 if locked { paywall.present(for: .mapStyles); return }
                                 guard option != style else { return }
                                 Haptics.light()
                                 style = option
                             }
                         }
-                        // Pad the last row so partial rows keep three equal columns.
-                        ForEach(0..<(3 - min(3, options.count - start)), id: \.self) { _ in Color.clear }
+                        ForEach(0..<(columns - min(columns, options.count - start)), id: \.self) { _ in
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
                     }
                 }
             }
         }
     }
 
+    private func normalizeSelection() {
+        let available = style.availableStyle(hasPro: paywall.isEntitled(to: .mapStyles))
+        if available != style { style = available }
+    }
 }
 
-/// One style card: the static snapshot preview with the name beneath; the selected card wears an
-/// ink border + a check badge. The snapshot loads once (cached app-wide), so reopening the sheet
-/// is instant and scrolling it never drops a frame.
+/// One style card: the static snapshot preview with the name beneath; the selected card wears a
+/// lavender border + a check badge. Cached snapshots avoid a live map renderer per card.
 private struct StylePreviewCell: View {
     let option: MapStyleOption
     let center: CLLocationCoordinate2D
     let selected: Bool
     var locked: Bool = false
+    var usesRow: Bool = false
     let onPick: () -> Void
 
     @State private var image: UIImage?
+    @State private var loadedRequest: MapStylePreviewRequest?
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
 
     /// Rendered a touch larger than display for crisp corners on 3x screens.
-    private static let renderSize = CGSize(width: 132, height: 100)
+    private var request: MapStylePreviewRequest {
+        MapStylePreviewRequest(option: option, center: center, scheme: colorScheme,
+                               size: CGSize(width: 220, height: 165), scale: displayScale)
+    }
+
+    private var resolvedImage: UIImage? {
+        loadedRequest == request ? image : MapStylePreviews.cachedImage(for: request)
+    }
 
     var body: some View {
+        let layout = usesRow
+            ? AnyLayout(HStackLayout(alignment: .center, spacing: Theme.Space.md))
+            : AnyLayout(VStackLayout(spacing: Theme.Space.xs))
         Button(action: onPick) {
-            VStack(spacing: Theme.Space.xs) {
-                ZStack {
-                    if let image {
-                        Image(uiImage: image).resizable().scaledToFill()
-                            .transition(.opacity)
-                    } else {
-                        Theme.surface
+            layout {
+                Theme.surface
+                    .aspectRatio(4 / 3, contentMode: .fit)
+                    .frame(width: usesRow ? 96 : nil)
+                    .overlay {
                         Image(systemName: option.systemImage)
                             .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                     }
-                }
-                .frame(height: 82)
-                .frame(maxWidth: .infinity)
+                    .overlay {
+                        if let image = resolvedImage {
+                            Image(uiImage: image).resizable().scaledToFit()
+                                .transition(.opacity)
+                        }
+                    }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(selected ? Theme.ink : Theme.hairline, lineWidth: selected ? 2 : 1)
+                        .strokeBorder(selected ? Theme.purple : Theme.hairline, lineWidth: selected ? 2 : 1)
                 )
                 .overlay(alignment: .topTrailing) {
                     if selected {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Theme.background, Theme.ink)
-                            .padding(5)
+                            .foregroundStyle(.white, Theme.purple)
+                            .background(Circle().fill(.white).padding(2))
+                            .padding(6)
                     } else if locked {
                         Image(systemName: "lock.circle.fill")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(Theme.background, Theme.ink.opacity(0.75))
-                            .padding(5)
+                            .foregroundStyle(.white, Color.black.opacity(0.8))
+                            .padding(6)
                     }
                 }
                 Text(option.label)
-                    .font(.rounded(Theme.FontSize.label, weight: selected ? .bold : .semibold))
+                    .font(.rounded(Theme.FontSize.label, weight: .semibold))
                     .foregroundStyle(selected ? Theme.ink : Theme.inkSecondary)
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(usesRow ? .leading : .center)
+                    .frame(maxWidth: .infinity, alignment: usesRow ? .leading : .center)
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.2), value: image != nil)
-        .task(id: option.id) {
-            image = await MapStylePreviews.snapshot(option, center: center, size: Self.renderSize)
+        .buttonStyle(RaisedPressStyle())
+        .task(id: request) {
+            let requested = request
+            let result = await MapStylePreviews.snapshot(requested)
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.crossfade) {
+                image = result
+                loadedRequest = requested
+            }
         }
+        .accessibilityIdentifier("mapStyle.\(option.rawValue)")
         .accessibilityLabel(locked ? "\(option.label) — locked, unlock with Pro"
                                    : "\(option.label)\(selected ? ", selected" : "")")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint(locked ? "Opens Momentum Pro. Your current style stays selected."
+                           : "Applies immediately. Use Done to return to the map.")
     }
 }
 

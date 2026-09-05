@@ -751,7 +751,7 @@ enum PlanCoaching {
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
         // Only the consent-required direction. ease/rest are auto-applied; hold/start are advisory.
-        guard ProgressInsights(workouts: workouts, now: today, calendar: calendar).recommendation == .increase
+        guard ProgressInsights.loadRecommendation(workouts: workouts, now: today, calendar: calendar) == .increase
         else { return nil }
         let todayStart = calendar.startOfDay(for: today)
         let future = plan.sessions.filter {

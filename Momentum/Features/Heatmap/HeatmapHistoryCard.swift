@@ -60,7 +60,7 @@ struct HeatmapHistoryCard: View {
 
     private func card(_ r: HeatmapSource.Result) -> some View {
         ZStack(alignment: .bottomLeading) {
-            HeatmapMapView(cells: r.cells, style: style.uriStyle(for: colorScheme))
+            HeatmapMapView(cells: r.cells, style: style.renderedStyle(for: colorScheme))
                 .frame(height: 200)
                 .allowsHitTesting(false)               // the whole card is the tap target
             LinearGradient(colors: [.clear, .black.opacity(0.5)], startPoint: .center, endPoint: .bottom)

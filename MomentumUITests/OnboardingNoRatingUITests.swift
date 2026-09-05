@@ -1,50 +1,72 @@
 import XCTest
 
-/// Guideline 5.6.3 — "don't require or encourage customers to submit a rating." This app was once
-/// rejected for a rating beat in onboarding.
-///
-/// A rating STEP shipped again from 2026-07-26 and was **removed 2026-08-22**: it asked for a
-/// rating from someone who had never used the app, and it sat directly between the plan reveal and
-/// the checkout, spending the athlete's patience at the exact moment the flow needed it.
-///
-/// Since 2026-08-28 onboarding carries one quiet line — "Leave a review to help more runners join
-/// momentum", above the plan reveal's CTA — which raises Apple's rating sheet in place when tapped
-/// (owner call, made twice with this history spelled out). What separates it from the rejected
-/// beat is drawn here rather than left to memory:
-///
-///  • nothing may be raised unprompted — the sheet appears only after a deliberate tap,
-///  • Continue must be live and ungated the entire time, tap or no tap,
-///  • the ask may never own a screen: the reveal stays a plan reveal (the removed beat was a full
-///    step of its own, standing between the reveal and the checkout),
-///  • and no rating surface may appear on ANY later beat (notifications, location, the paywall
-///    hand-off), which is where that step used to live.
-///
-/// The engagement-gated pre-prompt (`AppReview.shouldRequestReview` + `RatingPromptView`) still
-/// belongs only to the earned moments after a saved workout or a logged meal.
+/// The personal reveal stays focused on training. Ratings belong after actual engagement.
 final class OnboardingNoRatingUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
-    /// The reveal's line is opt-in and it is the ONLY rating surface in the flow: nothing is up
-    /// when the page lands, and Continue works whether or not the line is ever tapped.
-    func testTheRevealsReviewLineIsOptInAndNeverGatesTheFlow() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-reveal", "--reveal-runs"]
-        app.launch()
+    @MainActor func testRevealShowsTrainingWithoutAskingForAReview() {
+        verifyScrollableReveal(reduceMotion: false)
+    }
 
-        let line = app.buttons["Leave a review for momentum on the App Store"]
-        XCTAssertTrue(line.waitForExistence(timeout: 20), "Expected the reveal's review line.")
-        // Raising anything unprompted is the 5.6.3 shape. On arrival, nothing is up.
-        XCTAssertFalse(app.buttons["Rate momentum"].exists,
-                       "Onboarding must never raise the rating CARD — only the quiet line.")
-        XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists,
-                       "The engagement pre-prompt belongs to the earned moments, not onboarding.")
-        // The reveal is still a plan reveal: the ask shares the page, it does not own one.
-        XCTAssertTrue(app.staticTexts["WEEKS"].exists, "The reveal must still be showing the plan.")
-        // Nothing about the ask may gate the flow.
-        let cta = app.buttons["This looks great"]
-        XCTAssertTrue(cta.exists, "The reveal's CTA must stand on its own.")
-        XCTAssertTrue(cta.isHittable, "Continue must never wait on the review line.")
+    @MainActor func testCompletePlanIsScrollableWithReducedMotion() {
+        verifyScrollableReveal(reduceMotion: true)
+    }
+
+    @MainActor private func verifyScrollableReveal(reduceMotion: Bool) {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal"]
+        if reduceMotion { app.launchArguments.append("--ui-test-reduce-motion") }
+        app.launch()
+        let cta = app.buttons["onboarding.reveal.continue"]
+        XCTAssertTrue(cta.waitForExistence(timeout: 20))
+        XCTAssertTrue(cta.isHittable)
+        XCTAssertTrue(app.staticTexts["YOUR TRAINING BRIEFING"].exists)
+        XCTAssertFalse(app.buttons["onboarding.reveal.explore"].exists)
+        XCTAssertFalse(app.buttons["Leave a review for momentum on the App Store"].exists)
+        XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists)
+        let scroll = app.scrollViews["onboarding.reveal.scroll"]
+        XCTAssertTrue(scroll.exists)
+        func reach(_ element: XCUIElement) {
+            for _ in 0..<18 {
+                if element.isHittable { break }
+                scroll.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(element.isHittable, "Plan detail must be reachable without opening another page")
+            XCTAssertTrue(cta.isHittable, "Continue must remain available while reading the plan")
+        }
+        reach(app.staticTexts["YOUR PATH"])
+        let path = XCTAttachment(screenshot: app.screenshot())
+        path.name = reduceMotion ? "plan-chart-first-reduced-motion" : "plan-chart-first"
+        path.lifetime = .keepAlways
+        add(path)
+        reach(app.staticTexts["YOUR TRAINING BRIEFING"])
+        reach(app.staticTexts["YOUR FIRST WEEK"])
+        // Seeded hybrid plan has four first-week sessions. Each already contains its prescription.
+        for index in 0..<4 {
+            let card = app.otherElements["onboarding.reveal.session.\(index)"]
+            reach(card)
+            XCTAssertGreaterThan(card.staticTexts.count, 4, "Session details should already be expanded")
+            XCTAssertEqual(card.buttons.count, 0, "The first week must not require disclosure taps")
+        }
+        let week = XCTAttachment(screenshot: app.screenshot())
+        week.name = reduceMotion ? "first-week-reduced-motion" : "first-week-expanded"
+        week.lifetime = .keepAlways
+        add(week)
+        reach(app.staticTexts["THE WEEKS AHEAD"])
+        reach(app.descendants(matching: .any)["onboarding.reveal.week.6"].firstMatch)
+        let end = XCTAttachment(screenshot: app.screenshot())
+        end.name = reduceMotion ? "complete-plan-reduced-motion" : "complete-plan"
+        end.lifetime = .keepAlways
+        add(end)
+        // Scroll back through sections: entrances must not reset or leave transparent content.
+        for _ in 0..<18 {
+            if app.staticTexts["YOUR TRAINING BRIEFING"].isHittable { break }
+            scroll.swipeDown(velocity: .fast)
+        }
+        XCTAssertTrue(app.staticTexts["YOUR TRAINING BRIEFING"].isHittable)
+        XCTAssertTrue(cta.isHittable)
+        XCTAssertFalse(app.buttons["Done"].exists)
     }
 
     func testNoRatingAskAnywhereAfterTheReveal() {
@@ -52,7 +74,7 @@ final class OnboardingNoRatingUITests: XCTestCase {
         // Land on the notifications step. Since 2026-09-01 the two permission beats sit BEFORE
         // plan generation (notifications → location → building → reveal → account), so from here
         // to the app is every beat a rating ask could ever have lived on.
-        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-notifications"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-notifications"]
         addUIInterruptionMonitor(withDescription: "System alert") { alert in
             for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
                 let b = alert.buttons[label]
@@ -78,9 +100,8 @@ final class OnboardingNoRatingUITests: XCTestCase {
                        "The location step must not claim to end onboarding — beats follow it.")
         locationContinue.tap()
 
-        // Continue hands to the build and then the plan reveal. The reveal carries the ONE opt-in
-        // line (pinned above); the rating CARD — the removed beat — must not stand anywhere here.
-        let revealCTA = app.buttons["This looks great"]
+        // Continue hands to the build and then the plan reveal. No rating surface interrupts it.
+        let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Expected the plan reveal after the build.")
         assertNoRatingSurface(app, on: "the plan reveal")
         revealCTA.tap()

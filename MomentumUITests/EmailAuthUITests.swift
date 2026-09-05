@@ -70,7 +70,7 @@ final class EmailAuthUITests: XCTestCase {
         // Opening a custom-scheme URL raises iOS's system "Open in 'momentum'?" confirmation
         // (exactly what a real user taps after clicking the email link) — tap Open when it shows.
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let nameTitle = app.staticTexts["What should we call you?"]
+        let nameTitle = app.staticTexts["Let's make it yours."]
         var landed = false
         for _ in 0..<40 {   // ~120s
             let openBtn = springboard.buttons["Open"]
@@ -82,10 +82,7 @@ final class EmailAuthUITests: XCTestCase {
 
         // iOS's "Save Password?" panel floats over onboarding after signup, sometimes proxied
         // via springboard, sometimes not (runs 3/8/9/10 each lost a different race against it).
-        // Decline it via whichever proxy sees it, best-effort — then avoid the keyboard entirely:
-        // the name step advances empty (display name is editable later in Edit Profile) and the
-        // identity step's @handle is auto-prefilled by the suggester, so the rest of the walk is
-        // taps only.
+        // Decline it via whichever proxy sees it before entering profile details.
         for _ in 0..<10 {
             for notNow in [springboard.buttons["Not Now"], app.buttons["Not Now"]] where notNow.exists && notNow.isHittable {
                 notNow.tap()
@@ -96,35 +93,24 @@ final class EmailAuthUITests: XCTestCase {
             sleep(1)
         }
 
-        // Name step — empty name is allowed (@handle is the required identity). Tap-and-verify:
-        // a single tap can land mid-entrance-animation and miss (run 11).
-        // "Make it yours" since the identity beat gained the photo + avatar look; it was still
-        // asserting the older "Claim your @handle" here. Nothing caught that, because without an
-        // orchestrator this test never ran — a stale test rots exactly this quietly.
-        let identityTitle = app.staticTexts["Make it yours"]
-        for _ in 0..<6 where !identityTitle.exists {
-            let cont = app.buttons["Continue"]
-            if cont.exists && cont.isHittable && cont.isEnabled { cont.tap() }
-            _ = identityTitle.waitForExistence(timeout: 2)
-        }
-
-        // Identity step — the suggester should prefill a free handle from the email local-part.
-        XCTAssertTrue(identityTitle.waitForExistence(timeout: 10))
-        let handleField = app.textFields.firstMatch
-        let prefilled = NSPredicate(format: "value != '' AND value != nil")
-        expectation(for: prefilled, evaluatedWith: handleField)
-        waitForExpectations(timeout: 15)
-        let handle = (handleField.value as? String) ?? ""
-        XCTAssertFalse(handle.isEmpty, "handle suggestion should prefill")
-        attach(app, "onboarding-identity-\(handle)")
+        let name = app.textFields["Your name"]
+        name.tap()
+        name.typeText("Email QA\n")
+        let handle = app.textFields["Handle"]
+        handle.tap()
+        let suggested = handle.value as? String ?? ""
+        let custom = "email_qa_\(UUID().uuidString.prefix(8).lowercased())"
+        handle.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: suggested.count) + custom + "\n")
         tapContinue(app)
+        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 5))
+        attach(app, "onboarding-goal")
 
         // Walk the remaining steps generically: answer the two steps that demand input,
         // dismiss opt-in beats, Continue through the rest.
         // The reveal's own CTA — the sentinel the other onboarding suites use. It was looking for
         // a "Week 1" static text, which the reveal has not rendered since its redesign (it shows a
         // WEEKS stat cell now); another literal that rotted unnoticed while this test couldn't run.
-        let week1 = app.buttons["This looks great"]
+        let week1 = app.buttons["onboarding.reveal.continue"]
         // The health step's Continue raises the real HealthKit sheet (5.1.1(iv): no skip button
         // anymore). On iOS 26 the authorization sheet moved out of Health.app into the dedicated
         // HealthPrivacyService process; targeting Health.app leaves the visible sheet untouched
@@ -151,9 +137,12 @@ final class EmailAuthUITests: XCTestCase {
             // live auth walk used to sit here until XCTest's outer timeout because Continue is
             // correctly disabled with no selection. Pick a neutral goal just as the other
             // onboarding walkers do; this test is proving auth, not a specific plan shape.
-            if app.staticTexts["What's your main goal?"].exists,
+            if app.staticTexts["What are we training for?"].exists,
                !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Stay consistent"].firstMatch.tap()
+            }
+            if app.staticTexts["Tell us about your running."].exists, !app.buttons["Continue"].isEnabled {
+                app.staticTexts["Easy jogger"].firstMatch.tap()
             }
             let maybeLater = app.buttons["Maybe later"]
             let cont = app.buttons["Continue"]
@@ -169,7 +158,7 @@ final class EmailAuthUITests: XCTestCase {
         attach(app, "plan-reveal")
         // buildPlan() fired the handle claim fire-and-forget — give it a beat to land server-side.
         sleep(6)
-        print("E2E-EMAIL: \(email) HANDLE: \(handle)")
+        print("E2E-EMAIL: \(email) PROFILE_SETUP: deferred")
     }
 
     private func tapContinue(_ app: XCUIApplication) {

@@ -154,7 +154,6 @@ struct WorkoutRunner: ViewModifier {
                             .transition(.opacity)
                     }
                 }
-                .animation(.easeOut(duration: 0.28), value: summary != nil)
                 .transition(.opacity)
                 // Per-launch identity, matching the old `item:` cover semantics — a workout begun
                 // during the previous one's exit fade must build a FRESH recorder, never resume
@@ -297,9 +296,13 @@ struct WorkoutRunner: ViewModifier {
         // dismiss animation followed by a full present. The recorder stays mounted beneath for
         // the fade (see `liveUnderlay`), then unmounts unseen behind the opaque page.
         liveUnderlay = true
-        summary = PresentedWorkout(id: id, type: type)
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.5))
+        let finishingLaunchID = launch?.id
+        withAnimation(Motion.content, completionCriteria: .removed) {
+            summary = PresentedWorkout(id: id, type: type)
+        } completion: {
+            // The real fade owns the map's lifetime, not a half-second timer. Ignore completions
+            // from an old journey if another workout has started while that fade was running.
+            guard summary?.id == id, launch?.id == finishingLaunchID else { return }
             liveUnderlay = false
         }
         // The adaptive pass is only CAPTURED here — while we're still inside a view update, because

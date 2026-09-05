@@ -31,9 +31,13 @@ enum FuelReadiness {
         /// Drink volume (2026-08-15 — hydration joins the readout; it was captured on every meal
         /// and displayed nowhere). nil-preserving like every field: nil = not estimated.
         var fluidsMl: Int? = nil
+        var preciseNutrition: NutritionValues? = nil
         /// false while an estimate is pending — pending meals are excluded from totals but counted,
         /// so the readout can say "2 meals still estimating" instead of quietly under-reporting.
-        var hasNumbers: Bool { carbsG != nil || kcal != nil }
+        var hasNumbers: Bool {
+            kcal != nil || carbsG != nil || proteinG != nil || fatG != nil || sodiumMg != nil
+                || potassiumMg != nil || magnesiumMg != nil || ironMg != nil || calciumMg != nil || fluidsMl != nil
+        }
     }
 
     struct SessionInput: Sendable {
@@ -200,21 +204,26 @@ enum FuelReadiness {
                         workoutsToday: [WorkoutInput],
                         bodyMassKg: Double?,
                         goal: GoalInput = GoalInput(),
+                        waterMl: Double = 0,
                         now: Date,
                         calendar: Calendar = .current) -> DayReadout {
         let kg = bodyMassKg ?? fallbackMassKg
         let today = meals.filter { calendar.isDate($0.eatenAt, inSameDayAs: now) }
         let numbered = today.filter(\.hasNumbers)
-        let kcal = numbered.compactMap(\.kcal).reduce(0, +)
-        let carbs = numbered.compactMap(\.carbsG).reduce(0, +)
-        let protein = numbered.compactMap(\.proteinG).reduce(0, +)
-        let fat = numbered.compactMap(\.fatG).reduce(0, +)
-        let sodium = numbered.compactMap(\.sodiumMg).reduce(0, +)
+        func sum(_ field: Nutrient, fallback: (MealInput) -> Double?) -> Double {
+            numbered.compactMap { $0.preciseNutrition?[field] ?? fallback($0) }
+                .filter { $0.isFinite && $0 >= 0 }.reduce(0, +)
+        }
+        let kcal = Int(sum(.kcal, fallback: { $0.kcal.map(Double.init) }).rounded())
+        let carbs = Int(sum(.carbs, fallback: { $0.carbsG.map(Double.init) }).rounded())
+        let protein = Int(sum(.protein, fallback: { $0.proteinG.map(Double.init) }).rounded())
+        let fat = Int(sum(.fat, fallback: { $0.fatG.map(Double.init) }).rounded())
+        let sodium = Int(sum(.sodium, fallback: { $0.sodiumMg.map(Double.init) }).rounded())
         let micros = Micros(
-            potassiumMg: numbered.compactMap(\.potassiumMg).reduce(0, +),
-            magnesiumMg: numbered.compactMap(\.magnesiumMg).reduce(0, +),
-            ironMg: numbered.compactMap(\.ironMg).reduce(0, +),
-            calciumMg: numbered.compactMap(\.calciumMg).reduce(0, +),
+            potassiumMg: Int(sum(.potassium, fallback: { $0.potassiumMg.map(Double.init) }).rounded()),
+            magnesiumMg: Int(sum(.magnesium, fallback: { $0.magnesiumMg.map(Double.init) }).rounded()),
+            ironMg: sum(.iron, fallback: { $0.ironMg }),
+            calciumMg: Int(sum(.calcium, fallback: { $0.calciumMg.map(Double.init) }).rounded()),
             potassiumFloorMg: goal.isMale == true ? potassiumFloorMg.male : (goal.isMale == false ? potassiumFloorMg.female : potassiumFloorMg.neutral),
             magnesiumFloorMg: goal.isMale == true ? magnesiumFloorMg.male : (goal.isMale == false ? magnesiumFloorMg.female : magnesiumFloorMg.neutral),
             ironFloorMg: goal.isMale == true ? ironFloorMg.male : (goal.isMale == false ? ironFloorMg.female : ironFloorMg.neutral),
@@ -223,7 +232,7 @@ enum FuelReadiness {
         // The driving session: the longest run today or tomorrow (glycogen is filled the day before).
         let horizon = sessions.filter {
             calendar.isDate($0.date, inSameDayAs: now)
-                || calendar.isDate($0.date, inSameDayAs: now.addingTimeInterval(86_400))
+                || calendar.isDate($0.date, inSameDayAs: calendar.date(byAdding: .day, value: 1, to: now) ?? now)
         }
         let driver = horizon.max { $0.durationS < $1.durationS }
 
@@ -315,7 +324,7 @@ enum FuelReadiness {
         // Hydration: everyday baseline + sweat replacement for the day's real training (done +
         // planned, the same hours the sodium add-on reads — but from hour ZERO: a 45-minute run
         // still sweats). No goal override; drinking is never part of a deficit.
-        let fluids = numbered.compactMap(\.fluidsMl).reduce(0, +)
+        let fluids = Int((sum(.fluids, fallback: { $0.fluidsMl.map(Double.init) }) + (waterMl.isFinite ? max(0, waterMl) : 0)).rounded())
         let fluidsFloor = fluidsBaselineMl + Int((Double(fluidsPerTrainingHourMl) * longHours).rounded())
 
         // The leading macro follows the goal: carbs fund the plan's sessions; every muscle-oriented
@@ -343,7 +352,7 @@ enum FuelReadiness {
             w.durationS >= FuelingGuide.carbsFromS
                 && now.timeIntervalSince(w.endedAt) >= 0
                 && now.timeIntervalSince(w.endedAt) <= refuelWindowS
-                && !today.contains { $0.eatenAt > w.endedAt }
+                && !today.contains { $0.eatenAt > w.endedAt && !($0.kcal == 0 && ($0.carbsG ?? 0) == 0 && ($0.proteinG ?? 0) == 0 && ($0.fatG ?? 0) == 0) }
         }
 
         return DayReadout(

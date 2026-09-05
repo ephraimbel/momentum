@@ -128,6 +128,7 @@ enum DemoSeed {
             try? context.delete(model: EarnedAward.self);        try? context.delete(model: ChatMessage.self)
             try? context.delete(model: CoachingEvent.self);      try? context.delete(model: AppNotification.self)
             try? context.delete(model: DailyCheckin.self);       try? context.delete(model: Meal.self)
+            try? context.delete(model: WaterEntry.self)
             try? context.delete(model: UserProfile.self)
             // NOT `Exercise`. The library is shared reference data, seeded by
             // `ExerciseLibrarySeed.seedIfNeeded` in `PersistenceController.init` — which already ran
@@ -152,6 +153,7 @@ enum DemoSeed {
         // --reset-fuel: hermetic FuelFlow UI tests — start with an empty meal journal.
         if ProcessInfo.processInfo.arguments.contains("--reset-fuel") {
             for meal in (try? context.fetch(FetchDescriptor<Meal>())) ?? [] { context.delete(meal) }
+            try? context.delete(model: WaterEntry.self)
             try? context.save()
         }
         // --seed-fuel-history: months of plausible journal days (deterministic) so the History

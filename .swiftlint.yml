@@ -17,6 +17,7 @@
 #     not a collection, and it matched on the name alone.
 
 only_rules:
+  - custom_rules
   # — correctness / crash risk —
   - force_cast
   - force_try
@@ -77,3 +78,16 @@ excluded:
   # unwrapping it is what makes the diagnostic readable.
   - MomentumTests
   - MomentumUITests
+
+# Interface artwork must survive a missing Apple Color Emoji font (paywall/race-picker regression).
+# SourceKit limits this rule to string tokens: comments and ordinary punctuation are unaffected.
+custom_rules:
+  bundled_ui_emoji:
+    included: '(^|/)(Momentum/(Features|DesignSystem|App)|MomentumWatch|MomentumWidgets|MomentumWatchWidgets)/.*\.swift$'
+    # These two dormant generators model conversational content, not interface artwork.
+    excluded: 'Momentum/Features/Social/(Comment|CommunityGenerator)\.swift$'
+    name: "Bundle interface emoji"
+    regex: '[\p{Emoji_Presentation}\x{2600}-\x{27BF}\x{FE0F}\x{20E3}]|\\#*u\{(?:1[fF][0-9a-fA-F]{3}|2[67][0-9a-fA-F]{2}|[fF][eE]0[fF]|20[eE]3)\}'
+    match_kinds: string
+    message: "Use a bundled image or SF Symbol for interface artwork; emoji text can render as a missing-glyph box."
+    severity: error

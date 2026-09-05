@@ -11,6 +11,7 @@ struct PlanView: View {
     @Environment(PaywallController.self) private var paywall
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // workoutLaunch — the shell-level recorder
+    @ReducedMotionPreference private var reduceMotion
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     // The season sidecars, live: a few rows each, so the next tune-up is a filter, not a fetch
@@ -31,6 +32,7 @@ struct PlanView: View {
     @State private var weekStart = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
     @State private var showingAdd = false
     @State private var showLibrary = false
+    @State private var libraryAfterAdd = false
     @State private var addDay = Date()
     @State private var editing: EditingSession?
     @State private var adjusted = false
@@ -73,12 +75,12 @@ struct PlanView: View {
     @State private var liftLinesCache: [PersistentIdentifier: String] = [:]
     // Plan-scoped memos (rebuilt only when the plan/workouts actually change, NOT on week paging —
     // paging previously re-ran PaceInsights + hybrid sequencing + full min/max scans per tap):
-    @State private var planScopeToken = 0
+    @State private var derivedPlanID: PersistentIdentifier?
+    @State private var isVisible = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var weekIndexCache: [Date: Int] = [:]
     @State private var weekBarBaseLabels: [String] = []
-    /// The tune-this-week proposal, computed off the render path. As a body-time call it built
-    /// `ProgressInsights` (≈18 full passes over the workout table) on EVERY render of the current
-    /// week — the single heaviest thing on this page.
+    /// The tune proposal uses the load-only engine path; chart series are never built here.
     @State private var tuneProposal: PlanCoaching.Proposal?
 
     private struct CoachsReadModel: Equatable {
@@ -151,11 +153,11 @@ struct PlanView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     header
                     weekStrip
-                    if showRenewalPrompt { renewalCard.reveal(0.04) }
+                    if showRenewalPrompt { renewalCard.reveal(0.02, once: "plan.renewal") }
                     // Self-coached: no tune proposals — the coach never suggests inside their plan.
                     if isCurrentWeek, plan?.isSelfCoached != true { tuneSection }
                     weekBoard
-                        .reveal(0.06)
+                        .reveal(0.02, once: "plan.board")
                         .proLocked(.fullPlan, active: isFutureWeek)
                     coachsRead
                     // App Review 1.4.1: the citations door where the training prescriptions live —
@@ -170,24 +172,43 @@ struct PlanView: View {
         }
     }
 
-    var body: some View {
+    private var observedPlanContent: some View {
         planContent
-        .onAppear { rebuildDerived() }
-        // One trigger for the whole board: `currentWeekToken` hashes plan identity + session count +
-        // week, so a saved/new plan (new id, often same count), an added/removed session, or a week
-        // change each rebuild the memoized maps. (Date-moves that keep all three are covered by the
-        // editing-sheet `onDismiss` below.)
-        .onChange(of: currentWeekToken) { rebuildDerived() }
+        .onAppear { isVisible = true; rebuildDerived() }
+        .onDisappear { isVisible = false }
+        // Page changes only refresh week data; structural/data changes refresh the whole readout.
+        .onChange(of: weekStart) { rebuildDerived(refreshPlan: false) }
+        .onChange(of: plan?.persistentModelID) { rebuildDerived() }
+        .onChange(of: plan?.sessions.count) { rebuildDerived() }
+        // Counts are not revisions: a date, pace, completed run or unit can change without adding
+        // a row. Refresh after saves, never during scrolling/press feedback or unrelated renders.
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
+            // The global recorder can cover a still-mounted Plan tab. Never rebuild analytics
+            // for every persisted GPS sample underneath it; refresh once when it closes.
+            if isVisible, router.workoutLaunch == nil { rebuildDerived() }
+        }
+        .onChange(of: router.workoutLaunch == nil) { _, recorderClosed in
+            if recorderClosed, isVisible { rebuildDerived() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, isVisible { rebuildDerived() }
+        }
+    }
+
+    var body: some View {
+        observedPlanContent
         .background(Theme.background)
         .navigationBarHidden(true)
-        .sheet(isPresented: $showingAdd) {
+        .sheet(isPresented: $showingAdd, onDismiss: {
+            let openLibrary = libraryAfterAdd
+            libraryAfterAdd = false
+            if openLibrary { showLibrary = true }
+        }) {
             if let plan {
                 AddSessionSheet(plan: plan, defaultDate: addDay, onDone: { showingAdd = false },
                                 onOpenLibrary: {
-                    // Sheet swap with the house 0.35 s beat — let this one finish dismissing
-                    // before the library presents (the CheckinSheet → injury-sheet pattern).
+                    libraryAfterAdd = true
                     showingAdd = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLibrary = true }
                 })
             }
         }
@@ -212,7 +233,7 @@ struct PlanView: View {
         } message: {
             Text("Upcoming prescribed sessions are removed — everything you've completed stays. You write your own weeks from here (add sessions, use the library), and the coach stops prescribing or adjusting. You can ask for a new plan anytime.")
         }
-        .sheet(isPresented: $showSettings, onDismiss: rebuildDerived) {
+        .sheet(isPresented: $showSettings, onDismiss: { rebuildDerived() }) {
             // No plan yet → the sheet must open in CREATE mode, or Save quietly rebuilds nothing
             // and dismisses with a success buzz (the coach's "set up your plan" card hit this).
             if let p = profiles.first {
@@ -221,7 +242,7 @@ struct PlanView: View {
         }
         // "Start a new plan" — the same complete form, framed as a beginning: blank name, always
         // rebuilds, honest about replacing the current block (completed work + calibration carry).
-        .sheet(isPresented: $showNewPlan, onDismiss: rebuildDerived) {
+        .sheet(isPresented: $showNewPlan, onDismiss: { rebuildDerived() }) {
             if let p = profiles.first { PlanSettingsSheet(profile: p, mode: .create) { showNewPlan = false } }
         }
         // A coach nav card asked for plan settings — open the sheet the shell steered us toward
@@ -229,12 +250,12 @@ struct PlanView: View {
         .onChange(of: coach.wantsPlanSettings) { _, wants in
             guard wants else { return }
             coach.wantsPlanSettings = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { showSettings = true }
+            showSettings = true
         }
         .onAppear {
             if coach.wantsPlanSettings {
                 coach.wantsPlanSettings = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { showSettings = true }
+                showSettings = true
             }
             #if DEBUG
             // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
@@ -673,7 +694,7 @@ struct PlanView: View {
         }
         .onChange(of: weekStart) {
             if let idx = planWeekIndex(of: weekStart) {
-                withAnimation(Motion.standard) { arcPage = idx / pageSize }
+                withAnimation(reduceMotion ? nil : Motion.selection) { arcPage = idx / pageSize }
             }
         }
     }
@@ -688,8 +709,11 @@ struct PlanView: View {
         // tappable pager rather than a row of stubs.
         let h: CGFloat = maxVolume > 0 ? 10 + 24 * CGFloat(volume / maxVolume) : 22
         return Button {
+            guard !selected else { return }
             Haptics.selection()
-            withAnimation(Motion.standard) { weekStart = start }
+            // The board updates immediately, without animating row heights or the scroll offset.
+            // Selection feedback belongs to this bar, not to the model/cache rebuild.
+            weekStart = start
         } label: {
             VStack(spacing: 4) {
                 // Width-capped inside a full-width tap column: short blocks would otherwise
@@ -721,10 +745,13 @@ struct PlanView: View {
             .frame(maxWidth: .infinity)
             .frame(height: 58, alignment: .bottom)
             .contentShape(Rectangle())
+            .animation(reduceMotion ? nil : Motion.selection, value: selected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(weekBarLabel(index: index, volume: volume,
                                          isCurrent: isCurrent, selected: selected))
+        .accessibilityIdentifier("planWeek.\(index)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// VoiceOver carries everything the bar's height encodes — volume, a recovery/taper week's
@@ -753,6 +780,7 @@ struct PlanView: View {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
                 Text(weekTitle).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
                     .contentTransition(.opacity)
+                    .animation(Motion.crossfade, value: weekStart)
                 if let phase = weekPhase {
                     Text(phase.label.uppercased())
                         .font(.rounded(9, weight: .black)).tracking(1)
@@ -838,12 +866,9 @@ struct PlanView: View {
         return "\(Formatters.distanceNumeral(value)) of \(planned)"
     }
 
-    /// Recompute the memoized derived data. Split in two scopes (2026-07-30 perf audit): the
-    /// WEEK-scoped part runs on every trigger (cheap — one pass over the sessions), while the
-    /// PLAN-scoped part (PaceInsights faulting workouts, ProgressInsights' ~18 workout-table
-    /// passes for the tune proposal, full min/max scans, the arc volumes) is guarded by its own
-    /// token — so paging weeks with the arc no longer re-runs any of it.
-    private func rebuildDerived() {
+    /// Rebuild on actual data changes. Week paging only updates week-scoped values. The expensive
+    /// chart construction is gone, so the arc and coaching no longer need a delayed second paint.
+    private func rebuildDerived(refreshPlan: Bool = true) {
         let cal = Calendar.current
         currentWeekStartCacheRefresh()
         daysCache = Self.computeDays(from: weekStart)
@@ -852,7 +877,7 @@ struct PlanView: View {
             weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; weekMapToken = 0
             weekVolumesCache = []; weekDoneMetersCache = 0; weekPhaseCache = nil
             weekIndexCache = [:]; weekBarBaseLabels = []; liftLinesCache = [:]
-            tuneProposal = nil; planScopeToken = 0
+            tuneProposal = nil; derivedPlanID = nil
             coachsReadModel = CoachsReadModel(); return
         }
         // — Week scope —
@@ -874,36 +899,16 @@ struct PlanView: View {
         // Week-dependent halves of the coach's read + phase (planFirstWeek is plan-scoped but the
         // phase lookup keys off weekStart, so it refreshes here AFTER the plan scope runs below).
 
-        // — Plan scope (identity + session count + workouts + unit) —
-        var h = Hasher()
-        h.combine(plan.persistentModelID); h.combine(plan.sessions.count)
-        h.combine(workouts.count); h.combine(profiles.first?.distanceUnit ?? "")
-        let planTok = h.finalize()
-        if planTok != planScopeToken {
-            planScopeToken = planTok
-            // Deferred one beat (perf audit 2026-08-13): this is the expensive half — the tune
-            // proposal's ~18 workout-table passes, PaceInsights faulting session→workout→gps, the
-            // arc volumes — and running it inline meant the Plan tab's FIRST frame paid all of it
-            // before anything appeared. The board above renders immediately; the tune card, the
-            // coach's read and the arc fill in a beat later. A newer rebuild supersedes via the
-            // token guard; the week-scoped `weekPhase`/hybrid refresh below re-runs after it lands
-            // because both read plan-scoped caches.
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(350))
-                guard planScopeToken == planTok, let livePlan = self.plan else { return }
-                rebuildPlanScoped(plan: livePlan, calendar: cal)
-                weekPhaseCache = computeWeekPhase()
-                coachsReadModel.hybridInsight = hybridWeekInsight
-            }
-            return
+        if refreshPlan || derivedPlanID != plan.persistentModelID {
+            derivedPlanID = plan.persistentModelID
+            rebuildPlanScoped(plan: plan, calendar: cal)
         }
         weekPhaseCache = computeWeekPhase()
         coachsReadModel.hybridInsight = hybridWeekInsight
     }
 
     private func rebuildPlanScoped(plan: TrainingPlan, calendar cal: Calendar) {
-        // The tune proposal — ProgressInsights walks the whole workout table ~18 times; this must
-        // never run on the render path (it used to, on every current-week render).
+        // Load-only evaluation; no chart construction or historical GPS decoding.
         tuneProposal = PlanCoaching.proposeAdjustment(plan, workouts: workouts)
         var model = CoachsReadModel()
         if let raceM = profiles.first?.raceDistanceM, raceM > 0, plan.p5kSPerKm > 0 {
@@ -1331,16 +1336,18 @@ struct PlanView: View {
 
     private func checkButton(_ session: PlannedSession, done: Bool) -> some View {
         Button {
-            Haptics.success()
-            withAnimation(Motion.standard) { PlanCoaching.setCompletion(session, done: !done, in: context) }
+            if done { Haptics.selection() } else { Haptics.success() }
+            PlanCoaching.setCompletion(session, done: !done, in: context)
         } label: {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(done ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(Theme.inkTertiary.opacity(0.7)))
+                .contentTransition(.opacity)
+                .animation(Motion.crossfade, value: done)
                 .frame(width: 34, height: 44, alignment: .center)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RaisedPressStyle())
         .accessibilityLabel(done ? "Completed. Tap to undo." : "Mark done")
     }
 
@@ -1460,9 +1467,7 @@ struct PlanView: View {
     }
 
     private func shiftWeek(_ delta: Int) {
-        withAnimation(Motion.standard) {
-            if let d = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekStart) { weekStart = d }
-        }
+        if let d = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekStart) { weekStart = d }
     }
 
     private var card: some View {

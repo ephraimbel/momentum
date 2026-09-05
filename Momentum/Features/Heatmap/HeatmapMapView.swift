@@ -20,29 +20,43 @@ struct HeatmapMapView: UIViewRepresentable {
         map.gestures.options.rotateEnabled = false
         map.gestures.options.pitchEnabled = false
         map.ornaments.options = MapChrome.minimal
-        map.mapboxMap.styleURI = style.styleURI
         // Observe EVERY style load, not just the first: switching the base style tears down all
         // runtime-added sources/layers, so the heat must re-apply each time or it silently vanishes
         // (the "heat areas went away" bug).
         let coordinator = context.coordinator
+        coordinator.style = style
+        coordinator.cells = cells
         coordinator.styleToken = map.mapboxMap.onStyleLoaded.observe { [weak map] _ in
             guard let map else { return }
+            coordinator.applyLighting(to: map)
             coordinator.apply(cells: coordinator.cells, to: map)
         }
-        context.coordinator.cells = cells
+        map.mapboxMap.styleURI = style.styleURI
         return map
     }
 
     func updateUIView(_ map: MapView, context: Context) {
+        let changed = context.coordinator.style != style
+        context.coordinator.style = style
         if map.mapboxMap.styleURI != style.styleURI { map.mapboxMap.styleURI = style.styleURI }
+        else if changed { context.coordinator.applyLighting(to: map) }
         if context.coordinator.cells != cells { context.coordinator.apply(cells: cells, to: map) }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator {
+    @MainActor final class Coordinator {
         var cells: [HeatCell] = []
         var styleToken: AnyCancelable?
+        var style: MapStyleOption = .realistic
+
+        /// Dusk/Night share Standard's URI. Switching only the URI left both in daylight and
+        /// made a second mood tap a no-op. Change the import config without rebuilding the heat.
+        func applyLighting(to map: MapView) {
+            guard map.mapboxMap.isStyleLoaded, style.styleURI == .standard else { return }
+            try? map.mapboxMap.setStyleImportConfigProperty(for: "basemap", config: "lightPreset",
+                                                          value: style.standardLightPreset ?? "day")
+        }
         /// The cells the camera was last fitted to — a style switch re-applies the heat layers but
         /// must NOT snap the athlete's pan/zoom back to the fitted frame.
         private var fittedCells: [HeatCell] = []

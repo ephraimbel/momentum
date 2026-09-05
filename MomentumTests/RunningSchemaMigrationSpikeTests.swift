@@ -42,7 +42,7 @@ struct RunningSchemaMigrationSpikeTests {
             CoachingEvent.self,
             AppNotification.self,
             DailyCheckin.self,
-            Meal.self,
+            Meal.self, WaterEntry.self,
             RunningSeasonRecord.self,
             RunningEventRecord.self,
             PlanMetadataRecord.self,
@@ -77,7 +77,7 @@ struct RunningSchemaMigrationSpikeTests {
 
         let storeURL = directory.appendingPathComponent("V1.store")
         try FileManager.default.copyItem(at: fixtureURL, to: storeURL)
-        let schema = Schema(versionedSchema: SchemaV3.self)
+        let schema = Schema(versionedSchema: SchemaV4.self)
         let configuration = ModelConfiguration(
             "ArchivedRunningSchemaV1",
             schema: schema,
@@ -162,7 +162,7 @@ struct RunningSchemaMigrationSpikeTests {
         let storeURL = directory.appendingPathComponent("V1.store")
         let ids = try writeV1Fixture(to: storeURL)
 
-        let schema = Schema(versionedSchema: SchemaV3.self)
+        let schema = Schema(versionedSchema: SchemaV4.self)
         let configuration = ModelConfiguration(
             "RunningMigrationSpike",
             schema: schema,

@@ -46,7 +46,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
     /// scrub point, re-windowing a cache). Never for the selection itself.
     var onChange: ((Value) -> Void)? = nil
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @Namespace private var pill
 
     var body: some View {
@@ -57,6 +57,9 @@ struct SegmentedCapsule<Value: Hashable>: View {
         }
         .padding(scale.trackPadding)
         .raised(Capsule())
+        // Only the control animates. The bound page/range can rebuild without inheriting a
+        // transaction that animates every chart, row height and loading state with it.
+        .animation(reduceMotion ? nil : Motion.selection, value: selection)
     }
 
     private func segment(_ item: Value) -> some View {
@@ -64,7 +67,7 @@ struct SegmentedCapsule<Value: Hashable>: View {
         return Button {
             guard !on else { return }
             Haptics.selection()
-            withAnimation(reduceMotion ? nil : Motion.reversible) { selection = item }
+            selection = item
             onChange?(item)
         } label: {
             Text(title(item))
@@ -111,6 +114,10 @@ enum RevealOnce {
 
     /// True the first time an id is asked about, false forever after (this session).
     static func claim(_ id: String) -> Bool { seen.insert(id).inserted }
+
+    /// Read at initialization so a returning section is visible on its FIRST frame, not only
+    /// after onAppear. Reading does not consume an entrance for a view SwiftUI never mounts.
+    static func contains(_ id: String) -> Bool { seen.contains(id) }
 
     /// Data resets clear the ledger so a fresh start gets its welcome back.
     static func reset() { seen.removeAll() }

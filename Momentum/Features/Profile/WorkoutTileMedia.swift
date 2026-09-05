@@ -54,6 +54,7 @@ struct WorkoutTileMedia: View {
     /// walks strength sets, and — for a snapshot-less GPS run — Kalman-smooths every GPS sample.
     /// Doing that on every scroll-invalidated `body` was the tile grid's main source of jank.
     @State private var resolved: Media?
+    @State private var resolvedWorkoutID: UUID?
 
     private var mediaRevision: Int {
         var h = Hasher()
@@ -105,16 +106,25 @@ struct WorkoutTileMedia: View {
         // first — the toggle saved, and nothing on screen moved (owner report 2026-08-29). Anything
         // `computeMedia()` branches on belongs in this key.
         .task(id: "\(workout.id)-\(mediaRevision)-\(respectsPhotoCover)-\(style.rawValue)") {
-            resolved = nil
+            // Keep the current image during a same-workout refresh (cover change / snapshot heal).
+            // Clearing it first flashed a blank tile on every refresh. A reused cell must still
+            // clear the OTHER workout's image, and cancelled tasks must never publish stale media.
+            if resolvedWorkoutID != workout.id {
+                resolved = nil
+                resolvedWorkoutID = workout.id
+            }
             let media = await computeMedia()
+            guard !Task.isCancelled else { return }
             resolved = media
             onInkContext?(inkContext(for: media))
             let hadSnapshot = workout.gps?.mapSnapshotData != nil
             await WorkoutSnapshotHealer.healIfNeeded(workout, context: modelContext)
+            guard !Task.isCancelled else { return }
             // If the heal just produced a snapshot, swap it in for the silhouette fallback — and
             // re-report, because that swap takes the canvas from Theme-backed to fixed light.
             if !hadSnapshot, workout.gps?.mapSnapshotData != nil {
                 let healed = await computeMedia()
+                guard !Task.isCancelled else { return }
                 resolved = healed
                 onInkContext?(inkContext(for: healed))
             }

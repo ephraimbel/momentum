@@ -35,37 +35,24 @@ extension View {
 private struct MapSafeTapModifier: ViewModifier {
     let label: String
     let action: () -> Void
-    @State private var pressed = false
-    /// The map's UIKit recognizers can CANCEL the press-tracking drag (no `onEnded` then), which
-    /// would leave the control stuck at pressed scale — this failsafe releases it after a beat.
-    @State private var releaseTask: Task<Void, Never>?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // GestureState resets on cancellation as well as release. Mapbox can cancel the drag without
+    // calling onEnded; a plain State then stuck down until a timer fired. No per-drag timer work.
+    @GestureState private var pressed = false
+    @Environment(\.isEnabled) private var isEnabled
 
     func body(content: Content) -> some View {
         content
             .contentShape(Rectangle())
-            .scaleEffect(pressed && !reduceMotion ? 0.94 : 1)
-            .opacity(pressed ? 0.82 : 1)
-            .animation(.easeOut(duration: 0.12), value: pressed)
-            .highPriorityGesture(TapGesture().onEnded(action))
+            .modifier(PressFeedback(isPressed: pressed && isEnabled))
+            .highPriorityGesture(TapGesture().onEnded { if isEnabled { action() } })
             .simultaneousGesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        pressed = true
-                        releaseTask?.cancel()
-                        releaseTask = Task {
-                            try? await Task.sleep(for: .seconds(0.6))
-                            if !Task.isCancelled { pressed = false }
-                        }
-                    }
-                    .onEnded { _ in
-                        releaseTask?.cancel()
-                        pressed = false
-                    }
+                    .updating($pressed) { _, state, _ in state = true }
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(label)
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { if isEnabled { action() } }
     }
 }
 
@@ -97,4 +84,3 @@ private struct MomentumGlassModifier<S: Shape>: ViewModifier {
         }
     }
 }
-

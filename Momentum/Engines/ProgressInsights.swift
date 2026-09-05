@@ -59,12 +59,45 @@ struct ProgressInsights {
                              calendar: Calendar = .current) -> (acute: Double, chronic: Double, acwr: Double) {
         guard let acuteCut = calendar.date(byAdding: .day, value: -7, to: now),
               let chronicCut = calendar.date(byAdding: .day, value: -28, to: now) else { return (0, 0, 0) }
-        let acute = sessions.filter { $0.date >= acuteCut }.reduce(0) { $0 + $1.load }
-        let chronic28 = sessions.filter { $0.date >= chronicCut }.reduce(0) { $0 + $1.load }
-        let historyDays = sessions.map(\.date).min()
+        var acute = 0.0
+        var chronic28 = 0.0
+        var first: Date?
+        for session in sessions {
+            if session.date >= acuteCut { acute += session.load }
+            if session.date >= chronicCut { chronic28 += session.load }
+            first = min(first ?? session.date, session.date)
+        }
+        let historyDays = first
             .flatMap { calendar.dateComponents([.day], from: $0, to: now).day } ?? 0
         let chronic = chronic28 / min(4, max(1, Double(historyDays) / 7))
         return (acute, chronic, chronic < 1 ? 0 : acute / chronic)
+    }
+
+    /// Coaching needs the load verdict, not fifteen chart buckets and their GPS relationships.
+    /// Keep the bands shared with the full dashboard so this fast path cannot change the advice.
+    nonisolated static func loadVerdict(chronic: Double, acwr: Double)
+        -> (status: Status, recommendation: Recommendation) {
+        if chronic < 1 { return (.starting, .start) }
+        switch acwr {
+        case ..<0.8: return (.underloaded, .increase)
+        case 0.8..<1.3: return (.building, .hold)
+        case 1.3..<1.5: return (.pushing, .hold)
+        case 1.5..<1.8: return (.overreaching, .ease)
+        default: return (.overreaching, .rest)
+        }
+    }
+
+    static func loadRecommendation(workouts: [Workout], now: Date = Date(),
+                                   calendar: Calendar = .current) -> Recommendation {
+        // Older sessions still establish history length, but their load cannot affect either
+        // window. Do not fault old GPS relationships merely to throw their load away.
+        let cutoff = calendar.date(byAdding: .day, value: -28, to: now) ?? .distantPast
+        let sessions = workouts.map { workout in
+            (date: workout.startedAt,
+             load: workout.startedAt >= cutoff ? TrainingLoad.session(workout) : 0)
+        }
+        let ratios = acuteChronic(sessions: sessions, now: now, calendar: calendar)
+        return loadVerdict(chronic: ratios.chronic, acwr: ratios.acwr).recommendation
     }
 
     /// `weeksBack` sizes the weekly series window (the Trends range picker: 1M ≈ 5, 3M ≈ 13,
@@ -79,21 +112,10 @@ struct ProgressInsights {
         chronic = ratios.chronic
 
         hasData = !workouts.isEmpty
-        if chronic < 1 {
-            acwr = 0
-            status = .starting
-            recommendation = .start
-        } else {
-            let ratio = ratios.acwr
-            acwr = ratio
-            switch ratio {
-            case ..<0.8: status = .underloaded; recommendation = .increase
-            case 0.8..<1.3: status = .building; recommendation = .hold
-            case 1.3..<1.5: status = .pushing; recommendation = .hold
-            case 1.5..<1.8: status = .overreaching; recommendation = .ease
-            default: status = .overreaching; recommendation = .rest
-            }
-        }
+        acwr = ratios.acwr
+        let verdict = Self.loadVerdict(chronic: chronic, acwr: acwr)
+        status = verdict.status
+        recommendation = verdict.recommendation
 
         // Weekly series — `weeksBack` rolling 7-day windows ending at `now`, oldest → newest. Rolling
         // (not calendar) windows keep the most-recent bar aligned with the ACWR acute window, so a

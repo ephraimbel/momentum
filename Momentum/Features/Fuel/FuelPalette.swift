@@ -59,7 +59,7 @@ extension Meal {
         let items = self.items
         if !items.isEmpty { return items.map(\.healthFacts) }
         // Totals-only: only judge a meal that actually has numbers.
-        guard let kcal, kcal > 0 || carbsG != nil else { return [] }
+        guard let kcal, kcal > 0, carbsG != nil, proteinG != nil, fatG != nil else { return [] }
         return [HealthScore.Facts(name: text, kcal: kcal, carbsG: carbsG ?? 0,
                                   proteinG: proteinG ?? 0, fatG: fatG ?? 0,
                                   sodiumMg: sodiumMg ?? 0, fiberG: fiberG, sugarG: sugarG,
@@ -148,13 +148,21 @@ extension Meal {
     /// meal has ANY headline number (mirrors `FuelReadiness.hasNumbers`) — a kcal-only manual
     /// meal counts toward the day and must not read "Couldn't estimate" in its own row.
     var journalNumbersText: Text? {
-        guard carbsG != nil || kcal != nil else { return nil }
+        guard !nutrition.values.isEmpty else { return nil }
         var pieces: [Text] = []
         if let carbs = carbsG { pieces.append(Text("≈\(carbs) g carbs").foregroundColor(Theme.Fuel.carbs)) }
         if let kcal { pieces.append(Text("\(kcal) kcal").foregroundColor(Theme.inkSecondary)) }
         if let p = proteinG { pieces.append(Text("\(p) g protein").foregroundColor(Theme.Fuel.protein)) }
         if let f = fatG { pieces.append(Text("\(f) g fat").foregroundColor(Theme.Fuel.fat)) }
         if let s = sodiumMg { pieces.append(Text("\(s) mg sodium").foregroundColor(Theme.Fuel.sodium)) }
+        if let fluidsMl, fluidsMl > 0 { pieces.append(Text("\(fluidsMl) ml fluids").foregroundColor(Theme.Fuel.sodium)) }
+        if pieces.isEmpty {
+            for field in Nutrient.allCases {
+                if let value = nutrition[field] {
+                    pieces.append(Text("\(NutritionEntry.text(value, field: field)) \(field.unit) \(field.label.lowercased())").foregroundColor(Theme.inkSecondary))
+                }
+            }
+        }
         guard let first = pieces.first else { return nil }
         return pieces.dropFirst().reduce(first) { $0 + sep() + $1 }
     }

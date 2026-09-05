@@ -98,6 +98,21 @@ struct OnboardingDraftTests {
         #expect(restored.raceDistance == .marathon)
     }
 
+    @Test func olderDraftCollectsMissingIdentityWithoutLosingTrainingAnswers() {
+        var draft = fullyAnswered().draft()
+        draft.handle = ""
+        draft.savedStep = "intensity"
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: draft))
+        #expect(restored.step == .name)
+        #expect(restored.name == "Maya Rivera")
+        #expect(restored.weeklyRunVolumeM == 45_000)
+        #expect(restored.daysPerWeek == 5)
+        #expect(restored.raceDistance == .marathon)
+        #expect(restored.intensity == .podium)
+        #expect(restored.restoredAtOrPast(.intensity))
+    }
+
     @Test func unknownEnumValuesFallBackWithoutWipingTheRest() {
         // A draft written by a future build carries a case this build no longer knows. It must NOT
         // fail the whole restore — the bad field falls back, everything else survives.
@@ -162,4 +177,46 @@ struct OnboardingDraftTests {
         OnboardingDraftStore.clear()
         #expect(OnboardingDraftStore.load() == nil)       // clear removes it
     }
+    @Test func retiredPagesResumeOnTheirCombinedPageWithoutLosingAnswers() {
+        let pairs: [(OnboardingViewModel.Step, OnboardingViewModel.Step)] = [
+            (.name, .name), (.identity, .name), (.units, .disciplines), (.raceGoalTime, .race),
+            (.preferredDays, .days), (.strengthSplit, .equipment), (.why, .health)
+        ]
+        for (old, current) in pairs {
+            var draft = fullyAnswered().draft()
+            draft.savedStep = String(describing: old)
+            let restored = OnboardingViewModel()
+            #expect(restored.restore(from: draft))
+            #expect(restored.step == current)
+            #expect(restored.preferredDays == [2, 4, 6])
+            #expect(restored.goalFinishTimeS == 11_400)
+            #expect(restored.name == "Maya Rivera")
+            #expect(restored.intensity == .podium)
+            restored.advance()
+            #expect(restored.step != current, "A migrated draft must never have a dead Continue")
+        }
+    }
+
+    @Test func olderDraftCollectsRaceDestinationBeforeContinuing() {
+        var draft = fullyAnswered().draft()
+        draft.savedStep = "metrics"
+        draft.raceDistance = nil
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: draft))
+        #expect(restored.step == .race)
+        #expect(!restored.canAdvance)
+        #expect(restored.weeklyRunVolumeM == 45_000)
+    }
+
+    @Test func resumedIntensityUsesLiveOrderInsteadOfHistoricalEnumOrder() {
+        var draft = fullyAnswered().draft()
+        draft.savedStep = "notifications"
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: draft))
+        #expect(restored.restoredAtOrPast(.intensity))
+        restored.back()
+        #expect(restored.step == .intensity)
+        #expect(restored.intensity == .podium)
+    }
+
 }

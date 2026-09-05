@@ -349,6 +349,7 @@ enum DataManager {
         wipe(AppNotification.self)
         wipe(DailyCheckin.self)
         wipe(Meal.self)               // food log — standalone since the Fuel tab landed
+        wipe(WaterEntry.self)
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
         WidgetBridge.clear()          // the Home Screen widget must not keep the deleted streak
@@ -400,6 +401,7 @@ enum DataManager {
             wipe(AppNotification.self)
             wipe(DailyCheckin.self)
             wipe(Meal.self)
+            wipe(WaterEntry.self)
             wipe(UserProfile.self)
         }.value
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker

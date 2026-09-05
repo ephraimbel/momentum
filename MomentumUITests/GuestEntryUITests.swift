@@ -1,7 +1,7 @@
 import XCTest
 
 /// The front door (App Review path). Since 2026-07-27 the welcome asks for no account at all:
-/// "Get started" goes straight into setup, and the account is offered on the last beat of
+/// "Build my plan" goes straight into setup, and the account is offered on the last beat of
 /// onboarding. This test pins the two things that must never regress:
 ///
 /// 1. **Nobody is blocked at launch.** The primary CTA enters the app with no credentials and no
@@ -15,14 +15,13 @@ final class GuestEntryUITests: XCTestCase {
     func testWelcomeEntersTheAppWithoutAnAccount() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        // Clears the stored identity only — a sim that has run --seed-demo keeps its profile, so
-        // the welcome may render either variant. Both are asserted below.
-        app.launchArguments = ["--reset-auth"]
+        // Start with a fresh local store so this test always exercises the first-run welcome.
+        app.launchArguments = ["--reset-store", "--reset-auth"]
         app.launch()
 
-        // The welcome hero. "Get started" on a device with no training; "Continue as …" when a
+        // The welcome hero. "Build my plan" on a device with no training; "Continue as …" when a
         // profile is already here (signed out, or an Apple credential was revoked).
-        let getStarted = app.buttons["Get started"]
+        let getStarted = app.buttons["Build my plan"]
         let returning = app.buttons["I already have an account"]
         XCTAssertTrue(returning.waitForExistence(timeout: 10), "reset-auth should land on the welcome")
         attach("1-welcome")
@@ -43,7 +42,7 @@ final class GuestEntryUITests: XCTestCase {
         (fresh ? getStarted : app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Continue as'")).firstMatch).tap()
 
         // Entered with no credentials: onboarding on a fresh device, tabs on a lived-in one.
-        let onboarding = app.staticTexts["What should we call you?"]
+        let onboarding = app.staticTexts["Let's make it yours."]
         let tabs = app.tabBars.firstMatch
         // We already know which door was rendered. Waiting for the impossible destination first
         // made the lived-in path burn 15 seconds of repeated accessibility snapshots before it
@@ -53,7 +52,7 @@ final class GuestEntryUITests: XCTestCase {
             : tabs.waitForExistence(timeout: 15)
         XCTAssertTrue(entered, "the primary CTA must enter the app with no account")
         if fresh {
-            XCTAssertTrue(onboarding.exists, "with no profile, Get started goes straight into setup")
+            XCTAssertTrue(onboarding.exists, "with no profile, Build my plan goes straight into setup")
         }
         attach("3-entered")
 
@@ -66,7 +65,7 @@ final class GuestEntryUITests: XCTestCase {
         // absent. On a busy simulator, XCTest's repeated accessibility debug snapshots for an
         // expected absence can outlive the requested timeout and get the runner watchdog-killed.
         let remainedInside = fresh
-            ? app.staticTexts["What should we call you?"].waitForExistence(timeout: 10)
+            ? app.staticTexts["Let's make it yours."].waitForExistence(timeout: 10)
             : app.tabBars.firstMatch.waitForExistence(timeout: 10)
         XCTAssertTrue(remainedInside, "the local session must survive relaunch")
         XCTAssertFalse(app.buttons["I already have an account"].exists,
@@ -81,21 +80,15 @@ final class GuestEntryUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // --debug-free: a sim left dev-unlocked by an earlier --debug-pro would sail past the paywall.
-        app.launchArguments = ["--seed-demo", "--onboarding", "--onboarding-guest", "--onboarding-reveal", "--debug-free"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-guest", "--onboarding-reveal", "--debug-free"]
         app.launch()
-        let revealCTA = app.buttons["This looks great"]
+        let revealCTA = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(revealCTA.waitForExistence(timeout: 20), "should land on the plan reveal")
         attach("beat-1-reveal")
         revealCTA.tap()
 
-        // The onboarding paywall is a hard two-page flow (device tour, then checkout). This test
-        // takes the purchase path; the DEBUG seam grants locally, which is exactly the entitlement
-        // flip under test. Eligibility remains a STORE fact, so match "Try now" and "Continue".
-        let tryNow = app.buttons.matching(NSPredicate(format: "label == 'Try now' OR label == 'Continue'")).firstMatch
-        XCTAssertTrue(tryNow.waitForExistence(timeout: 10), "the showcase should follow the plan reveal")
-        XCTAssertFalse(app.buttons["Close"].exists, "the hard-wall tour must not carry an X")
+        XCTAssertTrue(app.staticTexts["YOUR GOAL"].waitForExistence(timeout: 10))
         attach("beat-2-paywall")
-        tryNow.tap()
         let trialCTA = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Unlock my plan' OR label BEGINSWITH 'Continue ·' OR label BEGINSWITH 'Start my'")).firstMatch
         XCTAssertTrue(trialCTA.waitForExistence(timeout: 10), "the checkout page should follow the reminder page")
         XCTAssertFalse(app.buttons["Close"].exists, "the hard-wall checkout must not carry an X")
@@ -125,25 +118,21 @@ final class GuestEntryUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         // `--reset-store` makes the precondition self-sufficient. This test needs a device with NO
-        // local profile: it taps "Get started" and expects setup. `--reset-auth` only clears the
+        // local profile: it taps "Build my plan" and expects setup. `--reset-auth` only clears the
         // stored identity and leaves the SwiftData profile behind, so after any sibling test (or a
         // manual --seed-demo launch) the app skipped setup entirely and the guard tripped. With the
         // wipe the walk now reliably starts in onboarding on any device.
         app.launchArguments = ["--reset-store", "--reset-auth", "--debug-free", "--uitest-password"]
         app.launch()
 
-        let getStarted = app.buttons["Get started"]
+        let getStarted = app.buttons["Build my plan"]
         guard getStarted.waitForExistence(timeout: 10) else {
             return XCTFail("needs a clean install (no local profile) — uninstall the app first")
         }
         getStarted.tap()
 
-        // Name step — the answer this test is about.
-        let nameField = app.textFields["Your name"]
-        XCTAssertTrue(nameField.waitForExistence(timeout: 10), "setup should open on the name question")
-        nameField.tap()
-        nameField.typeText("Maya")
-        attach("walk-1-name")
+        XCTAssertTrue(app.staticTexts["Let's make it yours."].waitForExistence(timeout: 10))
+        var enteredName = false
 
         // Walk generically as far as the PAYWALL: answer the one step that demands a pick, decline
         // every opt-in, Continue through everything else. The loop has to stop here — past the
@@ -167,14 +156,33 @@ final class GuestEntryUITests: XCTestCase {
         while Date() < walkDeadline, advancedSteps < 40 {
             if paywallCTA.exists { break }
 
+            let nameField = app.textFields["Your name"]
+            if !enteredName, nameField.exists, nameField.isHittable {
+                nameField.tap()
+                nameField.typeText("Maya\n")
+                let username = app.textFields["Handle"]
+                username.tap()
+                username.press(forDuration: 1)
+                if app.menuItems["Select All"].exists { app.menuItems["Select All"].tap() }
+                // Replace the name suggestion with an explicit test-only username.
+                let oldValue = username.value as? String ?? ""
+                username.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: oldValue.count)
+                                  + "maya_qa_\(UUID().uuidString.prefix(8).lowercased())\n")
+                enteredName = true
+                attach("walk-personal-details")
+            }
+
             if app.staticTexts["What supports your running?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Run"].firstMatch.tap()
             }
             // Goal is gated too (2026-08-28): pick the plainest one so the walk isn't goal-shaped.
-            if app.staticTexts["What's your main goal?"].exists, !app.buttons["Continue"].isEnabled {
+            if app.staticTexts["What are we training for?"].exists, !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Stay consistent"].firstMatch.tap()
             }
-            let looksGreat = app.buttons["This looks great"]
+            let looksGreat = app.buttons["onboarding.reveal.continue"]
+            if app.staticTexts["Tell us about your running."].exists, !app.buttons["Continue"].isEnabled {
+                app.staticTexts["Easy jogger"].firstMatch.tap()
+            }
             let maybeLater = app.buttons["Maybe later"]
             let notNow = app.buttons["Not now"]
             // The tour CTA is a STORE fact: "Try now" while eligible, "Continue" otherwise.

@@ -146,7 +146,12 @@ struct RacePickerSheet: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .center, spacing: Theme.Space.md) {
-                    Text(race.flag).font(.system(size: 26))
+                    // Bundled emoji artwork also renders when the system emoji font is unavailable.
+                    Image(race.flagArtworkName)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 32, height: 32)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(race.name)
                             .font(spotlight ? .serif(19, weight: .semibold) : .rounded(Theme.FontSize.body, weight: .bold))
@@ -202,7 +207,7 @@ struct RacePickerSheet: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(race.name), \(race.city), \(next?.abbreviated ?? "")")
+        .accessibilityLabel("\(race.name), \(race.city), \(race.country), \(next?.abbreviated ?? "")")
         .accessibilityHint(isSelected ? "Selected — choose a distance, then lock it in below" : "Opens this race")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
