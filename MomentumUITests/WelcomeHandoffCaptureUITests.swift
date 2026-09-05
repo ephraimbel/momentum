@@ -34,4 +34,32 @@ final class WelcomeHandoffCaptureUITests: XCTestCase {
         }
         XCTAssertGreaterThan(frames, 8, "the capture loop should manage several frames")
     }
+
+    /// The notifications beat, on a fresh install: the mock banner dropping into the phone
+    /// (0.6 s after the page lands) and then the SYSTEM permission alert after "Turn on
+    /// reminders". A fresh simulator is the only place the alert can be seen — iOS shows it
+    /// once per install, and every earlier answer (a walker's "Allow", a previous run) is final.
+    func testCaptureNotificationsBeat() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["CAPTURE_HANDOFF"] == "1",
+                          "capture harness — opt in with TEST_RUNNER_CAPTURE_HANDOFF=1")
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-notifications"]
+        let t0 = Date()
+        app.launch()
+        var frames = 0
+        func snap(_ tag: String) {
+            let a = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            a.name = String(format: "%@_%05.2f", tag, Date().timeIntervalSince(t0)); a.lifetime = .keepAlways; add(a); frames += 1
+        }
+        // From launch: the page lands, then the banner drops in 0.6 s later.
+        while Date().timeIntervalSince(t0) < 5.5 { snap("banner") }
+        let turnOn = app.buttons["Turn on reminders"]
+        XCTAssertTrue(turnOn.waitForExistence(timeout: 20))
+        turnOn.tap()
+        while Date().timeIntervalSince(t0) < 8.5 { snap("alert") }
+        // Whatever the alert says, answer it so the app is not left mid-prompt.
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
+        if allow.waitForExistence(timeout: 2) { snap("alert"); allow.tap() }
+        XCTAssertGreaterThan(frames, 6)
+    }
 }

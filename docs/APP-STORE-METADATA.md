@@ -132,7 +132,7 @@ Declare accurately (you collect these):
 ## Pricing (subscriptions — App Store Connect → Subscriptions)
 Two auto-renewing subscriptions in one group (must match `PaywallOffering.standard` in the app):
 - **momentum Pro — Weekly** (`momentum_pro_weekly`): **$5.99/wk**, no trial. The entry plan (owner call 2026-08-28, replacing the $9.99 monthly, which was retired from the offering — existing monthly subscribers keep their price and entitlement).
-- **momentum Pro — Annual** (`momentum_pro_annual`): **$99.99/yr** with a **3-day introductory free trial** for eligible new subscribers — sold at its own per-week number, **$1.92/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48). Eligible customers see the stronger "7 DAYS FREE" badge; ineligible customers see the rounded "SAVE 70%" value message. (Trial restored 2026-09-01 for the onboarding hard-wall test.)
+- **momentum Pro — Annual** (`momentum_pro_annual`): **$79.99/yr** with a **3-day introductory free trial** for eligible new subscribers — sold at its own per-week number, **$1.54/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48). Eligible customers see the stronger "7 DAYS FREE" badge; ineligible customers see the rounded "SAVE 75%" value message. (Trial restored 2026-09-01 for the onboarding hard-wall test.)
 - Both products must live in the **same subscription group**, or upgrade/downgrade between them breaks.
 
 The App Store renders these prices natively from the product — the listing **description does not hardcode them**. Full activation runbook: `docs/MONETIZATION-SETUP.md`.

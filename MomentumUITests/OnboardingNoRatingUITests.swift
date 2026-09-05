@@ -109,6 +109,15 @@ final class OnboardingNoRatingUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Start training"].exists,
                        "The location step must not claim to end onboarding — beats follow it.")
         locationContinue.tap()
+        // On a FRESH simulator this raises the system location alert, and the flow waits on its
+        // answer. The interruption monitor above only fires around an action, never during the
+        // plain wait that follows, so answer the alert here (the walk passed before only when an
+        // earlier test on the same simulator had already granted location, 2026-09-05).
+        let locationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for label in ["Allow While Using App", "Allow Once", "Allow"] {
+            let button = locationAlert.buttons[label]
+            if button.waitForExistence(timeout: label == "Allow While Using App" ? 4 : 1) { button.tap(); break }
+        }
 
         // Continue hands to the build and then the plan reveal. The plan owns this screen whole:
         // the ask lives on the page AFTER it, and may not reach back onto the reveal itself.

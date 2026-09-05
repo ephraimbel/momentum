@@ -51,18 +51,12 @@ struct OnboardingReviewView: View {
             // at all — so a thank-you would be the app claiming something it cannot know. The
             // page states the ask and stays stated; the sheet does the asking.
             OnboardingHeading(
-                title: "Help more runners find momentum",
-                subtitle: "A review is how the next runner finds this app. It takes a few seconds, and your plan is ready either way.",
+                title: "Help the next runner find momentum",
+                subtitle: "Runners find momentum through other runners. A quick review puts it in front of the next one.",
                 alignment: .center)
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)
-
-            Spacer(minLength: Theme.Space.md)
-
-            reasons
-                .padding(.horizontal, Theme.Space.xs)
-                .onboardingEntrance(0.16, lift: 22)
 
             Spacer(minLength: Theme.Space.md)
 
@@ -88,39 +82,6 @@ struct OnboardingReviewView: View {
         }
     }
 
-    /// Two plain lines about what a review actually does. No numbers we'd have to keep true, no
-    /// praise fished for on our own behalf.
-    private var reasons: some View {
-        VStack(spacing: Theme.Space.sm) {
-            reason("magnifyingglass", "It's how runners find us",
-                   "The App Store shows the app to people searching for a running plan.")
-            reason("figure.run", "It's built by runners",
-                   "Reviews are what tell us which parts of the training to sharpen next.")
-        }
-    }
-
-    private func reason(_ symbol: String, _ title: String, _ detail: String) -> some View {
-        HStack(alignment: .top, spacing: Theme.Space.sm) {
-            Image(systemName: symbol)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Theme.inkSecondary)
-                .frame(width: 24, height: 22)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
-                    .foregroundStyle(Theme.ink)
-                Text(detail)
-                    .font(.rounded(13, weight: .regular))
-                    .foregroundStyle(Theme.inkSecondary)
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(Theme.Space.md)
-        .onboardingCard()
-    }
 }
 
 #Preview("Review beat") {

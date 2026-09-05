@@ -18,7 +18,7 @@ The products live in ONE subscription group (`22239084 "momentum pro"`) and must
 | Product ID | Duration | Price | Intro offer | Sold? |
 |---|---|---|---|---|
 | `momentum_pro_weekly` | 1 week  | $5.99  | — | yes — the entry plan |
-| `momentum_pro_annual` | 1 year  | **$99.99** | **3 days free** | yes — $1.92/wk, badge "SAVE 70%"; eligible badge "3 DAYS FREE" |
+| `momentum_pro_annual` | 1 year  | **$79.99** | **3 days free** | yes — $1.54/wk, badge "SAVE 75%"; eligible badge "3 DAYS FREE" |
 | `momentum_pro_monthly`| 1 month | $9.99  | — | **no** — retired from the offering 2026-08-28 |
 
 The monthly stays live but unsold: removing a product never cancels or re-prices an existing
@@ -45,6 +45,11 @@ relationships subscription + territory, no price point for a free trial), effect
 Athletes already inside a 7-day trial keep it. The app derives every trial string from the store's intro offer
 (`trialDays(of:)` converts `.day` units directly), the placeholder is `trialDays: 3`, and the "ends in 2 days" reminder
 still fires (on day 1) because `scheduleTrialReminder` only skips trials of 2 days or fewer.
+
+**2026-09-05 (later) — annual SETTLED at $79.99 (owner call; the $99.99 change above never took effect).** The 175 pending
+$99.99 rows dated 2026-09-06 were DELETEd via `DELETE /v1/subscriptionPrices/{id}` and $79.99 (USA proceeds $56.00 first-year)
+plus its 174 equalizations scheduled for 2026-09-06 with `preserveCurrentPrice: true` — existing subscribers stay at what they
+pay today. In the app: **$1.54 / wk**, "$79.99 billed yearly", badge **SAVE 75%** (74.3% real).
 
 These IDs must match `PaywallOffering.standard` in `PaywallController.swift`.
 

@@ -1666,7 +1666,7 @@ struct OnboardingFlow: View {
                     remindersAdvanced = true
                     // Advance only AFTER the notifications prompt is dismissed, so the next page's
                     // location prompt lands on a settled screen instead of stacking on this one.
-                    services.notifications.requestAuthorization { granted in
+                    services.notifications.requestAuthorization(openSettingsIfDenied: true) { granted in
                         NotificationPrefs.setOnboardingChoice(enabled: granted)
                         services.analytics.log(.onboardingPermission(
                             kind: "notifications", status: granted ? "granted" : "denied"))

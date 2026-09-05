@@ -17,9 +17,9 @@ const appSchema = {
     { "@type": "Offer", price: "5.99", priceCurrency: "USD", description: "momentum Pro, weekly" },
     {
       "@type": "Offer",
-      price: "99.99",
+      price: "79.99",
       priceCurrency: "USD",
-      description: "momentum Pro, annual — 3-day free trial, then $1.92 a week, save 70% vs weekly",
+      description: "momentum Pro, annual — 3-day free trial, then $1.54 a week, save 75% vs weekly",
     },
   ],
 };
@@ -501,7 +501,7 @@ function Pricing() {
             <div className="price-row">
               <h3>momentum Pro</h3>
               <p className="price">
-                $1.92 <span>/ week</span>
+                $1.54 <span>/ week</span>
               </p>
             </div>
             <div className="features">
@@ -516,7 +516,7 @@ function Pricing() {
                 Get momentum Pro <span className="arrow" aria-hidden>↗</span>
               </a>
               <p className="price-note">
-                3 days free, then $99.99 billed yearly — $1.92 a week, 70% off the weekly price. Or
+                3 days free, then $79.99 billed yearly — $1.54 a week, 75% off the weekly price. Or
                 $5.99/week, no trial.
                 <br />
                 Billed by Apple · cancel anytime in Settings.
@@ -537,7 +537,7 @@ function FAQ() {
   const items = [
     {
       q: "Is there a free trial?",
-      a: "Yes. momentum is a membership: every new runner starts with a 3-day free trial of momentum Pro on the annual plan, then $99.99 billed yearly, which works out to $1.92 a week, 70% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
+      a: "Yes. momentum is a membership: every new runner starts with a 3-day free trial of momentum Pro on the annual plan, then $79.99 billed yearly, which works out to $1.54 a week, 75% off the weekly price. Prefer to go week to week? $5.99, no trial. Cancel anytime in your Apple subscriptions and you keep access until the end of the period.",
     },
     {
       q: "Do I need an Apple Watch or heart-rate strap?",

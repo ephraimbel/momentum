@@ -20,18 +20,18 @@ final class PaywallUITests: XCTestCase {
         // contract; production derives this eligibility and the localized renewal price from StoreKit.
         XCTAssertTrue(app.buttons["Start my 3-day free trial"].exists,
                       "The annual trial CTA is missing.")
-        XCTAssertFalse(app.buttons["Continue · $99.99/year"].exists,
+        XCTAssertFalse(app.buttons["Continue · $79.99/year"].exists,
                        "The annual plan must not charge immediately while its trial is eligible.")
         XCTAssertTrue(app.staticTexts["No payment due now"].exists,
                       "The trial must say plainly that payment is not due today.")
-        XCTAssertTrue(app.staticTexts["3 days free, then $99.99/yr · cancel anytime"].exists,
+        XCTAssertTrue(app.staticTexts["3 days free, then $79.99/yr · cancel anytime"].exists,
                       "The annual trial's renewal terms are missing or ambiguous.")
         XCTAssertTrue(app.staticTexts["3 DAYS FREE"].exists,
                       "The annual card must foreground its active trial.")
-        XCTAssertFalse(app.staticTexts["SAVE 70%"].exists,
+        XCTAssertFalse(app.staticTexts["SAVE 75%"].exists,
                        "The savings badge must not compete with an active trial badge.")
         // The Marquee (2026-08-27) + weekly pricing (2026-08-28): plans are Yearly/Weekly cards (a11y
-        // "Yearly plan, $1.92 per week, $99.99 billed yearly"), and the features are the marquee.
+        // "Yearly plan, $1.54 per week, $79.99 billed yearly"), and the features are the marquee.
         // One-screen contract: both cards, the feature marquee, and the CTA — no scrolling.
         let yearly = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Yearly plan")).firstMatch

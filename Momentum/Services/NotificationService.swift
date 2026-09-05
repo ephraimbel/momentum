@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import SwiftData
 import UserNotifications
 
@@ -82,7 +83,16 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         }
     }
 
-    func requestAuthorization(completion: ((Bool) -> Void)? = nil) {
+    /// `openSettingsIfDenied`: iOS raises its permission alert exactly once per install. When the
+    /// athlete already said no, a tap on "Turn on reminders" used to advance in silence, which read
+    /// as a dead button (owner report 2026-09-05); the onboarding beat now sends them to the app's
+    /// notification settings instead, where the switch actually lives. Other callers (the bell)
+    /// keep the quiet behaviour.
+    func requestAuthorization(completion: ((Bool) -> Void)?) {
+        requestAuthorization(openSettingsIfDenied: false, completion: completion)
+    }
+
+    func requestAuthorization(openSettingsIfDenied: Bool, completion: ((Bool) -> Void)?) {
         // `completion` always fires on the main thread once the prompt is resolved (or right away if
         // already determined), so callers can advance a flow only after the system alert is dismissed.
         let finish = { (granted: Bool) in DispatchQueue.main.async { completion?(granted) } }
@@ -95,6 +105,9 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
             case .authorized, .provisional, .ephemeral:
                 finish(true)
             case .denied:
+                if openSettingsIfDenied, let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                    DispatchQueue.main.async { UIApplication.shared.open(url) }
+                }
                 finish(false)
             @unknown default:
                 finish(false)

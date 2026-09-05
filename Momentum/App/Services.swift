@@ -181,6 +181,9 @@ protocol NotificationServing: AnyObject {
     /// on the main thread once the system prompt is RESOLVED (or immediately if already determined),
     /// so a flow can advance only after the prompt is dismissed — never stacking another prompt on it.
     func requestAuthorization(completion: ((Bool) -> Void)?)
+    /// The onboarding beat's variant: when the athlete already said no (iOS asks once per
+    /// install), open the app's notification settings instead of advancing in silence.
+    func requestAuthorization(openSettingsIfDenied: Bool, completion: ((Bool) -> Void)?)
     /// Resync next-workout reminders to the plan's upcoming sessions (each carries its prescription).
     func schedulePlannedReminders(_ plan: TrainingPlan?)
     /// The repeating Sunday week-in-review nudge (PRD §24).
@@ -192,6 +195,10 @@ protocol NotificationServing: AnyObject {
 extension NotificationServing {
     /// Fire-and-forget convenience — request without waiting on the prompt.
     func requestAuthorization() { requestAuthorization(completion: nil) }
+    /// Conformers that never open Settings (test doubles) fall back to the plain ask.
+    func requestAuthorization(openSettingsIfDenied: Bool, completion: ((Bool) -> Void)?) {
+        requestAuthorization(completion: completion)
+    }
 }
 
 @MainActor

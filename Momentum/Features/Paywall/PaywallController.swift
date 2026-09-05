@@ -36,19 +36,20 @@ struct PaywallOffering: Sendable, Equatable {
     var weeklyPriceValue: Double = weeklyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (owner call 2026-09-05 — the yearly raised from $29.99 to **$99.99**;
-    /// weekly unchanged): the entry plan is **weekly** and the yearly is sold at its own per-week
-    /// number, **$1.92 a week**, with "$99.99 billed yearly" on the card. $5.99 × 52 = $311.48
-    /// against $99.99 is 67.9% under the weekly run-rate, and the badge rounds to the nearest
-    /// five — **SAVE 70%** — the same rule every earlier pair wore (90.37% → 90, 79.1% → 80).
+    /// Shipped pricing (owner call 2026-09-05 — the yearly settled at **$79.99** after a
+    /// same-day pass through $99.99; weekly unchanged): the entry plan is **weekly** and the
+    /// yearly is sold at its own per-week number, **$1.54 a week**, with "$79.99 billed yearly"
+    /// on the card. $5.99 × 52 = $311.48 against $79.99 is 74.3% under the weekly run-rate, and
+    /// the badge rounds to the nearest five — **SAVE 75%** — the same rule every earlier pair
+    /// wore (90.37% → 90, 79.1% → 80). Strava-annual parity, half Runna's $119.99.
     ///
     /// The three numbers have to agree, and only two of them are free: pick the yearly and the
     /// per-week line falls out of it, along with the badge.
     ///
     /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). The take
     /// rate is NOT 84% in year one: App Store Connect pays the standard 70% first-year rate
-    /// (~$70 on $99.99), rising to ~85% once a subscriber passes twelve months — so a first-year
-    /// yearly clears by ~$55 against ~$15 of cost. History: $29.99 (2026-08-28, "SAVE 90%")
+    /// (~$56 on $79.99), rising to ~85% once a subscriber passes twelve months — so a first-year
+    /// yearly clears by ~$41 against ~$15 of cost. History: $29.99 (2026-08-28, "SAVE 90%")
     /// cleared by only ~$6 and a heavy user who churned inside year one was break-even.
     ///
     /// Monthly is gone from the offering. Existing monthly subscribers keep their price and their
@@ -61,7 +62,7 @@ struct PaywallOffering: Sendable, Equatable {
     /// RevenueCat is wired — the weekly product must be in the SAME subscription group as the
     /// annual, or upgrades/downgrades won't work.
     static let weeklyPrice = 5.99
-    static let annualPrice = 99.99
+    static let annualPrice = 79.99
 
     static let standard = PaywallOffering(
         weekly: .init(id: "momentum_pro_weekly", period: .weekly,
@@ -75,8 +76,8 @@ struct PaywallOffering: Sendable, Equatable {
 
     /// Percent saved by paying yearly instead of 52× weekly, **rounded to the nearest 5%** for a
     /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **70%**: $99.99 vs
-    /// 52 × $5.99 = $311.48 is 67.9%, which rounds to 70%.
+    /// (live once the store loads), never a hand-written label. Currently **75%**: $79.99 vs
+    /// 52 × $5.99 = $311.48 is 74.3%, which rounds to 75%.
     var annualSavingsPercent: Int {
         let weeklyYear = 52 * weeklyPriceValue
         guard weeklyYear > 0 else { return 0 }

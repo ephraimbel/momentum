@@ -53,7 +53,7 @@ final class OnboardingReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists)
         XCTAssertFalse(app.buttons["Rate momentum"].exists)
         XCTAssertFalse(app.buttons["Maybe later"].exists)
-        XCTAssertTrue(app.staticTexts["Help more runners find momentum"].exists)
+        XCTAssertTrue(app.staticTexts["Help the next runner find momentum"].exists)
 
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "onboarding-review-beat"
