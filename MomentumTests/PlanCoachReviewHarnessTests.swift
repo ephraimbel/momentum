@@ -129,4 +129,25 @@ struct PlanCoachReviewHarnessTests {
                             sessionMinutes: 90, raceDate: race(weeksOut: 20), runningExperience: .experienced, liftingExperience: .some,
                             raceDistanceM: 50_000, currentWeeklyVolumeM: 70_000, longestRunM: 30_000, hybridPriority: .running))
     }
+
+    /// The same half-marathon athlete as B, signed up on a WEDNESDAY: the week must still read as a
+    /// coach's week on real weekdays, and day zero (Wednesday) opens with an easy run.
+    @Test func printWednesdaySignup() {
+        var inputs = PlanInputs(disciplines: [.running, .strength], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
+                                sessionMinutes: 60, raceDate: race(weeksOut: 12), runningExperience: .some, liftingExperience: .some,
+                                raceDistanceM: 21_097, currentWeeklyVolumeM: 30_000, longestRunM: 12_000)
+        inputs.anchorWeekday = 4
+        let plan = PlanEngine.generate(profile: inputs, catalog: RunningPlannerTestFixtures.catalog, startDate: start, calendar: cal)
+        let names = ["Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue"]
+        var out = ["===== WEDNESDAY SIGN-UP · Half · 4 days · run + strength"]
+        for w in plan.weeks.prefix(3) {
+            out.append(String(format: "W%02d %@ | %.1f km", w.index + 1, "\(w.phase)", w.runVolumeM / 1000))
+            for s in w.sessions.sorted(by: { $0.dayOffset < $1.dayOffset }) {
+                let what = s.discipline == .strength ? "LIFT \(s.strengthLabel ?? "")" : "\(s.runType.map { "\($0)" } ?? "run") \(Int((s.targetDistanceM ?? 0) / 100))00 m\(s.isHardRun ? " *" : "")"
+                out.append("    d\(s.dayOffset) \(names[s.dayOffset])  \(what)  \(s.rationale ?? "")")
+            }
+        }
+        out.append("===== WEDNESDAY SIGN-UP END")
+        print(out.joined(separator: "\n"))
+    }
 }

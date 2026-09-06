@@ -20,3 +20,18 @@ struct StreakNudgeTests {
         #expect(!StreakNudge.shouldNudge(streak: 5, isPlannedDay: true, hasWorkedOutToday: true))    // already trained
     }
 }
+
+/// The first-run nudge (2026-09-06): only an athlete with no workouts yet, on a day with an undone
+/// planned run — the streak nudge cannot reach them, and the first days are where trials go dark.
+struct FirstRunNudgeTests {
+
+    @Test func nudgesANewAthleteWithARunWaiting() {
+        #expect(FirstRunNudge.shouldNudge(totalWorkouts: 0, hasPlannedRunToday: true, hasWorkedOutToday: false))
+    }
+
+    @Test func neverAfterTheFirstWorkoutOrWithoutARunOrOnceTheyHaveTrained() {
+        #expect(!FirstRunNudge.shouldNudge(totalWorkouts: 1, hasPlannedRunToday: true, hasWorkedOutToday: false))
+        #expect(!FirstRunNudge.shouldNudge(totalWorkouts: 0, hasPlannedRunToday: false, hasWorkedOutToday: false))
+        #expect(!FirstRunNudge.shouldNudge(totalWorkouts: 0, hasPlannedRunToday: true, hasWorkedOutToday: true))
+    }
+}

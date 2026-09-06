@@ -72,6 +72,25 @@ stacked projection off a stale 5K.
   still left returns to the easy days up to 1.35× the week's average run, so the week's total stays on the
   governed ramp and the quality session never inflates. (A 3-run half week used to run a 13 km "easy" beside a
   12 km long.)
+- **Real weekdays** (`PlanInputs.anchorWeekday`, set by `PlanService.planInputs` from the start date): a plan
+  starts the day it is made, so a day offset is a different weekday for every athlete. The template and the
+  long run's home are read through where Monday falls, so the long run lands on Sunday (Saturday when Sunday
+  is not offered; otherwise the day with the most rest after it) whether the plan began on a Monday or a
+  Thursday. Before this a Wednesday sign-up got their "Sunday" long run on a Tuesday and the calendar-week
+  board looked unplanned. `nil` reads as a Monday start (every fixture).
+- **The plan opens with a run** (`PlanInputs.opensWithRun`, default on): day zero of a new plan is a run — never
+  a lift, never a rest day, never hard. The earliest easy-family run of week one comes forward to day zero (a
+  week of nothing but hard days brings its first quality day forward and keeps it easy; a one-run week runs
+  today). The one day it never takes is a day the athlete ruled out — outside the days they chose, or one
+  their own history says they never make — because a first run they cannot do is a first miss, not a first
+  run; their first run is then their first chosen day. Off when a run was already logged today
+  (`PlanService.hasLoggedRun`), so a rebuild after this morning's run never asks for a second. A sign-up from 21:00 starts tomorrow (`PlanService.firstPlanStart`),
+  so the first open of the app shows a run they can actually go and do. The athlete opens the app to the map
+  with today's run: that first session is the trial's value moment.
+- **The first-run nudge** (`NotificationService.scheduleFirstRunNudge`, `FirstRunNudge.shouldNudge`): a
+  brand-new athlete has no streak for the streak nudge to protect, and the first days of a plan are where
+  trials go dark, so an athlete with no workout yet and a run still waiting on today's plan gets one 17:30
+  line ("Your first run is ready"). Gone the moment the first workout exists.
 - **The cap and the cutback converge**: the final 1.3× governor and the "a down week goes down" rule run in turn
   (three rounds at most) — trimming a recovery week lowers the trailing average, and the loading week after it
   read as a spike to the legacy cap until the governor got a second look. Both only ever reduce.

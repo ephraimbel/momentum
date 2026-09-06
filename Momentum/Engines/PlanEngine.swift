@@ -327,10 +327,14 @@ enum PlanEngine {
                                                        to: calendar.startOfDay(for: raceDate)).day ?? -1
                 return dayCount >= 0 && dayCount / 7 == w ? dayCount % 7 : nil
             }()
+            // Where Monday falls in this plan's week: a plan starts the day it is made.
+            let mondayOffset = (((2 - (profile.anchorWeekday ?? 2)) % 7) + 7) % 7
             var scheduled = schedule(runs: runs, lifts: lifts,
                                      preferredDayOffsets: profile.preferredDayOffsets,
                                      avoidDayOffsets: profile.avoidDayOffsets,
-                                     raceDayOffset: raceDayOffset)
+                                     raceDayOffset: raceDayOffset,
+                                     mondayOffset: mondayOffset,
+                                     opensWithRun: profile.opensWithRun && w == 0)
             // Podium's rest-day shakeout: on training weeks (never deload/taper/lead-in), one of
             // the remaining rest days — the day after the long run when it's free — carries an
             // OPTIONAL 3 km jog. "Rest days will just be a slow mile or two" is the tier's promise;
@@ -1925,7 +1929,9 @@ enum PlanEngine {
     static func schedule(runs: [GeneratedSession], lifts: [GeneratedSession],
                          preferredDayOffsets: [Int] = [],
                          avoidDayOffsets: [Int] = [],
-                         raceDayOffset: Int? = nil) -> [GeneratedSession] {
+                         raceDayOffset: Int? = nil,
+                         mondayOffset: Int = 0,
+                         opensWithRun: Bool = false) -> [GeneratedSession] {
         var lifts = lifts, runs = runs
         let total = lifts.count + runs.count
         guard total > 0 else { return [] }
@@ -1949,19 +1955,53 @@ enum PlanEngine {
 
         // 1. Run days. The template is the coach's shape; it is used whenever the pool allows it
         //    whole, otherwise the runs spread across the pool with the long run on its last day.
-        let template = runDayTemplate(runs.count)
+        // Real weekdays (2026-09-06): offset 0 is whatever weekday the athlete signed up on, and
+        // `mondayOffset` says where Monday falls. The template and the long run's home are read
+        // through it, so the long run lands on Sunday — Saturday when Sunday is not on offer —
+        // whether the plan began on a Monday or a Thursday. Before this a Wednesday sign-up got
+        // their "Sunday" long run on a Tuesday, and the board looked like nobody had planned it.
+        func weekday(_ offset: Int) -> Int { (((offset - mondayOffset) % 7) + 7) % 7 }   // 0 = Mon … 6 = Sun
+        let sundayOffset = (6 + mondayOffset) % 7
+        let saturdayOffset = (5 + mondayOffset) % 7
+        func longRunHome(in days: [Int]) -> Int? {
+            guard !days.isEmpty else { return nil }
+            if days.contains(sundayOffset) { return sundayOffset }
+            if days.contains(saturdayOffset) { return saturdayOffset }
+            // No weekend day on offer: the day with the most rest AFTER it; ties to the later weekday.
+            let byWeekday = days.sorted { weekday($0) < weekday($1) }
+            var best: (rest: Int, day: Int)?
+            for (i, d) in byWeekday.enumerated() {
+                let next = byWeekday[(i + 1) % byWeekday.count]
+                let rest = byWeekday.count == 1 ? 7 : (((weekday(next) - weekday(d)) % 7) + 7) % 7
+                if best == nil || rest > best!.rest || (rest == best!.rest && weekday(d) > weekday(best!.day)) {
+                    best = (rest, d)
+                }
+            }
+            return best?.day
+        }
+        // Seat the long run's home among the chosen days, replacing the pick nearest it so the
+        // spread survives.
+        func seatLongHome(_ days: inout [Int]) {
+            guard !days.isEmpty, let home = longRunHome(in: pool), !days.contains(home) else { return }
+            let nearest = days.indices.min {
+                circularDayDistance(days[$0], home) < circularDayDistance(days[$1], home)
+            }!
+            days[nearest] = home
+            days.sort()
+        }
+        let template = runDayTemplate(runs.count).map { ($0 + mondayOffset) % 7 }.sorted()
         var runDays: [Int]
         if runs.isEmpty {
             runDays = []
         } else if cleanedPref.count >= total {
             runDays = pickSpread(from: pool, count: runs.count)
-            // The long run wants the last preferred day.
-            if let last = pool.last, !runDays.contains(last) { runDays[runDays.count - 1] = last; runDays.sort() }
+            // The long run wants the weekend day among the preferred days.
+            seatLongHome(&runDays)
         } else if raceDayOffset == nil, template.allSatisfy({ pool.contains($0) }) {
             runDays = template
         } else {
             runDays = pickSpread(from: pool, count: runs.count)
-            if let last = pool.last, !runDays.contains(last) { runDays[runDays.count - 1] = last; runDays.sort() }
+            seatLongHome(&runDays)
         }
         runDays = Array(Set(runDays)).sorted()
 
@@ -1970,7 +2010,7 @@ enum PlanEngine {
         let hardIndices = runs.indices.filter { $0 != longIndex && runs[$0].isHardRun }
         var free = runDays
         var longDay: Int?
-        if let li = longIndex, let day = free.max() {
+        if let li = longIndex, let day = longRunHome(in: free) {
             runs[li].dayOffset = day
             longDay = day
             free.removeAll { $0 == day }
@@ -2043,6 +2083,47 @@ enum PlanEngine {
         var remainingFree = free
         for idx in runs.indices where runs[idx].dayOffset < 0 {
             runs[idx].dayOffset = remainingFree.isEmpty ? (runDays.last ?? 6) : remainingFree.removeFirst()
+        }
+
+        // The plan opens with a run (2026-09-06). The athlete finishes onboarding and opens the app
+        // to the map with today's run — never a lift, never a rest day, never a hard session. In the
+        // first week the earliest easy-family run comes forward to day zero; a week with nothing but
+        // hard days brings its first quality day forward and keeps it easy (the work starts once they
+        // are into the week); a one-run week simply runs today. A hard run already sitting on day
+        // zero is kept easy for the same reason. The long run stays where the weekend puts it.
+        // The one day the opening run will not take is a day the athlete ruled out — a day outside
+        // the days they chose, or one their own history says they never make (`pool` is exactly
+        // the days the week may use): a first run they cannot do is a first miss, not a first run.
+        if opensWithRun, !runs.isEmpty, pool.contains(0) {
+            func word(_ idx: Int) -> String {
+                switch runs[idx].discipline {
+                case .walking: "walk"
+                case .cycling: "ride"
+                default: "run"
+                }
+            }
+            func keepEasy(_ idx: Int) {
+                runs[idx].isHardRun = false
+                runs[idx].runType = .easy
+                runs[idx].intervals = nil
+                runs[idx].rationale = "Your first day is an easy \(word(idx)). The hard work starts once you're into the week."
+            }
+            if let zero = runs.firstIndex(where: { $0.dayOffset == 0 }) {
+                if runs[zero].isHardRun { keepEasy(zero) }
+            } else {
+                let easy = runs.indices.filter { $0 != longIndex && !runs[$0].isHardRun }
+                    .min { runs[$0].dayOffset < runs[$1].dayOffset }
+                let hard = runs.indices.filter { $0 != longIndex && runs[$0].isHardRun }
+                    .min { runs[$0].dayOffset < runs[$1].dayOffset }
+                if let idx = easy ?? hard ?? longIndex {
+                    if runs[idx].isHardRun {
+                        keepEasy(idx)
+                    } else if idx != longIndex {
+                        runs[idx].rationale = "First \(word(idx)) of the plan. Easy, just to get moving."
+                    }
+                    runs[idx].dayOffset = 0
+                }
+            }
         }
 
         // 5. Lifts on the leftover days. Ranked: never the day before the long run when it can be
@@ -2222,4 +2303,14 @@ struct PlanInputs: Equatable, Sendable {
     /// Tune-up races on the season (2026-09-03): B (race it) and C (train through) events before
     /// the goal race. They bend the week they land in, never the block.
     var tuneUpRaces: [PlanRaceEvent] = []
+    /// The calendar weekday of the plan's day zero (`Calendar.weekday`: 1 = Sunday … 7 = Saturday).
+    /// A plan starts the day it is made, so a day offset means a different weekday for every
+    /// athlete; through this the coach's week is laid out on REAL weekdays — the long run on
+    /// Sunday whether the plan began on a Monday or a Thursday (2026-09-06). `nil` reads as a
+    /// Monday start, the shape every fixture and the older plans were built on.
+    var anchorWeekday: Int? = nil
+    /// The plan opens with a run on day zero (2026-09-06): the athlete finishes onboarding and
+    /// opens the app to the map with today's run, never a lift or a rest day. Off when a run was
+    /// already logged today, so a rebuild after this morning's run does not ask for a second.
+    var opensWithRun: Bool = true
 }

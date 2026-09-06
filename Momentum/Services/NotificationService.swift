@@ -227,6 +227,32 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         center.add(UNNotificationRequest(identifier: "momentum.streak", content: content, trigger: trigger))
     }
 
+    // MARK: First-run nudge (2026-09-06) — a new athlete has no streak to protect, so the streak
+    // nudge never reaches them, and the first days of a plan are exactly where trials go dark. One
+    // gentle evening line on a day their plan holds a run they have not yet done, only until their
+    // first workout exists. Static like the trial reminder: one dated request, no delegate.
+
+    static let firstRunID = "momentum.firstRun"
+
+    static func scheduleFirstRunNudge(totalWorkouts: Int, plannedRunToday: PlannedSession?,
+                                      hasWorkedOutToday: Bool, now: Date = Date()) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [firstRunID])
+        guard NotificationPrefs.sessionRemindersEnabled(),
+              let session = plannedRunToday,
+              FirstRunNudge.shouldNudge(totalWorkouts: totalWorkouts, hasPlannedRunToday: true,
+                                        hasWorkedOutToday: hasWorkedOutToday) else { return }
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: now)
+        comps.hour = 17; comps.minute = 30
+        guard let fire = Calendar.current.date(from: comps), fire > now else { return }   // evening still ahead
+        let content = UNMutableNotificationContent()
+        content.title = "Your first run is ready"
+        content.body = "\(PlanCoaching.brief(for: session)). It's on the map whenever you are."
+        content.sound = .default
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        center.add(UNNotificationRequest(identifier: firstRunID, content: content, trigger: trigger))
+    }
+
     /// Show banners while foregrounded, so the "plan updated" nudge is actually seen — except the
     /// rest-timer alert, which is redundant here: this delegate only fires while the app is active,
     /// and the in-app rest ring is already counting down (that notification is cancelled on
@@ -287,5 +313,14 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
 enum StreakNudge {
     static func shouldNudge(streak: Int, isPlannedDay: Bool, hasWorkedOutToday: Bool) -> Bool {
         streak >= 3 && isPlannedDay && !hasWorkedOutToday
+    }
+}
+
+/// The first-run nudge decision (2026-09-06), pure so it's unit-testable: only an athlete with no
+/// workout logged yet, on a day whose plan holds a run they have not done. Once the first workout
+/// exists the streak and session reminders take over; it never fires on a rest day.
+enum FirstRunNudge {
+    static func shouldNudge(totalWorkouts: Int, hasPlannedRunToday: Bool, hasWorkedOutToday: Bool) -> Bool {
+        totalWorkouts == 0 && hasPlannedRunToday && !hasWorkedOutToday
     }
 }

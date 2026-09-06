@@ -172,6 +172,7 @@ enum PlanService {
                                 in context: ModelContext) throws -> TrainingPlan {
         let catalogItems = catalog(in: context)
         var inputs = planInputs(from: profile, startDate: startDate)
+        inputs.opensWithRun = !hasLoggedRun(on: startDate, in: context)
         // A rebuild is a new coaching decision, so it starts from what the athlete is doing now —
         // not the volume they typed during onboarding. `observedFitness` reads Momentum-logged runs
         // only (Health remains signals-only), then falls back conservatively when history is thin.
@@ -729,7 +730,24 @@ enum PlanService {
             intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
             injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
             age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) },
-            distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved())
+            distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved(),
+            anchorWeekday: anchorWeekday)
+    }
+
+    /// Whether a run was logged on `day`. The plan opens with a run on its first day unless the
+    /// athlete already ran today, so a rebuild after this morning's run never asks for a second.
+    static func hasLoggedRun(on day: Date, in context: ModelContext, calendar: Calendar = .current) -> Bool {
+        let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: day)) ?? day
+        let evidence = (try? runEvidence(endingAt: end, in: context, calendar: calendar)) ?? []
+        return evidence.contains { calendar.isDate($0.startedAt, inSameDayAs: day) }
+    }
+
+    /// The day a brand-new plan begins (2026-09-06): today, unless it is already evening — from
+    /// 21:00 the first run is set for tomorrow morning rather than a day that is nearly over, so
+    /// the athlete's first open of the app shows a run they can actually go and do.
+    nonisolated static func firstPlanStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        guard calendar.component(.hour, from: now) >= 21 else { return now }
+        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now
     }
 
     static func stagePersist(_ plan: GeneratedPlan, for profile: UserProfile,

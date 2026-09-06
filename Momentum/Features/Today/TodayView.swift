@@ -537,6 +537,12 @@ struct TodayView: View {
             services.notifications.scheduleStreakNudge(streak: stats.currentStreak,
                                                        isPlannedDayToday: !sessionsToday.isEmpty,
                                                        hasWorkedOutToday: workedOutToday)
+            // A brand-new athlete has no streak for that nudge to protect; their first run is the
+            // trial's value moment, so a run still waiting on today's plan gets one evening line.
+            NotificationService.scheduleFirstRunNudge(
+                totalWorkouts: stats.totalWorkouts,
+                plannedRunToday: sessionsToday.first { $0.status != .completed && $0.discipline != .strength },
+                hasWorkedOutToday: workedOutToday)
             // The Home Screen widget snapshot rides the throttled pass. The write is change-guarded,
             // so an identical snapshot never wakes the widget. Reuses this pass's `stats` — the
             // bridge used to run its own full-history ProfileStats walk back-to-back with ours.

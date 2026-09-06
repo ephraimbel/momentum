@@ -147,4 +147,92 @@ struct PlanWeekShapeTests {
         #expect(PlanFeasibility.recommendedDays(goal: .stayConsistent, raceDistanceM: nil, experience: .new, lifting: false) == 3)
         #expect(PlanFeasibility.recommendedDays(goal: .generalFitness, raceDistanceM: nil, experience: .some, lifting: false) == 4)
     }
+
+    /// Every route into a plan opens with a run on day zero — on whatever weekday the athlete
+    /// signed up (2026-09-06): never a lift, never a rest day, never a hard session. And from the
+    /// second week the long run lives on the weekend whatever day the plan began.
+    @Test func everyRouteOpensWithARunAndKeepsTheLongRunOnTheWeekend() {
+        let goals: [(Goal, Double?)] = [(.raceDistance, 5_000), (.raceDistance, 21_097), (.raceDistance, 42_195),
+                                        (.endurance, nil), (.generalFitness, nil), (.buildMuscle, nil), (.stayConsistent, nil)]
+        var checked = 0
+        for anchor in 1...7 {
+            for days in 2...7 {
+                for lifting in [false, true] {
+                    for (goal, raceM) in goals {
+                        for level in [ExperienceLevel.new, .some, .experienced] {
+                            var inputs = PlanInputs(disciplines: lifting ? [.running, .strength] : [.running], goal: goal,
+                                                    daysPerWeek: days, equipment: .fullGym, sessionMinutes: 60,
+                                                    raceDate: raceM == nil ? nil : race(weeksOut: 10),
+                                                    runningExperience: level, liftingExperience: .some,
+                                                    raceDistanceM: raceM,
+                                                    currentWeeklyVolumeM: level == .new ? nil : 30_000,
+                                                    longestRunM: level == .new ? nil : 10_000)
+                            inputs.anchorWeekday = anchor
+                            let plan = PlanEngine.generate(profile: inputs, catalog: RunningPlannerTestFixtures.catalog,
+                                                           startDate: start, calendar: cal)
+                            guard let first = plan.weeks.first else { continue }
+                            let label = "anchor \(anchor) days \(days) lifting \(lifting) goal \(goal) race \(raceM ?? 0) level \(level)"
+                            let zero = first.sessions.filter { $0.dayOffset == 0 }
+                            #expect(zero.contains { $0.discipline == .running }, "no run on day 0: \(label)")
+                            #expect(!zero.contains { $0.discipline == .strength }, "a lift on day 0: \(label)")
+                            #expect(!zero.contains { $0.isHardRun }, "a hard run on day 0: \(label)")
+                            let mondayOffset = (((2 - anchor) % 7) + 7) % 7
+                            for w in plan.weeks.dropFirst() where !w.sessions.contains(where: { $0.runType == .race }) {
+                                if let long = longRun(w) {
+                                    let weekday = (((long.dayOffset - mondayOffset) % 7) + 7) % 7
+                                    #expect(weekday >= 5, "w\(w.index) long run on weekday \(weekday): \(label)")
+                                }
+                                let runs = w.sessions.filter { $0.discipline == .running }.count
+                                let lifts = w.sessions.filter { $0.discipline == .strength }.count
+                                #expect(runs >= lifts, "w\(w.index) lifts more than it runs: \(label)")
+                            }
+                            checked += 1
+                        }
+                    }
+                }
+            }
+        }
+        #expect(checked > 1_000)
+    }
+
+    /// The athlete's own days are honoured on real weekdays too: the long run takes the weekend day
+    /// they offered, and a plan that began on a Thursday does not put its opening run on a day
+    /// they never offered.
+    @Test func preferredWeekdaysKeepTheLongRunOnTheWeekendFromAnyStartDay() {
+        // Mon/Wed/Sat as offsets from a Thursday start: Thu = 0 … Sat = 2, Mon = 4, Wed = 6.
+        var inputs = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 3, equipment: .bodyweight,
+                                sessionMinutes: 60, raceDate: race(weeksOut: 10), runningExperience: .some,
+                                liftingExperience: .new, raceDistanceM: 10_000, currentWeeklyVolumeM: 25_000,
+                                longestRunM: 9_000, preferredDayOffsets: [2, 4, 6])
+        inputs.anchorWeekday = 5
+        let plan = PlanEngine.generate(profile: inputs, catalog: RunningPlannerTestFixtures.catalog, startDate: start, calendar: cal)
+        // Thursday is not one of their days, so the opening run does not take it: the athlete's own
+        // days are the one thing the opening run never overrides (a first run they cannot do is a
+        // first miss). Their first run is Saturday, two days in.
+        #expect(!plan.weeks[0].sessions.contains { $0.dayOffset == 0 })
+        #expect(plan.weeks[0].sessions.contains { $0.dayOffset == 2 && $0.discipline == .running })
+        for w in plan.weeks.dropFirst() where !w.sessions.contains(where: { $0.runType == .race }) {
+            #expect(longRun(w)?.dayOffset == 2, "w\(w.index): the long run should take Saturday (offset 2)")
+            let days = Set(w.sessions.map(\.dayOffset))
+            #expect(days.isSubset(of: [2, 4, 6]), "w\(w.index) used \(days.sorted())")
+        }
+    }
+
+    /// A rebuild after today's run does not ask for a second one, and an evening sign-up starts tomorrow.
+    @Test func theOpeningRunStepsAsideWhenTheyAlreadyRanAndEveningsStartTomorrow() {
+        var inputs = PlanInputs(disciplines: [.running, .strength], goal: .raceDistance, daysPerWeek: 4, equipment: .fullGym,
+                                sessionMinutes: 60, raceDate: race(weeksOut: 10), runningExperience: .some,
+                                liftingExperience: .some, raceDistanceM: 21_097, currentWeeklyVolumeM: 30_000, longestRunM: 12_000)
+        inputs.anchorWeekday = 2
+        inputs.opensWithRun = false
+        let plan = PlanEngine.generate(profile: inputs, catalog: RunningPlannerTestFixtures.catalog, startDate: start, calendar: cal)
+        #expect(!plan.weeks[0].sessions.contains { $0.dayOffset == 0 && $0.discipline == .running },
+                "with a run already logged today the template's Tuesday opener stays put")
+        var comps = DateComponents(); comps.year = 2026; comps.month = 9; comps.day = 7; comps.hour = 21; comps.minute = 30
+        let evening = cal.date(from: comps)!
+        #expect(cal.isDate(PlanService.firstPlanStart(now: evening, calendar: cal), inSameDayAs: cal.date(byAdding: .day, value: 1, to: evening)!))
+        comps.hour = 7
+        let morning = cal.date(from: comps)!
+        #expect(PlanService.firstPlanStart(now: morning, calendar: cal) == morning)
+    }
 }

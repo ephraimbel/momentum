@@ -456,6 +456,12 @@ private extension PlanStore {
             calendar: calendar
         )
         liveInputs.postRaceRecoveryWeeks = bridge.inputs.postRaceRecoveryWeeks
+        // Likewise the opening-run flag: derived from whether a run was logged on the start day
+        // (`PlanService.hasLoggedRun`), not a profile field, so the request stays authoritative.
+        liveInputs.opensWithRun = bridge.inputs.opensWithRun
+        // And the weekday anchor: a function of `request.startDate` (already checked above) and the
+        // generating calendar, not of anything the athlete can edit.
+        liveInputs.anchorWeekday = bridge.inputs.anchorWeekday
         guard liveInputs == bridge.inputs else {
             throw PlanStoreError.requestMismatch("Profile planning inputs changed after candidate generation.")
         }

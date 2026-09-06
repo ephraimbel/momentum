@@ -538,7 +538,7 @@ final class OnboardingViewModel {
         profile.reason = reason
         context.insert(profile)
         // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
-        PlanService.rebuild(for: profile, calibration: calibration, in: context)
+        PlanService.rebuild(for: profile, calibration: calibration, startDate: PlanService.firstPlanStart(), in: context)
         // A catalog race picked during onboarding names the season after its occasion.
         if racing, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
             profile.plan?.name = raceName
