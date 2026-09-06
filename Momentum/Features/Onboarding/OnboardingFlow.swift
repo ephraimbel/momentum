@@ -768,13 +768,15 @@ struct OnboardingFlow: View {
     private var daysStep: some View {
         questionScaffold("Let's shape your training week.", subtitle: "Choose a rhythm that fits your life.") {
             activitySectionLabel("TRAINING DAYS PER WEEK")
-            SegmentedCapsule(items: [2, 3, 4, 5, 6], selection: $vm.daysPerWeek, scale: .page,
+            SegmentedCapsule(items: [2, 3, 4, 5, 6],
+                             selection: Binding(get: { vm.daysPerWeek },
+                                                set: { vm.daysPerWeek = $0; vm.daysPerWeekChosen = true }),
+                             scale: .page,
                              title: { "\($0)" }, spokenLabel: { "\($0) training days" })
                 .monospacedDigit()
             activitySectionLabel("PREFERRED DAYS · OPTIONAL").padding(.top, Theme.Space.sm)
             preferredDaysPicker
-            coachingNote("A week built around your availability",
-                         "\(vm.daysPerWeek) training days. Leave preferred days empty and we'll arrange the week for you, balancing the work with recovery.")
+            coachingNote(coachDaysTitle, coachDaysMessage)
             // Frequency honesty, said where the choice is made: a race build under its effective
             // day floor holds fitness rather than building readiness (PlanFeasibility owns the
             // numbers; the intensity step's verdict banner repeats the full read).
@@ -801,6 +803,31 @@ struct OnboardingFlow: View {
                 .transition(.opacity)
             }
         }
+        .onAppear { vm.applyRecommendedDaysIfUntouched() }
+    }
+
+    /// The days step opens on the coach's pick and says why (2026-09-06): running is built on
+    /// frequency, so the note names the goal's rhythm and how the days split between running and
+    /// lifting. Once the athlete picks their own count the note follows their number.
+    private var coachDaysTitle: String {
+        vm.daysPerWeek == vm.recommendedDays ? "The coach's pick for your goal" : "A week built around your availability"
+    }
+    private var coachDaysMessage: String {
+        let runs = vm.plannedRunDays
+        let lifts = vm.daysPerWeek - runs
+        let split = vm.lifting && vm.running
+            ? "\(vm.daysPerWeek) days: \(runs) running, \(lifts) lifting."
+            : "\(vm.daysPerWeek) training days."
+        let why: String
+        if vm.goal == .raceDistance, let race = vm.raceDistance {
+            why = " Endurance is built on how often you run, and \(vm.recommendedDays) days is the rhythm that builds a \(race.label.lowercased()) fastest."
+        } else {
+            why = " Endurance is built on how often you run; \(vm.recommendedDays) days is the rhythm we'd pick for this goal."
+        }
+        let tail = vm.daysPerWeek < vm.recommendedDays
+            ? " Fewer days still works — every run counts — the build just takes longer."
+            : " Leave preferred days empty and we'll arrange the week around recovery."
+        return split + why + tail
     }
 
     private var equipmentStep: some View {

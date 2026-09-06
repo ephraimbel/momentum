@@ -320,9 +320,17 @@ enum PlanEngine {
                                    catalog: catalog, isDeload: isDeload || isTaper, muscleFocus: Set(profile.muscleFocus),
                                    split: profile.strengthSplit, weekIndex: w, phase: phase)
                 : []
+            // The race week schedules around race day (see `schedule(raceDayOffset:)`).
+            let raceDayOffset: Int? = {
+                guard raceInWindow, hasCardio, let raceDate = profile.raceDate else { return nil }
+                let dayCount = calendar.dateComponents([.day], from: calendar.startOfDay(for: startDate),
+                                                       to: calendar.startOfDay(for: raceDate)).day ?? -1
+                return dayCount >= 0 && dayCount / 7 == w ? dayCount % 7 : nil
+            }()
             var scheduled = schedule(runs: runs, lifts: lifts,
                                      preferredDayOffsets: profile.preferredDayOffsets,
-                                     avoidDayOffsets: profile.avoidDayOffsets)
+                                     avoidDayOffsets: profile.avoidDayOffsets,
+                                     raceDayOffset: raceDayOffset)
             // Podium's rest-day shakeout: on training weeks (never deload/taper/lead-in), one of
             // the remaining rest days — the day after the long run when it's free — carries an
             // OPTIONAL 3 km jog. "Rest days will just be a slow mile or two" is the tier's promise;
@@ -528,52 +536,64 @@ enum PlanEngine {
         // Re-run the governor after the ordering pass moved volumes and clean-distance rounding
         // snapped them. On a beginner's small sessions a snap is a large relative change, and the
         // plan the athlete gets is the rounded one, so that is the shape the 1.3x cap has to hold.
-        let finalFactors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.trainingVolumeM),
-                                                   currentWeeklyM: profile.currentWeeklyVolumeM ?? 0)
-        for (w, factor) in finalFactors.enumerated() where factor < 0.999 {
-            guard !weeks[w].sessions.contains(where: { $0.runType == .race }) else { continue }
-            for i in weeks[w].sessions.indices where weeks[w].sessions[i].discipline != .strength {
-                if let d = weeks[w].sessions[i].targetDistanceM {
-                    weeks[w].sessions[i].targetDistanceM = (d * factor).rounded()
-                }
-                if let dur = weeks[w].sessions[i].targetDurationS {
-                    weeks[w].sessions[i].targetDurationS = (dur * factor).rounded()
+        //
+        // The governor and the down-week rule pull against each other: trimming a recovery week
+        // under the loading week before it lowers the trailing average, and the loading week after
+        // it can then read as a spike (coach pass 2026-09-06 — a 5K build on a steep ladder failed
+        // the legacy cap at exactly that week). Both passes only ever reduce, so they run in turn
+        // until neither has anything left to do; three rounds is more than any real plan needs.
+        for _ in 0..<3 {
+            var changed = false
+            let finalFactors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.trainingVolumeM),
+                                                       currentWeeklyM: profile.currentWeeklyVolumeM ?? 0)
+            for (w, factor) in finalFactors.enumerated() where factor < 0.999 {
+                guard !weeks[w].sessions.contains(where: { $0.runType == .race }) else { continue }
+                changed = true
+                for i in weeks[w].sessions.indices where weeks[w].sessions[i].discipline != .strength {
+                    if let d = weeks[w].sessions[i].targetDistanceM {
+                        weeks[w].sessions[i].targetDistanceM = (d * factor).rounded()
+                    }
+                    if let dur = weeks[w].sessions[i].targetDurationS {
+                        weeks[w].sessions[i].targetDurationS = (dur * factor).rounded()
+                    }
                 }
             }
-        }
 
-        // Reconcile the other reduction-only invariant after that final cap: a labeled deload or
-        // taper must still be lower than the most recent loading week. The governor can reduce that
-        // earlier loading week after the first down-week pass; unit snapping can also round a small
-        // down week back to the same displayed dose. Scaling the eased week here cannot introduce a
-        // load spike, add intensity, or alter the schedule. Keep the five-percent margin in raw SI
-        // values rather than snapping upward through either constraint.
-        var lastLoadingVolumeAfterCaps: Double?
-        for w in weeks.indices {
-            let eased = weeks[w].isDeload || weeks[w].isTaper
-            guard !weeks[w].sessions.contains(where: { $0.runType == .race }) else { continue }
-            guard eased else {
-                if weeks[w].trainingVolumeM > 0 {
-                    lastLoadingVolumeAfterCaps = weeks[w].trainingVolumeM
+            // Reconcile the other reduction-only invariant after that cap: a labeled deload or
+            // taper must still be lower than the most recent loading week. The governor can reduce
+            // that earlier loading week after the first down-week pass; unit snapping can also
+            // round a small down week back to the same displayed dose. Scaling the eased week here
+            // cannot introduce a load spike, add intensity, or alter the schedule. Keep the
+            // five-percent margin in raw SI values rather than snapping upward through either
+            // constraint.
+            var lastLoadingVolumeAfterCaps: Double?
+            for w in weeks.indices {
+                let eased = weeks[w].isDeload || weeks[w].isTaper
+                guard !weeks[w].sessions.contains(where: { $0.runType == .race }) else { continue }
+                guard eased else {
+                    if weeks[w].trainingVolumeM > 0 {
+                        lastLoadingVolumeAfterCaps = weeks[w].trainingVolumeM
+                    }
+                    continue
                 }
-                continue
+                guard let ceiling = lastLoadingVolumeAfterCaps, ceiling > 0,
+                      weeks[w].trainingVolumeM >= ceiling else { continue }
+                let current = weeks[w].trainingVolumeM
+                guard current > 0 else { continue }
+                changed = true
+                let factor = ceiling * 0.95 / current
+                for i in weeks[w].sessions.indices
+                where weeks[w].sessions[i].discipline != .strength && weeks[w].sessions[i].runType != .race {
+                    if let distance = weeks[w].sessions[i].targetDistanceM {
+                        weeks[w].sessions[i].targetDistanceM = (distance * factor).rounded()
+                    }
+                    if let duration = weeks[w].sessions[i].targetDurationS {
+                        weeks[w].sessions[i].targetDurationS = (duration * factor).rounded()
+                    }
+                }
             }
-            guard let ceiling = lastLoadingVolumeAfterCaps, ceiling > 0,
-                  weeks[w].trainingVolumeM >= ceiling else { continue }
-            let current = weeks[w].trainingVolumeM
-            guard current > 0 else { continue }
-            let factor = ceiling * 0.95 / current
-            for i in weeks[w].sessions.indices
-            where weeks[w].sessions[i].discipline != .strength && weeks[w].sessions[i].runType != .race {
-                if let distance = weeks[w].sessions[i].targetDistanceM {
-                    weeks[w].sessions[i].targetDistanceM = (distance * factor).rounded()
-                }
-                if let duration = weeks[w].sessions[i].targetDurationS {
-                    weeks[w].sessions[i].targetDurationS = (duration * factor).rounded()
-                }
-            }
+            if !changed { break }
         }
-
 
         var generated = GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
         generated.thresholdSPerKm = threshold
@@ -602,8 +622,12 @@ enum PlanEngine {
         // emphasis a strength goal gets as close to 50/50 as the week allows, but the odd day stays
         // with running. Everything else remains more clearly running-led. A goal changes why the
         // strength is there; it never turns Momentum into a lift-dominant programme.
+        // Running-first by default (coach pass 2026-09-06): an athlete who stated no priority
+        // trains like a runner who lifts — one lift day up to five days, two at six or seven. A
+        // muscle or strength goal keeps a heavier lift share, but from three days up the week
+        // still runs MORE than it lifts unless the athlete explicitly put lifting first.
         let liftFraction = priority?.liftFraction
-            ?? ((goal == .buildMuscle || goal == .getStronger) ? 0.50 : 0.30)
+            ?? ((goal == .buildMuscle || goal == .getStronger) ? 0.40 : HybridPriority.running.liftFraction)
         var runDays = max(1, Int((Double(days) * (1 - liftFraction)).rounded()))
         runDays = min(runDays, max(1, days - 1))
         // **The race sets a floor on the running** (owner call 2026-08-30: "we want to make it
@@ -622,6 +646,10 @@ enum PlanEngine {
             let need = PlanFeasibility.minimumEffectiveDays(forDistanceM: raceM)
             runDays = max(runDays, min(days - liftFloor, need))
             runDays = max(1, min(runDays, max(1, days - 1)))
+        }
+        if days >= 3 {
+            let minRuns = priority == .lifting ? (days + 1) / 2 : days / 2 + 1
+            runDays = max(runDays, min(minRuns, days - 1))
         }
         return (runDays, days - runDays)
     }
@@ -1046,7 +1074,10 @@ enum PlanEngine {
             // legs to mean anything, so the TT is that week's only hard running.
             // Race-specific weeks alternate goal-pace long runs with plain ones (Pfitzinger); the
             // general build keeps its every-third-week rehearsal.
-            let raceFinishWeek = specificIndex >= 0 ? specificIndex % 2 == 1 : weekIndex % 3 == 1
+            // Every peak week of a long race carries race pace in the long run: the last big
+            // rehearsal belongs three weeks out, not to a parity of the calendar (2026-09-06).
+            let raceFinishWeek = phase == .peak
+                || (specificIndex >= 0 ? specificIndex % 2 == 1 : weekIndex % 3 == 1)
             if rotate, longRace, raceFinishWeek, phase == .build || phase == .peak, isRunning, !timeTrial {
                 var s = makeRun(.long, wavedLong, hard: true, cap: longCap)
                 let dist = s.targetDistanceM ?? 0
@@ -1176,14 +1207,15 @@ enum PlanEngine {
         // RP-long + primary + second quality: three hard days on a five-day week, which is the
         // grey-zone overload every coach's first red pen finds.
         let longIsHard = out.contains { ($0.runType == .long || $0.runType == .progression) && $0.isHardRun }
-        let wantsSecond = !timeTrial && !longIsHard
+        let earnsSecond = !timeTrial
             && (qualityBias > 1.0 || level == .experienced) && weeklyM >= (podium ? 40_000 : 45_000)
-        if isRunning, runDays >= 5, !isDeload, goal != .stayConsistent, injuryAreas.isEmpty,
-           level != .new, wantsSecond, phase == .build || phase == .peak, out.count < runDays,
-           let primary = primaryQuality {
+        let wantsSecond = earnsSecond && !longIsHard
+        let secondGate = isRunning && runDays >= 5 && !isDeload && goal != .stayConsistent && injuryAreas.isEmpty
+            && level != .new && (phase == .build || phase == .peak) && out.count < runDays && primaryQuality != nil
+        if secondGate, wantsSecond, let primary = primaryQuality {
             let q2 = secondQualityWorkout(weekIndex: weekIndex, p5k: p5k,
                                           weeklyVolumeM: weeklyM, primary: primary,
-                                          thresholdSPerKm: threshold)
+                                          thresholdSPerKm: threshold, raceDistanceM: raceDistanceM)
             secondQualityAdded = true
             // Priced from its own dose, exactly like the primary — the second hard day is a
             // workout, not a second slice of the week's quality budget.
@@ -1209,34 +1241,131 @@ enum PlanEngine {
         //    true RECOVERY jog, on ≥5-day weeks. Sized 1.4× / 0.6× the easy base, so together they
         //    equal two easy days — texture is volume-neutral.
         var mediumLongAdded = false, recoveryAdded = false
-        let texture = isRunning && level != .new && !isDeload && phase != .taper && runDays >= 5
+        // Texture from FOUR runs up (coach pass 2026-09-06; was five): two identical easy days
+        // read as filler, a medium-long and a shorter easy read as a week with a shape. The
+        // recovery jog still needs five. An ultra's medium-long is the back-to-back: the day
+        // before the long run, sized so the pair teaches running long on legs that already have.
+        let texture = isRunning && level != .new && !isDeload && phase != .taper && runDays >= 4
+        let recoveryTexture = texture && runDays >= 5
+        let ultraBackToBack = (raceDistanceM ?? 0) >= 45_000 && runDays >= 5
+            && (phase == .build || phase == .peak) && !timeTrial
         while out.count < runDays {
             if texture, !mediumLongAdded {
                 mediumLongAdded = true
-                var s = makeRun(.easy, easyBase * 1.4, hard: false,
-                                cap: min(longBase * volumeMult * 0.85, longCap ?? .infinity))
-                s.rationale = "Medium-long run — the quiet aerobic engine-builder between the hard days."
+                let mediumMult = ultraBackToBack ? 1.2 : (recoveryTexture ? 1.4 : 1.3)
+                var s = makeRun(.easy, easyBase * mediumMult, hard: false,
+                                cap: min(longBase * volumeMult * (ultraBackToBack ? 0.65 : 0.85), longCap ?? .infinity))
+                s.isMediumLong = true
+                if ultraBackToBack {
+                    s.backToBack = true
+                    s.rationale = "Back-to-back — a medium-long the day before the long run. The ultra's own tool: running long on legs that already ran long."
+                } else {
+                    s.rationale = "Medium-long run — the quiet aerobic engine-builder between the hard days."
+                }
+                // A capped medium-long hands what it could not carry to the runs still to come,
+                // so the texture never dents the week's volume (a dented week followed by a whole
+                // one read as a >10 % jump to the ramp guard).
+                let lost = (easyBase * mediumMult * volumeMult).rounded() - (s.targetDistanceM ?? 0)
+                let toCome = runDays - out.count - 1
+                if lost > 0, toCome > 0 { easyBase += (lost / Double(toCome)) / max(volumeMult, 0.01) }
                 out.append(s)
-            } else if texture, !recoveryAdded {
+            } else if recoveryTexture, !recoveryAdded {
                 recoveryAdded = true
                 var s = makeRun(.recovery, easyBase * 0.6, hard: false)
                 s.rationale = "Recovery jog — slower on purpose; this is where the hard work absorbs."
                 out.append(s)
             } else {
                 let intervals = (isRunning && level == .new) ? "Run/walk 1:1" : nil
-                out.append(makeRun(.easy, easyBase, hard: false, intervals: intervals))
+                // With a medium-long but no recovery jog (four runs) the other easy day gives back
+                // what the medium-long took, so the week's volume is unchanged by the texture.
+                let mult = (texture && !recoveryTexture && mediumLongAdded && !ultraBackToBack) ? 0.7 : 1.0
+                out.append(makeRun(.easy, easyBase * mult, hard: false, intervals: intervals))
             }
         }
         // Long-run share, checked against the week actually built (2026-08-28): the week-based
         // cap above is an estimate from the tier/seed volume; once the sessions exist, the long
         // run may not exceed ~28% of the real week unless the race alone asks for more (3-day
         // weeks legitimately concentrate more in the long run — `longRunPeak`'s race term).
+        // The week's proportions (coach pass 2026-09-06). Easy days used to swallow whatever the
+        // quality cap left over, so a 3-run half-marathon week ran a 13 km "easy" beside a 12 km
+        // long, and a 4-run marathon week two 21 km easy days. Now every other run is sized
+        // against the long run — recovery ≤ 45 %, easy ≤ 70 %, medium-long ≤ 80 % (a back-to-back
+        // ≤ 65 %) — and what they cannot honestly carry goes, in order, to the quality session as
+        // easy running around the work (≤ 85 % of the long), to the medium-long, then to the long
+        // run itself within its cap and at most 15 % in one week. The remainder is not forced.
+        if isRunning, let li = out.firstIndex(where: { $0.runType == .long || $0.runType == .progression }),
+           let longM = out[li].targetDistanceM, longM > 0 {
+            var surplus = 0.0
+            var easyIndices: [Int] = []
+            // The week's volume as composed, BEFORE any run is capped: the share caps below are
+            // measured against the whole week, not against what is left once the easy days shrink.
+            let weekTotal = out.filter { $0.runType != .race }.reduce(0.0) { $0 + ($1.targetDistanceM ?? 0) }
+            for i in out.indices where i != li && out[i].runType != .race && !out[i].isHardRun {
+                let ratio: Double = out[i].runType == .recovery ? 0.45
+                    : out[i].isMediumLong ? (out[i].backToBack ? 0.65 : 0.80) : 0.70
+                let cap = (longM * ratio).rounded()
+                if let d = out[i].targetDistanceM, d > cap { surplus += d - cap; out[i].targetDistanceM = cap }
+                if out[i].runType != .recovery, !out[i].isMediumLong { easyIndices.append(i) }
+            }
+            if surplus > 0, let mi = out.firstIndex(where: { $0.isMediumLong && !$0.backToBack }),
+               let m = out[mi].targetDistanceM {
+                let give = min(max(0, (longM * 0.80).rounded() - m), surplus)
+                if give > 0 { out[mi].targetDistanceM = m + give; surplus -= give }
+            }
+            // The long run takes its share on EVERY week, measured against this week's own
+            // (waved) length, so the plateau's oscillation survives the bump and no two weeks are
+            // sized by different rules — an up-wave-only sink left alternating weeks a ramp step
+            // apart (the adversarial load-cap gate caught it, 2026-09-06).
+            if surplus > 0 {
+                // …and never past the coach's share of the week: 45 % on three runs, 40 % for a
+                // marathon-plus on four or more, 36 % otherwise (the audit's own bars, with room).
+                // The share rides the long run's own wave, so the plateau's oscillation survives
+                // the sink instead of every week filling to one identical ceiling.
+                let share: Double = (runDays <= 3 ? 0.45 : ((raceDistanceM ?? 0) >= 40_000 ? 0.40 : 0.36)) * longWaveMult
+                // The race's own long-run peak is the hard stop the share cap below applies with
+                // no week term; pushing past it here would only be clamped back, and the clamp
+                // would dent the week.
+                let racePeak = raceDistanceM.map { longRunPeak(forRaceM: $0, podium: podium) } ?? .infinity
+                // Every hard cap rides the wave too: a plateau where each week filled to the same
+                // three-hour cap read as months of identical Sundays.
+                let hardCap = min(longCap ?? durationCapM, durationCapM, racePeak) * longWaveMult
+                let ceiling = min(hardCap.rounded(), (longM * 1.15).rounded(), (weekTotal * share).rounded())
+                let give = min(max(0, ceiling - longM), surplus)
+                if give > 0 { out[li].targetDistanceM = longM + give; surplus -= give }
+            }
+            // Volume is a contract with the governor and the ramp: whatever still has no home
+            // goes back to the easy days evenly. The proportions bend before the week shrinks.
+            if surplus > 0, !easyIndices.isEmpty {
+                // …within what a single easy run may honestly hold: the same implied per-run cap
+                // the composer applies (a third over the week's average run), and never past the
+                // long run's own duration cap. What still has no home is not forced.
+                let perRunCap = max(2_000, min(durationCapM, (weekTotal / Double(max(1, runDays))) * 1.35))
+                var remaining = surplus
+                for i in easyIndices {
+                    let each = (remaining / Double(easyIndices.count)).rounded()
+                    let current = out[i].targetDistanceM ?? 0
+                    let give = min(each, max(0, perRunCap.rounded() - current))
+                    out[i].targetDistanceM = current + give
+                    remaining -= give
+                }
+            }
+        }
         if let raceM = raceDistanceM,
            let i = out.firstIndex(where: { $0.runType == .long || $0.runType == .progression }),
            let long = out[i].targetDistanceM {
             let others = out.enumerated().filter { $0.offset != i }.reduce(0.0) { $0 + ($1.element.targetDistanceM ?? 0) }
             let shareCap = max(longRunPeak(forRaceM: raceM, podium: podium), (0.28 / 0.72) * others)
-            if long > shareCap { out[i].targetDistanceM = shareCap.rounded() }
+            if long > shareCap {
+                out[i].targetDistanceM = shareCap.rounded()
+                // What the clamp took goes back to the easy days, so the week keeps its volume
+                // and a clamped week never reads as a dip beside an unclamped one (2026-09-06).
+                let cut = long - shareCap.rounded()
+                let easy = out.indices.filter { $0 != i && out[$0].runType != .race && !out[$0].isHardRun && out[$0].discipline == .running }
+                if cut > 0, !easy.isEmpty {
+                    let each = (cut / Double(easy.count)).rounded()
+                    for j in easy { out[j].targetDistanceM = (out[j].targetDistanceM ?? 0) + each }
+                }
+            }
         }
         return out
     }
@@ -1337,8 +1466,12 @@ enum PlanEngine {
                 // foundation is laid (Lydiard/Seiler) — and nothing complicated to follow.
                 menu = [(.tempo, nil, nil, steadyNote)]
             case .peak:
-                menu = [(.intervals, "\(rKm)×1km @ threshold", threshold, repeatNote),
-                        (.tempo, nil, nil, steadyNote)]
+                menu = raceM >= 20_000
+                    ? [(.intervals, "\(max(2, min(4, rKm / 2 + 1)))×2km @ threshold", threshold,
+                        "Longer repeats at your steady pace — the sharpening a long race actually needs."),
+                       (.tempo, nil, nil, steadyNote)]
+                    : [(.intervals, "\(rKm)×1km @ threshold", threshold, repeatNote),
+                       (.tempo, nil, nil, steadyNote)]
             case .taper:
                 // Race week and the weeks before it: ONE short touch of race pace, every time.
                 // Taper science cuts volume, never intensity — and never rotates into something new.
@@ -1356,10 +1489,17 @@ enum PlanEngine {
                 // slower (threshold repeats), because its mechanism is maximal-speed running. An
                 // impact history gets a continuous steady run — no repeated hard footstrikes at
                 // all — because peak impact force scales with pace.
+                // Three-minute reps belong to the 5K and 10K. From the half up, the "quick" day
+                // is longer threshold work — the marathon is won at threshold and race pace, not
+                // at VO2 pace (coach pass 2026-09-06).
+                let longReps = max(2, min(4, rKm / 2 + 1))
                 let quick: (RunType, String?, Double?, String?) = avoidSpeed
                     ? (.intervals, "\(rKm)×1km @ threshold", threshold, speedNote)
                     : avoidImpact
                     ? (.tempo, nil, nil, impactNote)
+                    : raceM >= 20_000
+                    ? (.intervals, "\(longReps)×2km @ threshold", threshold,
+                       "Longer repeats at your steady pace, with a short jog between. A long race is built here, not at sprint pace.")
                     : (.intervals, "\(timeReps)×3min", nil, repeatNote)
                 let cruise: (RunType, String?, Double?, String?) =
                     (.intervals, "\(rKm)×1km @ threshold", threshold, repeatNote)
@@ -1545,7 +1685,7 @@ enum PlanEngine {
     /// Injury histories never reach here (the second slot is gated off entirely for them).
     static func secondQualityWorkout(weekIndex: Int, p5k: Double, weeklyVolumeM: Double?,
                                      primary: (type: RunType, intervals: String?, paceOverride: Double?, note: String?),
-                                     thresholdSPerKm: Double? = nil)
+                                     thresholdSPerKm: Double? = nil, raceDistanceM: Double? = nil)
         -> (type: RunType, intervals: String?, paceOverride: Double?, note: String?) {
         let threshold = pace(.tempo, p5k: p5k, threshold: thresholdSPerKm)
         // Both doses are the athlete's own, on the same budgets the primary slot works to
@@ -1558,6 +1698,16 @@ enum PlanEngine {
         let reps = min(iCeil, 4 + weekIndex / 4)
         let primaryIsSteady = (primary.intervals?.lowercased().contains("threshold") ?? false)
             || primary.type == .tempo
+        // From the half up the second day is never three-minute reps: a steady primary earns a
+        // continuous steady run, a repeats primary earns threshold kilometres (2026-09-06).
+        if (raceDistanceM ?? 0) >= 20_000 {
+            let primaryHasLongReps = primary.intervals?.contains("2km") ?? false
+            return primaryHasLongReps
+                ? (.intervals, "\(rKm)×1km @ threshold", threshold,
+                   "Your second hard day — shorter threshold repeats beside the long ones. Your mileage has earned both.")
+                : (.intervals, "\(max(2, min(3, rKm / 2)))×2km @ threshold", threshold,
+                   "Your second hard day — longer repeats at your steady pace. A long race is built here, and your mileage has earned both.")
+        }
         return primaryIsSteady
             ? (.intervals, "\(reps)×3min", nil,
                "Your second hard day — short repeats beside the steady work. Your mileage has earned both.")
@@ -1736,102 +1886,217 @@ enum PlanEngine {
     /// Assigns day offsets so a **hard run never lands the day after a heavy lower-body lift**.
     /// Lifts are spread first; hard runs take the remaining non-adjacent days, downgrading to easy
     /// only if forced. Also tags rationale.
+    /// Circular distance between two day offsets in a seven-day week — the week wraps, so a
+    /// Sunday long run and a Monday session are neighbours.
+    static func circularDayDistance(_ a: Int, _ b: Int) -> Int {
+        let d = abs(a - b) % 7
+        return min(d, 7 - d)
+    }
+
+    /// The coach's week for a given number of run days (Mon = 0 … Sun = 6): the long run anchors
+    /// Sunday, quality sits mid-week with easy days around it, and the day after the long run
+    /// is rest or a recovery jog. Seven is every day.
+    static func runDayTemplate(_ count: Int) -> [Int] {
+        switch count {
+        case ...0: return []
+        case 1: return [6]
+        case 2: return [2, 6]
+        case 3: return [1, 3, 6]
+        case 4: return [1, 3, 5, 6]
+        case 5: return [1, 2, 3, 5, 6]
+        case 6: return [0, 1, 2, 3, 5, 6]
+        default: return Array(0..<7)
+        }
+    }
+
+    /// Run-first scheduling (coach pass 2026-09-06). The old scheduler seated the lifts first and
+    /// filled runs into whatever was left, first-fit from Monday — so every plan opened its week
+    /// with the quality session the morning after Sunday's long run, and a 4-day week clumped
+    /// Mon–Thu with Friday and Saturday empty. Now the runs take the week's shape:
+    /// 1. run days come from `runDayTemplate` (or the athlete's preferred days);
+    /// 2. the long run takes the last of them;
+    /// 3. quality days are the combination with the greatest minimum CIRCULAR spacing from the
+    ///    long run and each other, so nothing hard follows the long run, even across the week
+    ///    boundary, and two hard days never touch;
+    /// 4. the recovery jog follows the first quality day, the medium-long sits mid-week (or the
+    ///    day before the long run when it is an ultra's back-to-back), easy days take the rest;
+    /// 5. lifts go on the days left over, never the day before the long run when it can be
+    ///    helped, and a hard lower-body lift never the day before a hard run.
     static func schedule(runs: [GeneratedSession], lifts: [GeneratedSession],
                          preferredDayOffsets: [Int] = [],
-                         avoidDayOffsets: [Int] = []) -> [GeneratedSession] {
+                         avoidDayOffsets: [Int] = [],
+                         raceDayOffset: Int? = nil) -> [GeneratedSession] {
         var lifts = lifts, runs = runs
         let total = lifts.count + runs.count
         guard total > 0 else { return [] }
 
-        // Use the athlete's preferred days as the candidate pool when they gave enough of them;
-        // otherwise the auto-spread schedules around any LEARNED avoid-days (the Athlete Model's
-        // slip evidence) — falling back to the whole week when avoiding would leave too few days.
-        // An explicit preference always beats the inference (avoid-days are ignored beside it).
         let cleanedPref = Array(Set(preferredDayOffsets.filter { (0..<7).contains($0) })).sorted()
-        let pool: [Int]
+        let avoidSet = Set(avoidDayOffsets.filter { (0..<7).contains($0) })
+        var pool: [Int]
         if cleanedPref.count >= total {
             pool = cleanedPref
         } else {
-            let avoid = Set(avoidDayOffsets)
-            let open = (0..<7).filter { !avoid.contains($0) }
+            let open = (0..<7).filter { !avoidSet.contains($0) }
             pool = open.count >= total ? open : Array(0..<7)
         }
-
-        let liftDayList = pickSpread(from: pool, count: lifts.count)
-        for i in lifts.indices { lifts[i].dayOffset = liftDayList[i] }
-        let lowerDays = Set(zip(lifts.indices, liftDayList).filter { lifts[$0.0].isHardLowerLift }.map { $0.1 })
-        let usedByLifts = Set(liftDayList)
-        let forbidden = Set(lowerDays.map { $0 + 1 })
-
-        // Prefer remaining pool days for runs; fall back to other week days only if the pool runs out.
-        let avoidSet = Set(avoidDayOffsets)
-        let spare = (0..<7).filter { !pool.contains($0) && !usedByLifts.contains($0) }
-        var available = pool.filter { !usedByLifts.contains($0) }
-        // Only widen past the athlete's own days when their days cannot hold the runs, and even
-        // then take the days they did NOT ask to avoid first.
-        if available.count < runs.count {
-            available += spare.filter { !avoidSet.contains($0) }
-            if available.count < runs.count { available += spare.filter { avoidSet.contains($0) } }
+        // Race week: the week ends at the race. Everything schedules before it, the last run
+        // takes the eve (the injection turns it into the shakeout), and the quality session sits
+        // as far from race day as the week allows instead of on it (2026-09-06).
+        if let raceDayOffset, raceDayOffset > 0 {
+            let before = pool.filter { $0 < raceDayOffset }
+            if !before.isEmpty { pool = before }
         }
-        var safe = available.filter { !forbidden.contains($0) }
-        var unsafe = available.filter { forbidden.contains($0) }
 
-        // The LONG RUN anchors the week, placed first — the way a coach builds a microcycle (fix
-        // the long day, then space the quality around it). It takes the LATEST available day, which
-        // on calendar-anchored weeks is the weekend slot long runs actually live in. A hard long
-        // (race-pace finish) honors the day-after-a-lower-lift rule like any hard run; a plain one
-        // may sit anywhere. Without this anchor, the long run took "whatever day was left", which
-        // put 25 km between two quality days with zero recovery on either side.
-        var hardDays: [Int] = []
+        // 1. Run days. The template is the coach's shape; it is used whenever the pool allows it
+        //    whole, otherwise the runs spread across the pool with the long run on its last day.
+        let template = runDayTemplate(runs.count)
+        var runDays: [Int]
+        if runs.isEmpty {
+            runDays = []
+        } else if cleanedPref.count >= total {
+            runDays = pickSpread(from: pool, count: runs.count)
+            // The long run wants the last preferred day.
+            if let last = pool.last, !runDays.contains(last) { runDays[runDays.count - 1] = last; runDays.sort() }
+        } else if raceDayOffset == nil, template.allSatisfy({ pool.contains($0) }) {
+            runDays = template
+        } else {
+            runDays = pickSpread(from: pool, count: runs.count)
+            if let last = pool.last, !runDays.contains(last) { runDays[runDays.count - 1] = last; runDays.sort() }
+        }
+        runDays = Array(Set(runDays)).sorted()
+
+        // 2–4. Roles on those days.
+        let longIndex = runs.firstIndex { $0.runType == .long || $0.runType == .progression }
+        let hardIndices = runs.indices.filter { $0 != longIndex && runs[$0].isHardRun }
+        var free = runDays
         var longDay: Int?
-        if let li = runs.firstIndex(where: { $0.runType == .long || $0.runType == .progression }) {
-            let candidates = runs[li].isHardRun && !safe.isEmpty ? safe
-                : (safe + unsafe).isEmpty ? [] : (safe + unsafe)
-            let welcome = candidates.filter { !avoidSet.contains($0) }
-            if let day = (welcome.isEmpty ? candidates : welcome).max() {
-                runs[li].dayOffset = day
-                longDay = day
-                if runs[li].isHardRun { hardDays.append(day) }
-                safe.removeAll { $0 == day }
-                unsafe.removeAll { $0 == day }
+        if let li = longIndex, let day = free.max() {
+            runs[li].dayOffset = day
+            longDay = day
+            free.removeAll { $0 == day }
+        }
+        // Quality: the combination with the greatest minimum circular spacing from the long run
+        // and from each other; ties go to the earlier days.
+        var hardDays: [Int] = []
+        if !hardIndices.isEmpty, !free.isEmpty {
+            let want = min(hardIndices.count, free.count)
+            func combos(_ pool: [Int], _ k: Int) -> [[Int]] {
+                guard k > 0 else { return [[]] }
+                guard pool.count >= k else { return [] }
+                var out: [[Int]] = []
+                for (i, d) in pool.enumerated() {
+                    for rest in combos(Array(pool[(i + 1)...]), k - 1) { out.append([d] + rest) }
+                }
+                return out
             }
+            var best: (score: Int, days: [Int])?
+            for c in combos(free, want) {
+                var anchors = c
+                if let longDay { anchors.append(longDay) }
+                var minGap = 7
+                for a in anchors.indices { for b in anchors.indices where b > a {
+                    minGap = min(minGap, circularDayDistance(anchors[a], anchors[b]))
+                } }
+                if best == nil || minGap > best!.score { best = (minGap, c) }
+            }
+            hardDays = (best?.days ?? []).sorted()
+            for (k, idx) in hardIndices.prefix(hardDays.count).enumerated() { runs[idx].dayOffset = hardDays[k] }
+            free.removeAll { hardDays.contains($0) }
+            // More hard runs than spacing allows: the extras run easy (the same protection the
+            // old scheduler applied when the lifts crowded them).
+            for idx in hardIndices.dropFirst(hardDays.count) {
+                runs[idx].isHardRun = false
+                runs[idx].runType = .easy
+                runs[idx].intervals = nil
+                runs[idx].rationale = "Kept easy — the week has no room for another hard day with proper recovery."
+            }
+        }
+        // Recovery jog: the day after the first quality day when that is a run day; else the day
+        // after the long run (Monday for a six-day week); else the first free day.
+        let recoveryIndices = runs.indices.filter { runs[$0].dayOffset < 0 && runs[$0].runType == .recovery }
+        for idx in recoveryIndices {
+            let after = hardDays.first.map { ($0 + 1) % 7 }
+            let afterLong = longDay.map { ($0 + 1) % 7 }
+            let day = [after, afterLong].compactMap { $0 }.first { free.contains($0) } ?? free.first
+            guard let day else { break }
+            runs[idx].dayOffset = day
+            free.removeAll { $0 == day }
+        }
+        // Medium-long: the day before the long run for an ultra's back-to-back; otherwise the free
+        // day farthest from the hard days (mid-week for a six-day athlete).
+        let mediumIndices = runs.indices.filter { runs[$0].dayOffset < 0 && runs[$0].isMediumLong }
+        for idx in mediumIndices {
+            var day: Int?
+            if runs[idx].backToBack, let longDay, free.contains((longDay + 6) % 7) { day = (longDay + 6) % 7 }
+            if day == nil {
+                day = free.max { a, b in
+                    let da = hardDays.map { circularDayDistance(a, $0) }.min() ?? 7
+                    let db = hardDays.map { circularDayDistance(b, $0) }.min() ?? 7
+                    return da != db ? da < db : a > b
+                }
+            }
+            guard let day else { break }
+            runs[idx].dayOffset = day
+            free.removeAll { $0 == day }
+        }
+        // Everything else runs easy on the days that remain, in order.
+        var remainingFree = free
+        for idx in runs.indices where runs[idx].dayOffset < 0 {
+            runs[idx].dayOffset = remainingFree.isEmpty ? (runDays.last ?? 6) : remainingFree.removeFirst()
         }
 
-        // Hard runs next onto safe days; downgrade if none left. With two quality days in a week
-        // (the second-quality slot), back-to-back hard days are the classic overuse pattern — so
-        // each hard run prefers a day NOT adjacent to an already-placed one, AND not adjacent to
-        // the long run (quality on dead legs the day after a long run is the other classic). A
-        // soft preference: when the pool leaves no such day, the run still schedules rather than
-        // vanish.
-        for i in runs.indices where runs[i].isHardRun && runs[i].dayOffset < 0 {
-            if !safe.isEmpty {
-                let spaced = Set(hardDays + (longDay.map { [$0] } ?? []))
-                let idx = safe.firstIndex { d in !spaced.contains { abs($0 - d) == 1 } }
-                    ?? safe.firstIndex { d in !hardDays.contains { abs($0 - d) == 1 } }
-                    ?? 0
-                let day = safe.remove(at: idx)
-                hardDays.append(day)
-                runs[i].dayOffset = day
-                // In a hybrid week, explain the cross-discipline placement (fresh legs) — our edge.
-                // The session's own plain description comes first (every hard day carries one as
-                // of 2026-08-28), then the placement sentence: what it is, then why it's today.
-                if let rt = runs[i].runType,
-                   let seq = HybridSequencing.runRationale(dayIndex: day, runType: rt, legDays: lowerDays) {
-                    runs[i].rationale = runs[i].rationale.map { "\($0) \(seq)" } ?? seq
-                }
-            } else {
-                runs[i].isHardRun = false
-                runs[i].runType = .easy
-                runs[i].intervals = nil
-                runs[i].rationale = "Kept easy to protect recovery around your lifting."
-                if !unsafe.isEmpty { runs[i].dayOffset = unsafe.removeFirst() }
-                else if !safe.isEmpty { runs[i].dayOffset = safe.removeFirst() }
+        // 5. Lifts on the leftover days. Ranked: never the day before the long run when it can be
+        //    helped; a hard lower-body lift never the day before a hard run; then the later day.
+        let usedByRuns = Set(runs.map(\.dayOffset))
+        let hardRunDays = Set(runs.filter(\.isHardRun).map(\.dayOffset))
+        var liftPool = pool.filter { !usedByRuns.contains($0) }
+        if liftPool.count < lifts.count {
+            let spare = (0..<7).filter { !pool.contains($0) && !usedByRuns.contains($0) }
+            liftPool += spare.filter { !avoidSet.contains($0) }
+            if liftPool.count < lifts.count { liftPool += spare.filter { avoidSet.contains($0) } }
+        }
+        // The lift days: a spread across what is left, keeping the day before the long run free
+        // when the pool allows it. The lifts take those days IN ORDER (a push/pull/legs split reads
+        // push → pull → legs across the week); a hard lower-body lift then swaps days only if it
+        // landed the day before a hard run.
+        var liftDays: [Int] = []
+        if !lifts.isEmpty {
+            let eveOfLong = longDay.map { ($0 + 6) % 7 }
+            let eveOfHard = Set(hardRunDays.map { ($0 + 6) % 7 })
+            let anyLower = lifts.contains { $0.isHardLowerLift }
+            // Safest pool first: not the eve of the long run, and (with a lower-body lift in the
+            // week) not the eve of a hard run. Relax the long run's eve before the hard run's.
+            let safest = liftPool.filter { $0 != eveOfLong && !(anyLower && eveOfHard.contains($0)) }
+            let safer = liftPool.filter { !(anyLower && eveOfHard.contains($0)) }
+            let source = safest.count >= lifts.count ? safest : (safer.count >= lifts.count ? safer : liftPool)
+            liftDays = pickSpread(from: source, count: lifts.count)
+            if liftDays.count < lifts.count {
+                liftDays += liftPool.filter { !liftDays.contains($0) }.prefix(lifts.count - liftDays.count)
+            }
+            liftDays.sort()
+        }
+        for (i, day) in zip(lifts.indices, liftDays) { lifts[i].dayOffset = day }
+        for i in lifts.indices where lifts[i].dayOffset < 0 { lifts[i].dayOffset = liftDays.last ?? 0 }
+        for i in lifts.indices where lifts[i].isHardLowerLift && hardRunDays.contains((lifts[i].dayOffset + 1) % 7) {
+            if let j = lifts.indices.first(where: { !lifts[$0].isHardLowerLift && !hardRunDays.contains((lifts[$0].dayOffset + 1) % 7) }) {
+                let d = lifts[i].dayOffset; lifts[i].dayOffset = lifts[j].dayOffset; lifts[j].dayOffset = d
             }
         }
-        // Easy runs take whatever remains.
-        var remaining = (safe + unsafe).sorted()
-        for i in runs.indices where !runs[i].isHardRun && runs[i].dayOffset < 0 {
-            runs[i].dayOffset = remaining.isEmpty ? (available.last ?? 6) : remaining.removeFirst()
+        let lowerDays = Set(lifts.filter(\.isHardLowerLift).map(\.dayOffset))
+
+        // A hard run the day after a hard lower lift is the one thing the week may never hold
+        // (`scheduleSatisfiesRecovery`): if the pool forced it, that run goes easy.
+        for i in runs.indices where runs[i].isHardRun && lowerDays.contains((runs[i].dayOffset + 6) % 7) {
+            runs[i].isHardRun = false
+            runs[i].runType = .easy
+            runs[i].intervals = nil
+            runs[i].rationale = "Kept easy to protect recovery around your lifting."
+        }
+        for i in runs.indices where runs[i].isHardRun && !lowerDays.isEmpty {
+            if let rt = runs[i].runType,
+               let seq = HybridSequencing.runRationale(dayIndex: runs[i].dayOffset, runType: rt, legDays: lowerDays) {
+                runs[i].rationale = runs[i].rationale.map { "\($0) \(seq)" } ?? seq
+            }
         }
 
         var all = (lifts + runs).sorted { $0.dayOffset < $1.dayOffset }
@@ -1841,7 +2106,6 @@ enum PlanEngine {
         return all
     }
 
-    /// Evenly spread `count` distinct day offsets across a 7-day week.
     static func spread(_ count: Int) -> [Int] {
         guard count > 0 else { return [] }
         var days: [Int] = []

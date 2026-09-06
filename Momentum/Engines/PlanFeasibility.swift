@@ -333,6 +333,33 @@ struct PlanFeasibility: Sendable {
     /// hold a long run AND quality AND enough easy volume, so the build maintains rather than
     /// prepares. (The engine still generates whatever week the athlete asks for; this is the
     /// honesty layer, not a gate.)
+    /// The coach's pick for training days a week (2026-09-06): the frequency that builds the
+    /// goal's endurance fastest without asking more than the level can absorb. Running builds on
+    /// frequency — an aerobic base is made of many runs, not a few big ones — so the pick leans
+    /// toward more days for longer goals and more experience, and a lifter gets one extra day so
+    /// the lifting never comes out of the running. Shown on the days step and used as its default;
+    /// the athlete's own choice always wins.
+    static func recommendedDays(goal: Goal, raceDistanceM: Double?, experience: ExperienceLevel,
+                                lifting: Bool) -> Int {
+        let base: Int
+        if goal == .raceDistance, let d = raceDistanceM, d > 0 {
+            switch RaceDistance.nearest(toMeters: d) {
+            case .fiveK: base = experience == .new ? 3 : 4
+            case .tenK: base = experience == .experienced ? 5 : 4
+            case .half: base = experience == .new ? 4 : 5
+            case .marathon: base = experience == .experienced ? 6 : 5
+            case .fiftyK: base = 6
+            }
+        } else {
+            switch goal {
+            case .stayConsistent: base = 3
+            case .buildMuscle, .getStronger: base = 4
+            default: base = experience == .experienced ? 5 : 4
+            }
+        }
+        return min(6, lifting && base >= 4 ? base + 1 : base)
+    }
+
     static func minimumEffectiveDays(forDistanceM distanceM: Double) -> Int {
         switch RaceDistance.nearest(toMeters: distanceM) {
         case .fiveK, .tenK: 3

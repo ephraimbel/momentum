@@ -28,6 +28,9 @@ final class OnboardingViewModel {
     var injuryAreas: Set<InjuryArea> = []
     var liftExperience: ExperienceLevel = .some      // used when hybrid (run + lift)
     var daysPerWeek: Int = 3
+    /// True once the athlete has picked a day count themselves; until then the days step opens on
+    /// the coach's recommendation for their goal (`PlanFeasibility.recommendedDays`, 2026-09-06).
+    var daysPerWeekChosen = false
     var equipment: Equipment = .fullGym
     var sessionMinutes: Int = 45
     var hasRace = false
@@ -192,6 +195,19 @@ final class OnboardingViewModel {
     /// disciplines, so a five-day balanced athlete gets three runs; telling them a half-marathon
     /// build wants four days and then calling five days enough was the flow agreeing with itself
     /// while the plan did something else. One definition, in `PlanEngine.hybridSplit`.
+    /// The coach's pick for this athlete's goal, level and disciplines.
+    var recommendedDays: Int {
+        PlanFeasibility.recommendedDays(goal: goal,
+                                        raceDistanceM: (goal == .raceDistance && hasRace) ? raceDistance?.meters : nil,
+                                        experience: experience, lifting: lifting)
+    }
+
+    /// Opens the days step on the recommendation unless the athlete already chose.
+    func applyRecommendedDaysIfUntouched() {
+        guard !daysPerWeekChosen else { return }
+        daysPerWeek = recommendedDays
+    }
+
     var plannedRunDays: Int {
         guard running else { return 0 }
         guard lifting else { return daysPerWeek }

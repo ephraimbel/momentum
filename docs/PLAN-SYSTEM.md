@@ -55,6 +55,38 @@ the distance stays an exact 5K through snapping. Calibration entry also accepts 
 benchmarks** (elite-floor ranges) so long-distance plans seed from the athlete's own race, not a
 stacked projection off a stale 5K.
 
+**The coach's week (2026-09-06 — the shape pass; `PlanWeekShapeTests` pins every rule):**
+- **Run-first scheduling** (`PlanEngine.schedule`): run days come from `runDayTemplate` (3 → Tue/Thu/Sun,
+  4 → Tue/Thu/Sat/Sun, 5 → Tue/Wed/Thu/Sat/Sun, 6 → Mon–Thu + Sat/Sun) or the athlete's preferred days; the
+  long run takes the last day; quality days are the combination with the greatest minimum CIRCULAR spacing
+  from the long run and each other (`circularDayDistance` — Sunday and Monday are neighbours), so nothing hard
+  ever follows the long run and two hard days never touch; the recovery jog follows the first quality day,
+  the medium-long sits mid-week (or the day before the long run for an ultra's back-to-back), easy days take
+  the rest. Lifts fill the days left over — never the day before the long run while another day is free, and
+  a hard lower-body lift never the day before a hard run (`scheduleSatisfiesRecovery` still holds). Before this
+  the lifts were seated first and runs filled in from Monday, so every plan opened its week with the quality
+  session the morning after the long run.
+- **Sizing against the long run**: recovery ≤ 45 %, easy ≤ 70 %, medium-long ≤ 80 % (a back-to-back ≤ 65 %)
+  of the long run. What the easy days cannot honestly carry goes, in order, to the medium-long, then to the long
+  run within its cap (≤ +15 % in one week, ≤ 36–45 % of the week by run count, the three-hour clock); whatever is
+  still left returns to the easy days up to 1.35× the week's average run, so the week's total stays on the
+  governed ramp and the quality session never inflates. (A 3-run half week used to run a 13 km "easy" beside a
+  12 km long.)
+- **The cap and the cutback converge**: the final 1.3× governor and the "a down week goes down" rule run in turn
+  (three rounds at most) — trimming a recovery week lowers the trailing average, and the loading week after it
+  read as a spike to the legacy cap until the governor got a second look. Both only ever reduce.
+- **Texture from four runs** (was five): a medium-long and a shorter easy; the recovery jog from five. An ultra
+  (≥ 45 km) with five-plus run days runs **back-to-back** in build and peak: a medium-long ≤ 65 % of the long
+  run the day before it (`GeneratedSession.backToBack`).
+- **Long-race quality**: from the half up, the build's "quick" day and the peak menu are 2 km threshold repeats,
+  not three-minute reps (those stay with the 5K/10K), and **every peak week's long run carries race pace**.
+- **Running-first hybrids**: with no stated priority the split uses the running fraction (one lift day up to
+  five days, two at six or seven); a muscle/strength goal keeps a 40 % lift share; from three days up the week
+  runs MORE than it lifts unless the athlete put lifting first (then a tie is allowed).
+- **The coach's pick for days** (`PlanFeasibility.recommendedDays`): 5K 3–4, 10K 4–5, half 4–5, marathon 5–6,
+  50K 6 (by level), general goals 4–5, consistency 3; a lifter gets one more day (to 6) so lifting never comes
+  out of the running. The onboarding days step OPENS on the pick (until the athlete chooses) and says why.
+
 ## 2. Honesty (`PlanFeasibility.assess` — the verdict before the plan)
 
 Reads race distance, goal time, current fitness + volume, weeks available, experience, injury

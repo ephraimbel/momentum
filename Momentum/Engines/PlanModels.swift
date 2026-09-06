@@ -91,6 +91,10 @@ struct GeneratedSession: Sendable, Equatable {
     /// Recovery-scheduling classifiers (§9.3).
     var isHardLowerLift: Bool = false
     var isHardRun: Bool = false   // intervals/tempo/race
+    /// The week's medium-long run (an easy run sized toward the long one) — placed mid-week, or
+    /// the day before the long run when `backToBack` (the ultra's weekend).
+    var isMediumLong: Bool = false
+    var backToBack: Bool = false
 }
 
 struct GeneratedWeek: Sendable, Equatable {
