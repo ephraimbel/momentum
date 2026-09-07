@@ -87,18 +87,18 @@ enum CoachActions {
         case .skipSession(let id):
             guard let s = session(id, of: profile) else { return [] }
             return ["Clears \(PlanCoaching.brief(for: s, distanceUnit: unit)) on \(day(s.date))",
-                    "No streak lost — rest days count"]
+                    "Your streak holds. Rest days count"]
         case .easeWeek:
             return ["Upcoming sessions ease ~15%", "Hard sessions soften to easy"]
         case .bumpLoad:
             return ["Upcoming sessions nudge up ~10%", "Your completed load says you've earned it"]
         case .easePaces:
-            return ["Target paces ease ~2%", "Future runs only — history untouched"]
+            return ["Target paces ease ~2%", "Future runs only. History untouched"]
         case .changeEquipment(let equipment):
             return ["Equipment: \(label(profile.equipment)) → \(label(equipment))", rebuildLine]
         case .injuryReport(let area, let severity):
             return ["Protects your \(area.label.lowercased()) for \(severity.windowDays) days",
-                    "Gated return when you're ready — never a diagnosis"]
+                    "Gated return when you're ready. Never a diagnosis"]
         case .pausePlan(let days):
             var lines = ["Everything upcoming shifts \(days) day\(days == 1 ? "" : "s") later"]
             if profile.raceDate != nil { lines.append("Race day stays fixed") }
@@ -112,7 +112,7 @@ enum CoachActions {
             }
             return ["Rebuilds from today, still pointed at your race", rebuildLine]
         case .rememberNote(let text, _):
-            return ["“\(text)”", "Kept in your coach's memory — forget it anytime"]
+            return ["“\(text)”", "Kept in your coach's memory. Forget it anytime"]
         case .explainPlan, .weekRecap, .racePlan, .showMemory, .racePredictor, .todayBriefing, .showZones:
             return []   // informational — these render their own sections
         }
@@ -130,12 +130,12 @@ enum CoachActions {
 
         case .changeGoal(let goal):
             let old = profile.goal
-            guard goal != old else { return .declined(reason: "That's already your goal — you're set.") }
+            guard goal != old else { return .declined(reason: "That's already your goal. You're set.") }
             profile.goal = goal
             rebuild(profile, in: context)
             return notify(Receipt(
                 headline: "Goal updated",
-                detail: "Your goal is now \(label(goal).lowercased()). I rebuilt your upcoming weeks around it — completed work and your calibrated paces are kept."),
+                detail: "Your goal is now \(label(goal).lowercased()). I rebuilt your upcoming weeks around it. Completed work and your calibrated paces are kept."),
                 today: today, in: context)
 
         case .changeRace(let distanceM, let date, let goalTime):
@@ -154,9 +154,9 @@ enum CoachActions {
             let detail: String
             if check.verdict == .tooShort {
                 let alt = check.options.first.map { " If you can, \(lowerFirst($0))." } ?? ""
-                detail = "\(label) on \(day(date)) — that's a very short runway, so I built the most we safely can to get you to the line healthy.\(alt) Your upcoming weeks are rebuilt to point at it."
+                detail = "\(label) on \(day(date)). That's a very short runway, so I built the most we safely can to get you to the line healthy.\(alt) Your upcoming weeks are rebuilt to point at it."
             } else {
-                detail = "\(label) on \(day(date)) — \(check.headline.lowercased()). I rebuilt your upcoming weeks to point at it."
+                detail = "\(label) on \(day(date)). \(check.headline). I rebuilt your upcoming weeks to point at it."
             }
             return notify(Receipt(headline: "Race locked in", detail: detail), today: today, in: context)
 
@@ -222,7 +222,7 @@ enum CoachActions {
             let what = days.map { "\($0) days a week" } ?? "your preferred days"
             return notify(Receipt(
                 headline: "Schedule updated",
-                detail: "Your plan now fits \(what). I rebuilt the upcoming weeks — nothing you've done is lost."),
+                detail: "Your plan now fits \(what). I rebuilt the upcoming weeks. Nothing you've done is lost."),
                 today: today, in: context)
 
         case .changeSessionLength(let minutes):
@@ -254,7 +254,7 @@ enum CoachActions {
 
         case .skipSession(let id):
             guard let s = session(id, of: profile), s.status != .completed else {
-                return .declined(reason: "That session isn't on your plan anymore — nothing to clear.")
+                return .declined(reason: "That session isn't on your plan anymore. Nothing to clear.")
             }
             let what = PlanCoaching.brief(for: s, distanceUnit: .auto), when = day(s.date)
             // Drop it from the relationship first — a deleted model can linger in the to-many array
@@ -264,7 +264,7 @@ enum CoachActions {
             try? context.save()
             return notify(Receipt(
                 headline: "Session cleared",
-                detail: "Cleared \(what) on \(when). No streak lost — rest days count too."),
+                detail: "Cleared \(what) on \(when). Your streak holds. Rest days count too."),
                 today: today, in: context)
 
         case .easeWeek:
@@ -273,7 +273,7 @@ enum CoachActions {
                 return .declined(reason: throttleReason(plan, today: today))
             }
             guard PlanCoaching.apply(.ease, to: plan, from: today, in: context, calendar: calendar) > 0 else {
-                return .declined(reason: "There's nothing upcoming to ease — your slate is clear.")
+                return .declined(reason: "There's nothing upcoming to ease. Your slate is clear.")
             }
             return notify(Receipt(
                 headline: "Week eased",
@@ -290,7 +290,7 @@ enum CoachActions {
                 return .declined(reason: "Your recent training pattern doesn't support reviewing a bump right now. Keep following the plan and use your recovery and session feedback as the deciding context.")
             }
             guard PlanCoaching.apply(.increase, to: plan, from: today, in: context, calendar: calendar) > 0 else {
-                return .declined(reason: "There's nothing upcoming to raise — your slate is clear.")
+                return .declined(reason: "There's nothing upcoming to raise. Your slate is clear.")
             }
             return notify(Receipt(
                 headline: "Load raised",
@@ -300,7 +300,7 @@ enum CoachActions {
         case .easePaces:
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
             guard PlanCoaching.canEasePaces(plan, today: today, calendar: calendar) else {
-                return .declined(reason: "I eased your paces less than a week ago — let a few sessions land at the new targets first, then we'll look again.")
+                return .declined(reason: "I eased your paces less than a week ago. Let a few sessions land at the new targets first, then we'll look again.")
             }
             guard PlanCoaching.easeQualityPaces(plan, from: today, in: context, calendar: calendar) > 0 else {
                 return .declined(reason: "There are no upcoming paced runs to ease right now.")
@@ -318,19 +318,19 @@ enum CoachActions {
         case .pausePlan(let days):
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
             guard plan.pausedUntil == nil else {
-                return .declined(reason: "Your plan is already paused — tell me when you're back and I'll pick it up.")
+                return .declined(reason: "Your plan is already paused. Tell me when you're back and I'll pick it up.")
             }
             let shifted = PlanCoaching.pause(plan, days: days, from: today, in: context, calendar: calendar)
             guard shifted > 0 else { return .declined(reason: "There's nothing upcoming to pause.") }
             var detail = "Everything upcoming moved \(days) day\(days == 1 ? "" : "s") later. Life happens; the plan bends."
             if profile.raceDate != nil {
-                detail += " Race day stays fixed, so the runway is a little tighter — I'll be honest about it when you're back."
+                detail += " Race day stays fixed, so the runway is a little tighter. I'll be honest about it when you're back."
             }
             return notify(Receipt(headline: "Plan paused", detail: detail), today: today, in: context)
 
         case .resumePlan:
             guard let plan = profile.plan, plan.pausedUntil != nil else {
-                return .declined(reason: "Your plan isn't paused — you're already rolling.")
+                return .declined(reason: "Your plan isn't paused. You're already rolling.")
             }
             PlanCoaching.resume(plan, from: today, in: context, calendar: calendar)
             return notify(Receipt(
@@ -346,7 +346,7 @@ enum CoachActions {
                 let block = (profile.plan?.blockIndex ?? 0) + 1
                 return notify(Receipt(
                     headline: "Block \(block) is built",
-                    detail: "I looked at what you've actually been running these past few weeks and built your next block from there — six fresh weeks starting today. Nothing you've done is lost."),
+                    detail: "I looked at what you've actually been running these past few weeks and built your next block from there: six fresh weeks starting today. Nothing you've done is lost."),
                     today: today, in: context)
             }
             // Race plan → rebuild from today, still pointed at the race (races don't run in blocks).
@@ -399,7 +399,7 @@ enum CoachActions {
     // MARK: - Helpers
 
     private static let rebuildLine = "Rebuilds your upcoming weeks (completed work + paces kept)"
-    private static let noPlan = "You don't have an active plan yet — set one up and I can tune it."
+    private static let noPlan = "You don't have an active plan yet. Set one up and I can tune it."
 
     /// Lowercase only the first character (so a feasibility option reads mid-sentence).
     private static func lowerFirst(_ s: String) -> String {
@@ -420,7 +420,7 @@ enum CoachActions {
 
     private static func throttleReason(_ plan: TrainingPlan, today: Date) -> String {
         let when = plan.lastAdaptedAt.map { day($0) } ?? "recently"
-        return "I already adjusted your plan \(when). One structural change a week keeps adaptation honest — ask me again in a few days and I'll take another look."
+        return "I already adjusted your plan \(when). One structural change a week keeps adaptation honest. Ask me again in a few days and I'll take another look."
     }
 
     private static func session(_ id: UUID, of profile: UserProfile) -> PlannedSession? {

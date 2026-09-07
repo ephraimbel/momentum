@@ -16,7 +16,7 @@ final class CoachChatUITests: XCTestCase {
         apply.tap()
 
         // The card becomes a receipt row…
-        let receipt = app.staticTexts["Applied — Ease this week"]
+        let receipt = app.staticTexts["Applied: Ease this week"]
         XCTAssertTrue(receipt.waitForExistence(timeout: 6), "the applied receipt should replace the proposal")
         // …and the coach narrates what actually happened (the engine's receipt, de-dashed).
         let narration = app.staticTexts.matching(
@@ -27,7 +27,7 @@ final class CoachChatUITests: XCTestCase {
         let undo = app.buttons["Undo this change"].firstMatch
         XCTAssertTrue(undo.waitForExistence(timeout: 4), "an applied change should be undoable from its receipt")
         undo.tap()
-        XCTAssertTrue(app.staticTexts["Rolled back — plan restored"].waitForExistence(timeout: 6),
+        XCTAssertTrue(app.staticTexts["Rolled back. Plan restored"].waitForExistence(timeout: 6),
                       "undo should flip the receipt to its rolled-back state")
         let rollbackNote = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "rolled back")).firstMatch
@@ -87,7 +87,7 @@ final class CoachChatUITests: XCTestCase {
         let applies = app.buttons.matching(identifier: "Apply")
         XCTAssertTrue(applies.firstMatch.waitForExistence(timeout: 4))
         applies.element(boundBy: applies.count - 1).tap()
-        XCTAssertTrue(app.staticTexts["Applied — Remember this"].waitForExistence(timeout: 6))
+        XCTAssertTrue(app.staticTexts["Applied: Remember this"].waitForExistence(timeout: 6))
 
         // Ask what it knows → the memory card lists the note with a Forget control.
         let field = app.textFields["Ask your coach…"].firstMatch

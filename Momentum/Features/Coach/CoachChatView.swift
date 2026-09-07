@@ -97,7 +97,7 @@ struct CoachChatView: View {
                 Button("Clear everything", role: .destructive) { vm?.clear() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Your coach's memory of you is kept — only the messages go.")
+                Text("Your coach's memory of you is kept. Only the messages go.")
             }
         }
         // Build the view model SYNCHRONOUSLY on appear (not in the async .task below): the first

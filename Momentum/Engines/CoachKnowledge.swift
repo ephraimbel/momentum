@@ -119,7 +119,7 @@ enum CoachKnowledge {
         },
         Topic(keywords: ["should i lift", "strength training help", "lifting help", "weights help", "gym help", "strength work for run"]) { f in
             let days = f.daysPerWeek > 0 ? " Your plan already budgets for it around your \(f.daysPerWeek) training days." : ""
-            return "Well-designed strength work can support running economy and force production. For runners that means progressive, well-recovered work—squats, hinges, calf raises, and trunk work—not exhausting circuits. Keep demanding lower-body work away from your hardest run when the schedule allows." + days
+            return "Well-designed strength work can support running economy and force production. For runners that means progressive, well-recovered work (squats, hinges, calf raises, and trunk work), not exhausting circuits. Keep demanding lower-body work away from your hardest run when the schedule allows." + days
         },
         Topic(keywords: ["get faster", "run faster", "improve my 5k", "improve my 10k", "improve my time", "speed up my", "how do i improve"]) { f in
             var out = "Running improvement usually comes from consistent weeks, mostly easy work, and a small amount of targeted quality that fits your experience and event. Your plan builds those pieces gradually; no single workout carries the season."
@@ -192,7 +192,7 @@ enum CoachKnowledge {
             "Caffeine genuinely works: roughly 2 to 3 mg per kg about 45 to 60 minutes before a hard session or race improves endurance performance. A normal coffee covers most people. Practice it in training first, and skip late-day doses since sleep is the bigger lever."
         },
         Topic(keywords: ["lose weight", "weight loss", "burn fat", "calories", "diet"]) { _ in
-            "I coach fueling, not dieting, so I won't set a weight-loss calorie target or promise a weight outcome. Momentum can build a consistent running routine and help you eat enough for the work. For an individual body-composition goal—especially alongside high training load—a registered dietitian is the right professional."
+            "I coach fueling, not dieting, so I won't set a weight-loss calorie target or promise a weight outcome. Momentum can build a consistent running routine and help you eat enough for the work. For an individual body-composition goal, especially alongside a high training load, a registered dietitian is the right professional."
         },
 
         // ── Recovery ──────────────────────────────────────────────────────────────────────

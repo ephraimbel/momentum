@@ -15,14 +15,14 @@ struct CoachCapabilitiesSheet: View {
 
                     section("GROUNDED IN YOUR DATA", items: [
                         ("chart.line.uptrend.xyaxis", "How you're trending",
-                         "Training load, pace at effort, streaks, records — every answer comes from your actual numbers, never a guess."),
+                         "Training load, pace at effort, streaks, records. Every answer comes from your actual numbers, never a guess."),
                         ("waveform.path.ecg", "Recovery and readiness",
                          "Reads your load balance and recovery signals and tells you honestly when to push and when to absorb."),
                         ("sparkles", "Your plan, explained",
                          "Ask why your plan looks the way it does and it walks you through every choice, from your own data."),
                     ])
 
-                    section("CHANGES YOUR PLAN — WITH YOUR CONSENT", items: [
+                    section("CHANGES YOUR PLAN, WITH YOUR CONSENT", items: [
                         ("wand.and.stars", "Tune the load",
                          "Ease a brutal week, review a bounded increase after a lighter week, or ease target paces so sessions land right."),
                         ("arrow.left.arrow.right", "Reshape the schedule",
@@ -43,11 +43,11 @@ struct CoachCapabilitiesSheet: View {
                         ("function", "The engine owns the numbers",
                          "Loads, paces, and volumes come from deterministic training rules. The coach explains them; it never invents them."),
                         ("calendar.badge.exclamationmark", "One structural change a week",
-                         "Adaptation stays honest — the coach declines a second reshape and tells you why."),
+                         "Adaptation stays honest. The coach declines a second reshape and tells you why."),
                         ("cross.case", "Never medical advice",
                          "Guidance from your data only. Sharp pain, swelling, or numbness means a professional, and it will say so."),
                         ("iphone", "On your device",
-                         "Answers are computed from your training data right on your iPhone — instant, private, and they work with no signal at all."),
+                         "Answers are computed from your training data right on your iPhone. Instant, private, and they work with no signal at all."),
                         ("lock.fill", "Your conversation stays yours",
                          "The chat thread and everything the coach remembers about you live on this device. Clear the thread or forget any note, anytime."),
                     ])
@@ -78,7 +78,7 @@ struct CoachCapabilitiesSheet: View {
             BrandMark(size: 44)
             Text("A coach that knows your training")
                 .font(.display(24, weight: .black)).foregroundStyle(Theme.ink)
-            Text("Ask anything, change anything — always previewed, always yours to confirm, always reversible.")
+            Text("Ask anything, change anything. Always previewed, always yours to confirm, always reversible.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

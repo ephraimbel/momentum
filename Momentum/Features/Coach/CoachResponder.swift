@@ -338,7 +338,7 @@ enum CoachResponder {
             card.raceName = message   // the bridge re-resolves via the catalog (preserves any named sub-distance)
             let dateStr = m.date.formatted(.dateTime.month(.wide).day().year())
             return LocalTurn(
-                text: "\(m.race.name) — \(m.race.city), \(dateStr). I can point your whole plan at that \(m.distance.label.lowercased()) and build the best block your timeline allows — I'll be honest about the runway on the card. Want me to?",
+                text: "\(m.race.name), \(m.race.city), \(dateStr). I can point your whole plan at that \(m.distance.label.lowercased()) and build the best block your timeline allows. I'll be honest about the runway on the card. Want me to?",
                 card: card)
         }
 
@@ -379,7 +379,7 @@ enum CoachResponder {
             var card = CoachCardPayload(kind: .changeDays, label: "Train \(days) days a week")
             card.daysPerWeek = days
             return LocalTurn(
-                text: "\(days) days a week — I can rebuild your plan around that and keep the hard days spaced so nothing stacks. Want me to?",
+                text: "\(days) days a week. I can rebuild your plan around that and keep the hard days spaced so nothing stacks. Want me to?",
                 card: card)
         }
 
@@ -940,7 +940,7 @@ enum CoachResponder {
         let i = ctx.insights
         if let nudge = capabilityNudge(q) { return nudge }
         let lead = i.hasData
-            ? "Your recent load is \(acwrText(i)) — \(TrainingLoadContext.band(ratio: i.acwr).displayName.lowercased())."
+            ? "Your recent load is \(acwrText(i)), \(TrainingLoadContext.band(ratio: i.acwr).displayName.lowercased())."
             : "We're just getting started. Log a few sessions and I'll have a lot more to say."
         let tails = [
             "I can help with how you're trending, what to do today, recovery, or your records. Just ask.",

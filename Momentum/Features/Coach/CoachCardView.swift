@@ -70,15 +70,15 @@ struct CoachCardView: View {
             memoryCard
         case .applied:
             receiptRow(icon: "checkmark.circle.fill",
-                       text: payload.kind == .nav ? payload.label : "Applied — \(payload.label)",
+                       text: payload.kind == .nav ? payload.label : "Applied: \(payload.label)",
                        iridescent: payload.kind != .nav,
                        undo: payload.kind != .nav && undoable)
         case .declined:
-            receiptRow(icon: "minus.circle", text: "Not this time — no problem", iridescent: false)
+            receiptRow(icon: "minus.circle", text: "Not this time. No problem", iridescent: false)
         case .expired:
-            receiptRow(icon: "clock.arrow.circlepath", text: "Lapsed — your plan changed since", iridescent: false)
+            receiptRow(icon: "clock.arrow.circlepath", text: "Lapsed. Your plan changed since", iridescent: false)
         case .undone:
-            receiptRow(icon: "arrow.uturn.left.circle", text: "Rolled back — plan restored", iridescent: false)
+            receiptRow(icon: "arrow.uturn.left.circle", text: "Rolled back. Plan restored", iridescent: false)
         }
     }
 
@@ -490,7 +490,7 @@ struct CoachCardView: View {
                         .accessibilityLabel("Forget: \(note.text)")
                     }
                 }
-                Text("Pinned notes are yours — I treat them as ground truth. Forgetting is instant.")
+                Text("Pinned notes are yours. I treat them as ground truth. Forgetting is instant.")
                     .font(.rounded(Theme.FontSize.label, weight: .medium))
                     .foregroundStyle(Theme.inkTertiary)
                     .padding(.top, 2)

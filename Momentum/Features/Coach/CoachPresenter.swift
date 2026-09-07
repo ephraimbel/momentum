@@ -102,14 +102,27 @@ import SwiftData
 enum CoachDemo {
     static func seedProposalIfNeeded(in context: ModelContext) {
         let existing = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
-        // Idempotent AND deterministic: an open easeWeek proposal means we already seeded. Any
-        // OTHER thread state (a proactive seed from a previous demo launch, old receipts) would
-        // block or bury the verification card — clear it. DEBUG-only; never ships.
-        guard !existing.contains(where: { $0.card?.kind == .easeWeek && $0.cardState == .proposed }) else { return }
+        // Idempotent AND deterministic: "already seeded" means THIS thread, the demo's own user
+        // line plus its open easeWeek proposal. An open ease proposal alone is not enough: the
+        // proactive sweep seeds one of its own on an ordinary launch, and that thread has no user
+        // message, so the chat shows the welcome hero (`CoachChatView.isFresh`) and the card is
+        // hidden behind it. Any other thread state (a proactive seed from a previous demo launch,
+        // old receipts) would block or bury the verification card, so clear it. DEBUG-only.
+        let demoPrompt = "This week feels way too hard, can we ease it?"
+        let alreadySeeded = existing.contains { $0.role == .user && $0.text == demoPrompt }
+            && existing.contains { $0.card?.kind == .easeWeek && $0.cardState == .proposed }
+        guard !alreadySeeded else { return }
         for m in existing { context.delete(m) }
+        // The verification card must be APPLICABLE. A previous demo launch's Apply armed the plan's
+        // weekly adaptation gate, and on the next launch the coach would (rightly) decline the seeded
+        // ease with "I already adjusted your plan"; the UI test then reads a decline as a failure.
+        // Clear the latch with the thread. DEBUG-only; never ships.
+        if let plan = ((try? context.fetch(FetchDescriptor<UserProfile>())) ?? []).first?.plan {
+            plan.lastAdaptedAt = nil
+        }
         context.insert(ChatMessage(role: .coach,
             text: "Hey, I'm your coach. Ask me how you're trending, what to do today, or to change up your plan."))
-        context.insert(ChatMessage(role: .user, text: "This week feels way too hard, can we ease it?"))
+        context.insert(ChatMessage(role: .user, text: demoPrompt))
         let card = CoachCardPayload(kind: .easeWeek, label: "Ease this week")
         context.insert(ChatMessage(role: .coach,
             text: "Heard. I can trim your upcoming sessions about 15% and soften the hard work to easy, so you absorb the block instead of fighting it.",

@@ -49,19 +49,19 @@ struct AthleteNudges {
         // 3. Milestone — a recent PR.
         if let last = f.lastPRAt, let cut = calendar.date(byAdding: .day, value: -7, to: now), last >= cut {
             nudges.append(.init(kind: .milestone, title: "New personal record",
-                                text: "You set a new best this week — momentum's building."))
+                                text: "You set a new best this week. Momentum is building."))
         }
 
         // 4. Encouragement — showing up more than before.
         if f.frequencyTrend28d >= 0.5 {
             nudges.append(.init(kind: .encouragement, title: "You're showing up",
-                                text: "You're training more than last month. Consistency compounds — keep it rolling."))
+                                text: "You're training more than last month. Consistency compounds. Keep it rolling."))
         }
 
         // 5. Check-in — a quieter stretch. Gentle, never shaming.
         if f.frequencyTrend28d <= -0.5 {
             nudges.append(.init(kind: .checkin, title: "Let's keep it rolling",
-                                text: "It's been a little quieter lately — even a short session keeps your momentum alive."))
+                                text: "It's been a little quieter lately. Even a short session keeps your momentum alive."))
         }
 
         return Array(nudges.prefix(maxNudges))
