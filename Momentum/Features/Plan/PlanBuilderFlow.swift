@@ -1,0 +1,1045 @@
+import SwiftUI
+import SwiftData
+
+/// How the builder ended, so the shelf can reopen or the board can repopulate.
+enum PlanBuilderOutcome: Equatable {
+    case cancelled, savedDraft, scheduled, activated
+}
+
+/// Create a plan without replaying onboarding (2026-09-07, docs/PLAN-AND-FUEL-UPGRADE.md §2.2):
+/// goal → target → where you are → your week → how to train → preview → start, schedule, or keep
+/// as a draft. Every step opens on what the athlete already told us. The preview is the real
+/// generator run on the blueprint, debounced and cancelled on change, and nothing here touches the
+/// current plan until Start now is confirmed.
+struct PlanBuilderFlow: View {
+    let profile: UserProfile
+    /// Editing an existing draft or upcoming plan; nil is a fresh plan.
+    let draft: PlanShelfRecord?
+    let distanceUnit: DistanceUnit
+    var onFinish: (PlanBuilderOutcome) -> Void
+
+    @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
+    @Environment(PaywallController.self) private var paywall
+    @ReducedMotionPreference private var reduceMotion
+
+    /// The four doors the engine can honestly tell apart: a dated race, a distance to improve at
+    /// (rolling blocks shaped for it, with a checkpoint), a first or returning run (a repeatable
+    /// week, no checkpoint, gentle recommended), and general fitness (rolling blocks).
+    enum Path: String, CaseIterable, Identifiable {
+        case race, improve, start, general
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .race: "Train for a race"
+            case .improve: "Get faster at a distance"
+            case .start: "Start or return to running"
+            case .general: "Build running fitness"
+            }
+        }
+        var subtitle: String {
+            switch self {
+            case .race: "A date on the calendar. The block builds, peaks and tapers to it."
+            case .improve: "No race yet. Six-week blocks shaped for the distance, each ending with a checkpoint."
+            case .start: "A week you can repeat. Easy running first, nothing to prove."
+            case .general: "Rolling blocks that grow with you. Point them at a race whenever you like."
+            }
+        }
+        var systemImage: String {
+            switch self {
+            case .race: "flag.checkered"
+            case .improve: "stopwatch"
+            case .start: "figure.walk"
+            case .general: "figure.run.circle"
+            }
+        }
+    }
+
+    enum Step: Int, CaseIterable {
+        case goal, target, fitness, week, training, preview
+        var title: String {
+            switch self {
+            case .goal: "What is this plan for?"
+            case .target: "The target"
+            case .fitness: "Where you are"
+            case .week: "Your week"
+            case .training: "How to train"
+            case .preview: "Your plan"
+            }
+        }
+    }
+
+    @State private var step: Step = .goal
+    @State private var path: Path?
+    @State private var blueprint: PlanBlueprint
+    @State private var hasGoalTime: Bool
+    @State private var goalHours: Int
+    @State private var goalMinutes: Int
+    @State private var raceDay: Date
+    @State private var showRacePicker = false
+    /// The coach's read of the athlete's logged running; the blueprint's declared numbers are the
+    /// fallback the engine uses when there is no history.
+    @State private var evidence: PlanFitnessSnapshot?
+    @State private var preview: PlanPreview?
+    @State private var previewTask: Task<Void, Never>?
+    @State private var previewToken = 0
+    @State private var previewing = false
+    @State private var scheduling = false
+    @State private var overlap: PendingOverlap?
+    @State private var failure: String?
+
+    private struct PendingOverlap: Identifiable {
+        let overlap: PlanLifecycle.Overlap
+        /// nil = start now; a date = schedule for that day.
+        let proposedStart: Date?
+        var id: String { "\(overlap.currentEnd.timeIntervalSince1970)-\(proposedStart?.timeIntervalSince1970 ?? 0)" }
+    }
+
+    init(profile: UserProfile, draft: PlanShelfRecord?, distanceUnit: DistanceUnit,
+         onFinish: @escaping (PlanBuilderOutcome) -> Void) {
+        self.profile = profile
+        self.draft = draft
+        self.distanceUnit = distanceUnit
+        self.onFinish = onFinish
+        var b = draft?.blueprint ?? PlanBlueprint(profile: profile)
+        if draft == nil {
+            // A fresh plan keeps the athlete's availability and preferences, never the old finish line.
+            b.name = ""
+            b.raceDate = nil
+            b.goalFinishTimeS = nil
+            b.raceDistanceM = nil
+        }
+        _blueprint = State(initialValue: b)
+        _hasGoalTime = State(initialValue: b.goalFinishTimeS != nil)
+        let goalS = b.goalFinishTimeS ?? 0
+        _goalHours = State(initialValue: Int(goalS) / 3600)
+        _goalMinutes = State(initialValue: (Int(goalS) % 3600) / 60)
+        let cal = Calendar.current
+        _raceDay = State(initialValue: b.raceDate ?? cal.date(byAdding: .weekOfYear, value: 12, to: Date()) ?? Date())
+        let initialPath: Path?
+        if let draft, let blueprint = draft.blueprint {
+            switch blueprint.goal {
+            case .raceDistance: initialPath = blueprint.raceDate == nil ? .improve : .race
+            case .stayConsistent: initialPath = .start
+            default: initialPath = .general
+            }
+        } else {
+            initialPath = nil
+        }
+        _path = State(initialValue: initialPath)
+    }
+
+    // MARK: - Body
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                stepStrip
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Space.xl) {
+                        Text(step.title)
+                            .font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        stepContent
+                    }
+                    .padding(Theme.Space.lg)
+                    .padding(.bottom, 120)
+                }
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .background(Theme.background)
+            .safeAreaInset(edge: .bottom) { footer }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(draft == nil ? "new plan" : "edit plan")
+                        .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { previewTask?.cancel(); onFinish(.cancelled) }
+                }
+            }
+            .sheet(isPresented: $showRacePicker) {
+                RacePickerSheet { race, pickedDistance, date in
+                    withAnimation(Motion.standard) {
+                        blueprint.name = race.name
+                        blueprint.raceDistanceM = pickedDistance.meters
+                        raceDay = date
+                    }
+                }
+            }
+            .sheet(isPresented: $scheduling) {
+                PlanScheduleSheet(initial: draft?.scheduledStart,
+                                  currentEnd: PlanLifecycleService.currentSpan(for: profile)?.end) { day in
+                    schedule(on: day)
+                }
+            }
+            .sheet(item: $overlap) { pending in
+                PlanOverlapSheet(planName: blueprint.displayName,
+                                 currentName: currentPlanName,
+                                 overlap: pending.overlap,
+                                 proposedStart: pending.proposedStart,
+                                 onReplace: {
+                                     if let day = pending.proposedStart { commitSchedule(on: day) } else { activate() }
+                                 },
+                                 onStartAfter: { commitSchedule(on: pending.overlap.nextFreeStart) })
+            }
+            .alert("That didn’t work", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+                Button("OK", role: .cancel) { failure = nil }
+            } message: { Text(failure ?? "Please try again.") }
+            .task { await loadEvidence() }
+            .onAppear {
+                #if DEBUG
+                // --plan-builder-preview: a 10K in ten weeks, straight to the preview step.
+                if ProcessInfo.processInfo.arguments.contains("--plan-builder-preview"), draft == nil {
+                    choose(.race)
+                    blueprint.name = "Faster 10K"
+                    blueprint.raceDistanceM = RaceDistance.tenK.meters
+                    raceDay = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date()) ?? Date()
+                    hasGoalTime = true
+                    goalHours = 0; goalMinutes = 48
+                    syncTarget()
+                    step = .preview
+                }
+                #endif
+            }
+            .onChange(of: step) { _, new in if new == .preview { schedulePreview(delay: 0) } }
+            .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
+            .onDisappear { previewTask?.cancel() }
+        }
+        .presentationDetents([.large])
+        .interactiveDismissDisabled(step != .goal)
+    }
+
+    private var stepStrip: some View {
+        HStack(spacing: 4) {
+            ForEach(Step.allCases, id: \.rawValue) { s in
+                Capsule()
+                    .fill(s.rawValue <= step.rawValue ? Theme.ink : Theme.hairline)
+                    .frame(height: 3)
+            }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.sm)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+    }
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch step {
+        case .goal: goalStep
+        case .target: targetStep
+        case .fitness: fitnessStep
+        case .week: weekStep
+        case .training: trainingStep
+        case .preview: previewStep
+        }
+    }
+
+    // MARK: - Footer
+
+    private var footer: some View {
+        VStack(spacing: Theme.Space.sm) {
+            if step == .preview {
+                previewActions
+            } else {
+                HStack(spacing: Theme.Space.sm) {
+                    if step != .goal {
+                        Button { back() } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                                .frame(width: 52, height: 52)
+                                .background(Circle().stroke(Theme.ink, lineWidth: 1.5))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Back")
+                    }
+                    Button { advance() } label: {
+                        Text(step == .training ? "See the plan" : "Continue")
+                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
+                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .raised(Capsule(), tone: .ink)
+                    }
+                    .buttonStyle(RaisedPressStyle())
+                    .disabled(!canAdvance)
+                    .opacity(canAdvance ? 1 : 0.45)
+                    .accessibilityIdentifier("builder-continue")
+                }
+            }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.sm)
+        .padding(.bottom, Theme.Space.sm)
+        .background(Theme.background.opacity(0.96))
+    }
+
+    private var previewActions: some View {
+        VStack(spacing: Theme.Space.sm) {
+            HStack(spacing: Theme.Space.sm) {
+                Button { back() } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 52, height: 52)
+                        .background(Circle().stroke(Theme.ink, lineWidth: 1.5))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Back")
+                Button { startNow() } label: {
+                    Text("Start now")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
+                        .frame(maxWidth: .infinity).frame(height: 52)
+                        .raised(Capsule(), tone: .ink)
+                }
+                .buttonStyle(RaisedPressStyle())
+                .disabled(preview == nil)
+                .opacity(preview == nil ? 0.45 : 1)
+                .accessibilityIdentifier("builder-start")
+            }
+            HStack(spacing: Theme.Space.sm) {
+                Button { scheduling = true } label: {
+                    Text("Schedule")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("builder-schedule")
+                Button { saveDraft() } label: {
+                    Text(draft == nil ? "Save as draft" : "Save draft")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("builder-draft")
+            }
+        }
+    }
+
+    private var canAdvance: Bool {
+        switch step {
+        case .goal: path != nil
+        case .target:
+            switch path {
+            case .race: blueprint.raceDistanceM != nil && raceDayIsValid
+            case .improve: blueprint.raceDistanceM != nil
+            default: true
+            }
+        default: true
+        }
+    }
+
+    private var raceDayIsValid: Bool {
+        Calendar.current.startOfDay(for: raceDay) > Calendar.current.startOfDay(for: Date())
+    }
+
+    private func advance() {
+        guard canAdvance, let next = Step(rawValue: step.rawValue + 1) else { return }
+        Haptics.light()
+        withAnimation(reduceMotion ? nil : Motion.standard) { step = next }
+    }
+
+    private func back() {
+        guard let previous = Step(rawValue: step.rawValue - 1) else { return }
+        Haptics.light()
+        withAnimation(reduceMotion ? nil : Motion.standard) { step = previous }
+    }
+
+    // MARK: - Step 1: goal
+
+    private var goalStep: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("Each door builds a different plan. Strength for runners can be added to any of them.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Path.allCases) { door in
+                SelectionCard(title: door.title, subtitle: door.subtitle, systemImage: door.systemImage,
+                              isSelected: path == door) {
+                    withAnimation(Motion.standard) { choose(door) }
+                }
+                .accessibilityIdentifier("builder-path-\(door.rawValue)")
+            }
+        }
+    }
+
+    private func choose(_ door: Path) {
+        path = door
+        switch door {
+        case .race:
+            blueprint.goal = .raceDistance
+        case .improve:
+            blueprint.goal = .raceDistance
+            blueprint.raceDate = nil
+        case .start:
+            blueprint.goal = .stayConsistent
+            blueprint.raceDistanceM = nil; blueprint.raceDate = nil; blueprint.goalFinishTimeS = nil
+            if blueprint.runningExperience == .experienced { blueprint.runningExperience = .some }
+            blueprint.intensity = .gentle
+        case .general:
+            if blueprint.goal != .endurance { blueprint.goal = .generalFitness }
+            blueprint.raceDistanceM = nil; blueprint.raceDate = nil; blueprint.goalFinishTimeS = nil
+        }
+        syncTarget()
+    }
+
+    // MARK: - Step 2: target
+
+    @ViewBuilder
+    private var targetStep: some View {
+        switch path {
+        case .race: raceTarget
+        case .improve: improveTarget
+        case .start: startTarget
+        case .general, .none: generalTarget
+        }
+    }
+
+    private var raceTarget: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            section("YOUR RACE") {
+                VStack(spacing: Theme.Space.sm) {
+                    Button { showRacePicker = true } label: {
+                        HStack(spacing: Theme.Space.md) {
+                            Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(blueprint.name.isEmpty ? "Find your race" : blueprint.name)
+                                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                                Text("Boston, Chicago, Hong Kong. The big ones, with dates.")
+                                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
+                        }
+                        .padding(Theme.Space.md)
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    distanceCards
+                }
+            }
+            section("RACE DAY") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    DatePicker("Race day", selection: $raceDay, in: Date()..., displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .tint(Theme.ink)
+                        .padding(Theme.Space.sm)
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        .onChange(of: raceDay) { _, _ in syncTarget() }
+                    if !raceDayIsValid {
+                        Text("Pick a day after today.")
+                            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    }
+                }
+            }
+            goalTimeSection
+            if let f = feasibility { feasibilityCard(f) }
+        }
+    }
+
+    private var improveTarget: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            section("THE DISTANCE") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    Text("Long runs and quality work are shaped for it. Every block ends with a checkpoint so your paces move with you.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    distanceCards
+                }
+            }
+            goalTimeSection
+        }
+    }
+
+    private var startTarget: some View {
+        section("WHERE YOU ARE STARTING") {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                SelectionCard(title: "New to running", subtitle: "Three easy days a week. Time on feet before anything else.",
+                              systemImage: "figure.walk", isSelected: blueprint.runningExperience == .new) {
+                    withAnimation(Motion.standard) { blueprint.runningExperience = .new; blueprint.daysPerWeek = min(blueprint.daysPerWeek, 3) }
+                }
+                SelectionCard(title: "Coming back", subtitle: "You have run before. A gentle ramp back to a regular week.",
+                              systemImage: "arrow.uturn.backward", isSelected: blueprint.runningExperience != .new) {
+                    withAnimation(Motion.standard) { blueprint.runningExperience = .some }
+                }
+                Text("If you are returning from an injury, the plan trains around it and never rushes the way back. Anything that persists or worries you is a question for a professional.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var generalTarget: some View {
+        section("THE SHAPE OF IT") {
+            VStack(spacing: Theme.Space.sm) {
+                SelectionCard(title: Goal.generalFitness.planLabel, subtitle: Goal.generalFitness.planSubtitle,
+                              systemImage: Goal.generalFitness.planSystemImage, isSelected: blueprint.goal == .generalFitness) {
+                    withAnimation(Motion.standard) { blueprint.goal = .generalFitness }
+                }
+                SelectionCard(title: Goal.endurance.planLabel, subtitle: Goal.endurance.planSubtitle,
+                              systemImage: Goal.endurance.planSystemImage, isSelected: blueprint.goal == .endurance) {
+                    withAnimation(Motion.standard) { blueprint.goal = .endurance }
+                }
+            }
+        }
+    }
+
+    private var distanceCards: some View {
+        ForEach(RaceDistance.allCases) { d in
+            SelectionCard(title: d.label, isSelected: blueprint.raceDistanceM == d.meters) {
+                withAnimation(Motion.standard) {
+                    blueprint.raceDistanceM = d.meters
+                    if hasGoalTime { seedGoalTime() }
+                    syncTarget()
+                }
+            }
+            .accessibilityIdentifier("builder-distance-\(d.rawValue)")
+        }
+    }
+
+    private var goalTimeSection: some View {
+        section(path == .improve ? "A TIME TO CHASE · OPTIONAL" : "TARGET FINISH · OPTIONAL") {
+            VStack(spacing: Theme.Space.sm) {
+                Toggle(isOn: $hasGoalTime.animation(Motion.standard)) {
+                    Text(path == .improve ? "I have a time in mind" : "Target finish time")
+                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                }
+                .tint(Theme.ink)
+                .padding(Theme.Space.md)
+                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                .onChange(of: hasGoalTime) { _, on in
+                    if on, blueprint.goalFinishTimeS == nil { seedGoalTime() }
+                    syncTarget()
+                }
+                if hasGoalTime {
+                    HStack(spacing: 0) {
+                        Picker("Hours", selection: $goalHours) {
+                            ForEach(0..<10, id: \.self) { Text("\($0) hr").tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                        Picker("Minutes", selection: $goalMinutes) {
+                            ForEach(0..<60, id: \.self) { Text(String(format: "%02d min", $0)).tag($0) }
+                        }
+                        .pickerStyle(.wheel)
+                    }
+                    .frame(height: 110)
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .onChange(of: goalHours) { _, _ in syncTarget() }
+                    .onChange(of: goalMinutes) { _, _ in syncTarget() }
+                }
+            }
+        }
+    }
+
+    /// The wheels and the calendar write the blueprint; the blueprint is the one source the
+    /// preview reads.
+    private func syncTarget() {
+        switch path {
+        case .race:
+            blueprint.raceDate = Calendar.current.startOfDay(for: raceDay)
+        default:
+            blueprint.raceDate = nil
+        }
+        let seconds = Double(goalHours * 3600 + goalMinutes * 60)
+        blueprint.goalFinishTimeS = (path == .race || path == .improve) && hasGoalTime && seconds > 0 ? seconds : nil
+    }
+
+    private func seedGoalTime() {
+        guard let distanceM = blueprint.raceDistanceM else { return }
+        let seconds: Double
+        if let p5k = profile.plan?.p5kSPerKm, p5k > 0 {
+            seconds = PlanFeasibility.predictedFinishS(distanceM: distanceM, p5kSPerKm: p5k)
+        } else {
+            seconds = switch RaceDistance.nearest(toMeters: distanceM) {
+            case .fiveK: 30 * 60
+            case .tenK: 60 * 60
+            case .half: 2 * 3_600
+            case .marathon: 4 * 3_600
+            case .fiftyK: 5.5 * 3_600
+            }
+        }
+        let totalMinutes = min(9 * 60 + 59, max(1, Int((seconds / 60).rounded())))
+        goalHours = totalMinutes / 60
+        goalMinutes = totalMinutes % 60
+    }
+
+    private var feasibility: PlanFeasibility? {
+        guard blueprint.isRace, blueprint.raceDate != nil else { return nil }
+        var read = blueprint
+        read.weeklyRunVolumeM = evidence?.weeklyM ?? blueprint.weeklyRunVolumeM
+        return PlanLifecycleService.feasibility(for: read, profile: profile)
+    }
+
+    private func feasibilityCard(_ f: PlanFeasibility) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.sm) {
+            Image(systemName: f.verdict == .onTrack ? "checkmark.seal.fill"
+                  : f.verdict == .tight ? "exclamationmark.triangle.fill" : "hand.raised.fill")
+                .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink).padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(f.headline).font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(f.detail).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !f.options.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(f.options, id: \.self) { opt in
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "arrow.turn.down.right").font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(Theme.ink).padding(.top, 2)
+                                Text(opt).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.md)
+        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    // MARK: - Step 3: fitness
+
+    private var fitnessStep: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            section("RUNNING EXPERIENCE") {
+                VStack(spacing: Theme.Space.sm) {
+                    experienceCard(.new, "New to running", "Under a year, or a long way from regular running")
+                    experienceCard(.some, "Some experience", "Regular running, a race or two")
+                    experienceCard(.experienced, "Experienced", "Years of consistent training and racing")
+                }
+            }
+            section("A TYPICAL WEEK RIGHT NOW") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    if let evidence, evidence.usesLoggedRuns {
+                        HStack(spacing: 0) {
+                            metric(evidence.weeklyM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—", "PER WEEK")
+                            Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                            metric(evidence.longestM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—", "LONGEST RUN")
+                            if let p5k = profile.plan?.p5kSPerKm, p5k > 0 {
+                                Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
+                                metric(PlanFeasibility.hms(p5k * 5), "5K FITNESS")
+                            }
+                        }
+                        .padding(Theme.Space.md)
+                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        Text("From your recent Momentum runs. The plan starts from these, with what you set below as a guardrail.")
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("No recent runs logged in Momentum, so the plan starts from what you tell us and recalibrates from the runs you log.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Text("RUNNING PER WEEK").font(.rounded(10, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                        .padding(.top, Theme.Space.xs)
+                    distanceChoices(weeklyChoices, current: blueprint.weeklyRunVolumeM) { blueprint.weeklyRunVolumeM = $0 }
+                    Text("LONGEST RECENT RUN").font(.rounded(10, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                        .padding(.top, Theme.Space.xs)
+                    distanceChoices(longestChoices, current: blueprint.longestRunM) { blueprint.longestRunM = $0 }
+                }
+            }
+        }
+    }
+
+    private func experienceCard(_ level: ExperienceLevel, _ title: String, _ subtitle: String) -> some View {
+        SelectionCard(title: title, subtitle: subtitle, isSelected: blueprint.runningExperience == level) {
+            withAnimation(Motion.standard) { blueprint.runningExperience = level }
+        }
+    }
+
+    private var metersPerUnit: Double { distanceUnit == .metric ? 1_000 : 1609.344 }
+    private var unitLabel: String { distanceUnit == .metric ? "km" : "mi" }
+
+    private var weeklyChoices: [Double] {
+        var values: [Double] = [0, 10, 20, 30, 40, 50, 60, 80].map { $0 * metersPerUnit }
+        if let current = blueprint.weeklyRunVolumeM, !values.contains(where: { abs($0 - current) < 1 }) {
+            values.append(current); values.sort()
+        }
+        return values
+    }
+
+    private var longestChoices: [Double] {
+        var values: [Double] = [0, 3, 5, 8, 10, 13, 16, 20, 25, 30].map { $0 * metersPerUnit }
+        if let current = blueprint.longestRunM, !values.contains(where: { abs($0 - current) < 1 }) {
+            values.append(current); values.sort()
+        }
+        return values
+    }
+
+    private func distanceChoices(_ values: [Double], current: Double?, set: @escaping (Double?) -> Void) -> some View {
+        FlowLayout(spacing: Theme.Space.sm) {
+            ForEach(values, id: \.self) { v in
+                let on = current.map { abs($0 - v) < 1 } ?? (v == 0)
+                Button { Haptics.selection(); set(v == 0 ? nil : v) } label: {
+                    Text(v == 0 ? "Not running" : "\(Int((v / metersPerUnit).rounded())) \(unitLabel)")
+                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background {
+                            if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func metric(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 3) {
+            Text(value).font(.display(17, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.65)
+            Text(label).font(.rounded(9, weight: .bold)).tracking(0.8).foregroundStyle(Theme.inkTertiary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func loadEvidence() async {
+        let worker = PlanFitnessWorker(modelContainer: context.container)
+        guard let snapshot = try? await worker.snapshot(declaredWeeklyM: profile.weeklyRunVolumeM,
+                                                        declaredLongestM: profile.longestRunM,
+                                                        profileCreatedAt: profile.createdAt),
+              !Task.isCancelled else { return }
+        evidence = snapshot
+    }
+
+    // MARK: - Step 4: week
+
+    private var recommendedDays: Int {
+        PlanFeasibility.recommendedDays(goal: blueprint.goal, raceDistanceM: blueprint.isRace ? blueprint.raceDistanceM : nil,
+                                        experience: blueprint.runningExperience, lifting: blueprint.lifts)
+    }
+
+    private var weekStep: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            section("DAYS A WEEK") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    segmented([2, 3, 4, 5, 6], current: blueprint.daysPerWeek, label: { "\($0)" }) { blueprint.daysPerWeek = $0 }
+                    Text(blueprint.daysPerWeek == recommendedDays
+                         ? "The coach's pick for this goal."
+                         : "The coach's pick for this goal is \(recommendedDays). Your call.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                }
+            }
+            section("WHICH DAYS") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    weekdayChips
+                    Text(blueprint.preferredDays.isEmpty
+                         ? "Leave them all off and the coach spreads the week. The long run lands on Sunday when it is in."
+                         : "The long run takes the last day you chose in the week; hard days never touch it.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            section("TIME PER SESSION") {
+                segmented([30, 45, 60, 75, 90], current: blueprint.sessionMinutes, label: { "\($0)m" }) { blueprint.sessionMinutes = $0 }
+            }
+        }
+    }
+
+    private var weekdayChips: some View {
+        let symbols = Calendar.current.shortWeekdaySymbols
+        let order = [2, 3, 4, 5, 6, 7, 1]
+        return HStack(spacing: 6) {
+            ForEach(order, id: \.self) { weekday in
+                let on = blueprint.preferredDays.contains(weekday)
+                Button {
+                    Haptics.selection()
+                    withAnimation(Motion.selection) {
+                        if on { blueprint.preferredDays.removeAll { $0 == weekday } }
+                        else { blueprint.preferredDays.append(weekday) }
+                    }
+                } label: {
+                    Text(String(symbols[weekday - 1].prefix(2)).uppercased())
+                        .font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .frame(maxWidth: .infinity).frame(height: 40)
+                        .background {
+                            if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(symbols[weekday - 1])
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
+
+    // MARK: - Step 5: training
+
+    private var trainingStep: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            section("HOW HARD TO PUSH") {
+                VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                    ForEach(PlanIntensity.allCases) { level in
+                        SelectionCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
+                                      subtitle: level.subtitle, isSelected: blueprint.intensity == level,
+                                      iridescent: level == .podium) {
+                            blueprint.intensity = level
+                            if blueprint.daysPerWeek < level.floorDays { blueprint.daysPerWeek = level.floorDays }
+                        }
+                    }
+                    if let note = blueprint.intensity.riskNote {
+                        Text(note).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            if blueprint.isRace || path == .improve {
+                section("BUILD UP TO") {
+                    VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                        ceilingChoices
+                        Text(blueprint.targetWeeklyRunVolumeM == nil
+                             ? "The most you are willing to run in a week. Left to the coach, the plan builds to what the goal needs."
+                             : "The plan will not build past this. Every recovery guardrail still applies below it.")
+                            .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            section("STRENGTH FOR RUNNERS") {
+                VStack(spacing: Theme.Space.sm) {
+                    Toggle(isOn: Binding(get: { blueprint.lifts }, set: { on in
+                        withAnimation(Motion.standard) {
+                            blueprint.includesStrength = on
+                            if !on, blueprint.goal == .getStronger || blueprint.goal == .buildMuscle { blueprint.goal = .generalFitness }
+                        }
+                    })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Add strength days").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                            Text("Lifts that support the miles, never instead of them.")
+                                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                        }
+                    }
+                    .tint(Theme.ink)
+                    .padding(Theme.Space.md)
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    if blueprint.lifts {
+                        balanceCards
+                        equipmentCards
+                    }
+                }
+            }
+            section("PLAN NAME · OPTIONAL") {
+                TextField(blueprint.displayName, text: $blueprint.name)
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.done)
+                    .padding(Theme.Space.md)
+                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .accessibilityIdentifier("builder-name")
+            }
+        }
+    }
+
+    private var recommendedIntensity: PlanIntensity {
+        if let f = feasibility { return f.recommended }
+        return blueprint.runningExperience == .new || !profile.injuryHistory.isEmpty ? .gentle : .balanced
+    }
+
+    private var ceilingChoices: some View {
+        let weekly = Int((((evidence?.weeklyM ?? blueprint.weeklyRunVolumeM) ?? 0) / metersPerUnit / 5).rounded()) * 5
+        var values = [0] + [10, 20, 30, 40].map { weekly + $0 }
+        if let t = blueprint.targetWeeklyRunVolumeM {
+            let v = Int((t / metersPerUnit).rounded())
+            if !values.contains(v) { values.append(v); values.sort() }
+        }
+        let current = blueprint.targetWeeklyRunVolumeM.map { Int(($0 / metersPerUnit).rounded()) } ?? 0
+        return segmented(values, current: current, label: { $0 == 0 ? "Coach" : "\($0)" }) { v in
+            blueprint.targetWeeklyRunVolumeM = v == 0 ? nil : Double(v) * metersPerUnit
+        }
+    }
+
+    private var balanceCards: some View {
+        let opts: [(HybridPriority, String, String, String)] = [
+            (.running, "Running comes first", "Lift to support the miles", "figure.run"),
+            (.balanced, "Balanced runner", "More strength, with running still leading", "figure.run.circle"),
+            (.lifting, "More strength support", "Near-even split; the extra day stays a run", "dumbbell.fill")]
+        return VStack(spacing: Theme.Space.sm) {
+            ForEach(opts, id: \.0) { o in
+                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                              isSelected: (blueprint.hybridPriority ?? .balanced) == o.0) {
+                    withAnimation(Motion.standard) { blueprint.hybridPriority = o.0 }
+                }
+            }
+        }
+    }
+
+    private var equipmentCards: some View {
+        let opts: [(Equipment, String, String)] = [
+            (.fullGym, "Full gym", "building.2"), (.dumbbellsOnly, "Dumbbells only", "dumbbell"),
+            (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
+        return VStack(spacing: Theme.Space.sm) {
+            ForEach(opts, id: \.0) { o in
+                SelectionCard(title: o.1, systemImage: o.2, isSelected: blueprint.equipment == o.0) {
+                    blueprint.equipment = o.0
+                }
+            }
+        }
+    }
+
+    // MARK: - Step 6: preview
+
+    private var previewStep: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(blueprint.displayName)
+                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                Text(blueprint.goalLine())
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                if let preview {
+                    let f = Date.FormatStyle().day().month(.abbreviated)
+                    Text("Starting today: \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                }
+            }
+            if previewing && preview == nil {
+                HStack(spacing: Theme.Space.sm) {
+                    ProgressView().tint(Theme.ink)
+                    Text("Building your week")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                }
+                .padding(.vertical, Theme.Space.lg)
+                .frame(maxWidth: .infinity)
+            } else {
+                PlanPreviewContent(blueprint: blueprint, preview: preview, distanceUnit: distanceUnit)
+                    .opacity(previewing ? 0.6 : 1)
+                    .animation(Motion.crossfade, value: previewing)
+            }
+            Text("Nothing changes until you start it. A draft never starts on its own; a scheduled plan starts on its day.")
+                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .accessibilityIdentifier("builder-preview")
+    }
+
+    /// One generation per settled change: the previous task is cancelled, and a result that comes
+    /// back for an older blueprint is dropped on its token. Runs the engine over already-fetched
+    /// rows, so the wait is the debounce, not the work.
+    private func schedulePreview(delay: Double) {
+        previewTask?.cancel()
+        previewToken &+= 1
+        let token = previewToken
+        let snapshot = blueprint
+        previewing = true
+        previewTask = Task { @MainActor in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard !Task.isCancelled, token == previewToken else { return }
+            let start = PlanLifecycle.activationStart(now: Date())
+            let built = PlanLifecycleService.preview(for: snapshot, profile: profile, startDate: start, in: context)
+            guard !Task.isCancelled, token == previewToken else { return }
+            withAnimation(reduceMotion ? nil : Motion.crossfade) {
+                preview = built
+                previewing = false
+            }
+        }
+    }
+
+    // MARK: - Commit
+
+    private var currentPlanName: String {
+        guard let plan = profile.plan else { return "Your current plan" }
+        return plan.name.isEmpty ? PlanBlueprint(profile: profile).displayName : plan.name
+    }
+
+    private func saveDraft() {
+        do {
+            if let draft {
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+                if draft.status == .upcoming, let day = draft.scheduledStart, !PlanLifecycle.canSchedule(day, today: Date()) {
+                    try PlanLifecycleService.moveToDrafts(draft, in: context)
+                }
+            } else {
+                try PlanLifecycleService.saveDraft(blueprint, preview: preview, for: profile, in: context)
+            }
+            Haptics.success()
+            onFinish(.savedDraft)
+        } catch { failure = "The draft could not be saved. Please try again." }
+    }
+
+    private func schedule(on day: Date) {
+        if let overlap = PlanLifecycle.overlap(current: PlanLifecycleService.currentSpan(for: profile), proposedStart: day) {
+            self.overlap = PendingOverlap(overlap: overlap, proposedStart: day)
+            return
+        }
+        commitSchedule(on: day)
+    }
+
+    private func commitSchedule(on day: Date) {
+        do {
+            let record: PlanShelfRecord
+            if let draft {
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+                record = draft
+            } else {
+                record = try PlanLifecycleService.saveDraft(blueprint, preview: preview, for: profile, in: context)
+            }
+            try PlanLifecycleService.schedule(record, start: day, in: context)
+            Haptics.success()
+            onFinish(.scheduled)
+        } catch PlanLifecycleService.Failure.scheduleMustBeInTheFuture {
+            failure = "Pick a day after today. To start today, use Start now."
+        } catch { failure = "The schedule could not be saved. Please try again." }
+    }
+
+    private func startNow() {
+        guard paywall.isEntitled(to: .fullPlan) else { paywall.present(for: .fullPlan); return }
+        if let overlap = PlanLifecycle.overlap(current: PlanLifecycleService.currentSpan(for: profile), proposedStart: Date()) {
+            self.overlap = PendingOverlap(overlap: overlap, proposedStart: nil)
+            return
+        }
+        activate()
+    }
+
+    private func activate() {
+        previewTask?.cancel()
+        do {
+            if let draft {
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+            }
+            let activation = try PlanLifecycleService.activate(blueprint, from: draft, for: profile, in: context)
+            PlanLifecycleService.propagate(activation, profile: profile, workouts: profile.workouts,
+                                           notifications: services.notifications, in: context)
+            Haptics.success()
+            onFinish(.activated)
+        } catch PlanLifecycleService.Failure.raceDateInThePast {
+            failure = "Race day has passed. Pick a new date first."
+        } catch {
+            failure = "The plan could not be started. Nothing was changed."
+        }
+    }
+
+    // MARK: - Building blocks
+
+    private func segmented(_ values: [Int], current: Int, label: @escaping (Int) -> String,
+                           _ set: @escaping (Int) -> Void) -> some View {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(values, id: \.self) { v in
+                let on = current == v
+                Button { Haptics.selection(); set(v) } label: {
+                    Text(label(v))
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                        .frame(maxWidth: .infinity).frame(height: 50)
+                        .foregroundStyle(on ? Theme.background : Theme.ink)
+                        .background {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                            if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
+
+    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text(title).font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+            content()
+        }
+    }
+}

@@ -46,6 +46,13 @@ struct PlanView: View {
     /// @State so the manager outlives the authorization prompt it raises.
     @State private var showSettings = false
     @State private var showNewPlan = false
+    /// Your plans (2026-09-07): current, upcoming, drafts, previous. Hosted on its own background
+    /// presenter below, off this view's already-long presentation chain.
+    @State private var showYourPlans = false
+    /// Manage plan (2026-09-07): every adjustment by intent, each as a proposal with Apply / Undo.
+    @State private var showManage = false
+    /// The plan builder, opened from Your plans on a fresh blueprint or an existing draft.
+    @State private var composing: PlanComposeTarget?
     /// "Plan it myself" confirmation — dropping the coach's prescriptions deserves one honest ask.
     @State private var confirmingSelfCoached = false
     // Derived plan data, memoized so `body` stops re-filtering the whole session list dozens of
@@ -300,6 +307,11 @@ struct PlanView: View {
         .sheet(isPresented: $showNewPlan, onDismiss: { rebuildDerived() }) {
             if let p = profiles.first { PlanSettingsSheet(profile: p, mode: .create) { showNewPlan = false } }
         }
+        // Your plans, Manage plan and the builder get their OWN hosts: this view already chains
+        // several presentations, and from the fourth onward a sheet on the same chain can silently
+        // fail to present (the same trap RootView and FuelView document). One background view
+        // holds all three so the body's modifier chain stays type-checkable.
+        .background { shelfPresenters }
         // A coach nav card asked for plan settings — open the sheet the shell steered us toward
         // (onChange covers the case where Plan was already the visible tab).
         .onChange(of: coach.wantsPlanSettings) { _, wants in
@@ -317,7 +329,28 @@ struct PlanView: View {
                 coach.wantsPlanSettings = false
                 showSettings = true
             }
+            // An upcoming plan whose day has come starts here too (Today's bootstrap is the usual
+            // door; an athlete who opens straight onto Plan should not see last week's plan).
+            if let p = profiles.first,
+               let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
+                PlanLifecycleService.propagate(activation, profile: p, workouts: p.workouts,
+                                               notifications: services.notifications, in: context)
+                weekStart = currentWeekStart
+                rebuildDerived()
+            }
             #if DEBUG
+            // --plan-your-plans: open the shelf (screenshot verification).
+            if ProcessInfo.processInfo.arguments.contains("--plan-your-plans") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showYourPlans = true }
+            }
+            // --plan-manage: open Manage plan (screenshot verification).
+            if ProcessInfo.processInfo.arguments.contains("--plan-manage") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showManage = true }
+            }
+            // --plan-builder: open the plan builder on a fresh blueprint.
+            if ProcessInfo.processInfo.arguments.contains("--plan-builder") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { composing = PlanComposeTarget(record: nil) }
+            }
             // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
             if ProcessInfo.processInfo.arguments.contains("--plan-settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettings = true }
@@ -798,6 +831,9 @@ struct PlanView: View {
                                 Label("I'm away some days…", systemImage: "airplane")
                             }
                         }
+                        Button { showManage = true } label: {
+                            Label("Manage plan", systemImage: "wrench.and.screwdriver")
+                        }
                         if plan?.isSelfCoached != true {
                             Button { showSettings = true } label: {
                                 Label("Adjust this plan", systemImage: "slider.horizontal.3")
@@ -806,6 +842,9 @@ struct PlanView: View {
                         Button { showNewPlan = true } label: {
                             Label(plan?.isSelfCoached == true ? "Build me a plan" : "Start a new plan",
                                   systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        Button { showYourPlans = true } label: {
+                            Label("Your plans", systemImage: "square.stack")
                         }
                         if plan?.isSelfCoached != true {
                             Button { confirmingSelfCoached = true } label: {
@@ -822,6 +861,60 @@ struct PlanView: View {
             }
         }
         .padding(.top, Theme.Space.sm)
+    }
+
+    /// The three shelf-related sheets on their own presenters (see the body's `.background`).
+    private var shelfPresenters: some View {
+        ZStack {
+            Color.clear.sheet(isPresented: $showYourPlans, onDismiss: { rebuildDerived() }) { yourPlansSheet }
+            Color.clear.sheet(isPresented: $showManage, onDismiss: { rebuildDerived() }) { manageSheet }
+            Color.clear.sheet(item: $composing, onDismiss: { rebuildDerived() }) { target in builderSheet(target) }
+        }
+    }
+
+    @ViewBuilder
+    private var yourPlansSheet: some View {
+        if let p = profiles.first {
+            YourPlansView(profile: p, distanceUnit: distanceUnit,
+                          onManageCurrent: { showYourPlans = false; showManage = true },
+                          onCompose: { record in
+                              showYourPlans = false
+                              composing = PlanComposeTarget(record: record)
+                          },
+                          onPlanChanged: { planChangedFromShelf() })
+        }
+    }
+
+    @ViewBuilder
+    private var manageSheet: some View {
+        if let p = profiles.first {
+            ManagePlanView(profile: p, distanceUnit: distanceUnit,
+                           onOpenSettings: { showManage = false; showSettings = true },
+                           onOpenYourPlans: { showManage = false; showYourPlans = true },
+                           onAwayDays: { showManage = false; showAwayDays = true },
+                           onOpenLibrary: { showManage = false; showLibrary = true },
+                           onPlanChanged: { planChangedFromShelf() })
+        }
+    }
+
+    @ViewBuilder
+    private func builderSheet(_ target: PlanComposeTarget) -> some View {
+        if let p = profiles.first {
+            PlanBuilderFlow(profile: p, draft: target.record, distanceUnit: distanceUnit) { outcome in
+                composing = nil
+                if outcome == .activated {
+                    planChangedFromShelf()
+                } else if outcome != .cancelled {
+                    showYourPlans = true
+                }
+            }
+        }
+    }
+
+    /// A plan switched or reshaped from a shelf surface: land on the current week and re-read.
+    private func planChangedFromShelf() {
+        weekStart = currentWeekStart
+        rebuildDerived()
     }
 
     /// The masthead title: the athlete's plan name as typed; the unnamed default joins the
@@ -1963,6 +2056,14 @@ struct PlanView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Plan it myself, no coach plan")
+                // Drafts and previous plans live on the shelf even when nothing is current.
+                Button { Haptics.light(); showYourPlans = true } label: {
+                    Text("Your plans")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Your plans")
             }
         }
         .padding(Theme.Space.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2006,4 +2107,11 @@ struct PlanView: View {
             Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         }
     }
+}
+
+
+/// `.sheet(item:)` needs an Identifiable; a nil record is a fresh plan.
+struct PlanComposeTarget: Identifiable {
+    let record: PlanShelfRecord?
+    var id: String { record?.id.uuidString ?? "new" }
 }

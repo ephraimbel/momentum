@@ -343,6 +343,7 @@ enum DataManager {
         wipe(RunningEventRecord.self)
         wipe(RunningSeasonRecord.self)
         wipe(PlanDecisionRecord.self)
+        wipe(PlanShelfRecord.self)
         // Standalone records (no parent relationship to cascade through) — must be wiped explicitly
         // or a reset leaves stale coaching history, inbox notifications, and check-ins behind.
         wipe(CoachingEvent.self)
@@ -397,6 +398,7 @@ enum DataManager {
             wipe(RunningEventRecord.self)
             wipe(RunningSeasonRecord.self)
             wipe(PlanDecisionRecord.self)
+            wipe(PlanShelfRecord.self)
             wipe(CoachingEvent.self)
             wipe(AppNotification.self)
             wipe(DailyCheckin.self)

@@ -49,6 +49,7 @@ struct RunningSchemaMigrationSpikeTests {
             PlannedSessionIntentRecord.self,
             PlanDecisionRecord.self,
             PlanAthleteStateRecord.self,
+            PlanShelfRecord.self,
         ]
         let actualIDs = PersistenceController.models.map { ObjectIdentifier($0) }
         let expectedIDs = expected.map { ObjectIdentifier($0) }
@@ -77,7 +78,7 @@ struct RunningSchemaMigrationSpikeTests {
 
         let storeURL = directory.appendingPathComponent("V1.store")
         try FileManager.default.copyItem(at: fixtureURL, to: storeURL)
-        let schema = Schema(versionedSchema: SchemaV4.self)
+        let schema = Schema(versionedSchema: SchemaV5.self)
         let configuration = ModelConfiguration(
             "ArchivedRunningSchemaV1",
             schema: schema,
@@ -162,7 +163,7 @@ struct RunningSchemaMigrationSpikeTests {
         let storeURL = directory.appendingPathComponent("V1.store")
         let ids = try writeV1Fixture(to: storeURL)
 
-        let schema = Schema(versionedSchema: SchemaV4.self)
+        let schema = Schema(versionedSchema: SchemaV5.self)
         let configuration = ModelConfiguration(
             "RunningMigrationSpike",
             schema: schema,

@@ -140,13 +140,26 @@ enum SchemaV4: VersionedSchema {
     }
 }
 
+/// V5 (2026-09-07) adds one more scalar-ID sidecar: the plan shelf (`PlanShelfRecord`) holding
+/// drafts, upcoming plans and previous plans as blueprints and snapshots. `TrainingPlan` and
+/// `UserProfile` are untouched, so this stays a purely additive step.
+enum SchemaV5: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(5, 0, 0) }
+    static var models: [any PersistentModel.Type] {
+        SchemaV4.models + [PlanShelfRecord.self]
+    }
+}
+
 enum MomentumMigrationPlan: SchemaMigrationPlan {
-    static var schemas: [any VersionedSchema.Type] { [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self] }
+    static var schemas: [any VersionedSchema.Type] {
+        [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self]
+    }
     static var stages: [MigrationStage] {
         [
             .lightweight(fromVersion: SchemaV1.self, toVersion: SchemaV2.self),
             .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self),
             .lightweight(fromVersion: SchemaV3.self, toVersion: SchemaV4.self),
+            .lightweight(fromVersion: SchemaV4.self, toVersion: SchemaV5.self),
         ]
     }
 }

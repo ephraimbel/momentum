@@ -482,6 +482,11 @@ enum PlanService {
         guard let dayAfter = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: raceDate)),
               calendar.startOfDay(for: today) >= calendar.startOfDay(for: dayAfter) else { return nil }
 
+        // 0) The finished season goes to the shelf as a completed plan (2026-09-07) while the
+        // profile still describes it. Insert only; the rebuild's save below commits it.
+        PlanLifecycleService.retire(plan, of: profile, endedAt: raceDate, now: today, status: .completed,
+                                    in: context, calendar: calendar)
+
         // 1) Recalibrate from the result, when the race was actually run and logged.
         let raceM = profile.raceDistanceM
         let raceWorkout = plan.sessions.first { $0.runType == .race }?.completedWorkout
@@ -552,6 +557,12 @@ enum PlanService {
                            in context: ModelContext, calendar: Calendar = .current) -> TrainingPlan? {
         guard let plan = profile.plan, plan.raceDate == nil else { return nil }
         let nextIndex = plan.blockIndex + 1
+        // The closing block is a completed plan in its own right (2026-09-07): shelve it before
+        // the rebuild replaces it, inside the same transaction.
+        if !plan.sessions.isEmpty {
+            PlanLifecycleService.retire(plan, of: profile, endedAt: startDate, now: startDate, status: .completed,
+                                        in: context, calendar: calendar)
+        }
         // Reassess: what did they actually run over the last 4 weeks? That achieved volume seeds the
         // next block so progression is earned, never assumed. Only overwrite when there's real signal
         // — otherwise keep their declared/prior figure so a quiet month doesn't zero the plan out.
@@ -695,19 +706,27 @@ enum PlanService {
         }
     }
 
+    /// `blueprint` (2026-09-07) overlays a shelved plan's own inputs on the athlete's profile so a
+    /// draft can be generated for a preview without writing a single field: the body, the injury
+    /// history and the athlete model still come from the profile, everything the plan IS comes
+    /// from the blueprint. Activation writes the same blueprint to the profile and calls this with
+    /// none, which is how the preview and the plan are guaranteed to agree.
     static func planInputs(from p: UserProfile, startDate: Date = Date(),
-                           calendar: Calendar = .current) -> PlanInputs {
-        let disciplines = p.disciplines.compactMap(Discipline.init(rawValue:))
+                           calendar: Calendar = .current, blueprint b: PlanBlueprint? = nil) -> PlanInputs {
+        let disciplines: [Discipline] = b.map { blueprint in
+            blueprint.lifts ? [.running, .strength] : [.running]
+        } ?? p.disciplines.compactMap(Discipline.init(rawValue:))
         func level(_ key: String) -> ExperienceLevel {
             ExperienceLevel(rawValue: p.experience[key] ?? "") ?? .some
         }
+        let preferredDays = b?.preferredDays ?? p.preferredDays
         // Map preferred weekdays (1 = Sun … 7 = Sat) to in-week offsets from the plan's start day.
         let anchorWeekday = calendar.component(.weekday, from: calendar.startOfDay(for: startDate))
-        let offsets = p.preferredDays.map { ((($0 - anchorWeekday) % 7) + 7) % 7 }
+        let offsets = preferredDays.map { ((($0 - anchorWeekday) % 7) + 7) % 7 }
         // No explicit day choice → let the Athlete Model's slip evidence steer the auto-spread
         // away from the weekdays this athlete demonstrably can't make (avoidWeekdays returns
         // 0-based weekday indices; +1 back to 1…7 before the same offset mapping).
-        let avoidOffsets: [Int] = p.preferredDays.isEmpty
+        let avoidOffsets: [Int] = preferredDays.isEmpty
             ? AthleteModelEngine.avoidWeekdays(
                 missed: p.athlete?.missedWeekdayHistogram ?? [],
                 completed: p.athlete?.weekdayHistogram ?? [])
@@ -715,23 +734,49 @@ enum PlanService {
             : []
         return PlanInputs(
             disciplines: disciplines.isEmpty ? [.running] : disciplines,
-            goal: p.goal, daysPerWeek: p.daysPerWeek, equipment: p.equipment,
-            sessionMinutes: p.sessionMinutes, raceDate: p.raceDate,
-            runningExperience: level(Discipline.running.rawValue),
-            liftingExperience: level(Discipline.strength.rawValue),
-            raceDistanceM: p.raceDistanceM,
-            currentWeeklyVolumeM: p.weeklyRunVolumeM, longestRunM: p.longestRunM,
-            goalFinishTimeS: p.goalFinishTimeS, targetWeeklyVolumeM: p.targetWeeklyRunVolumeM,
-            hybridPriority: p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
-            strengthSplit: StrengthSplitStyle(rawValue: p.strengthSplit) ?? .coach,
-            muscleFocus: p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
+            goal: b?.goal ?? p.goal, daysPerWeek: b?.daysPerWeek ?? p.daysPerWeek,
+            equipment: b?.equipment ?? p.equipment,
+            sessionMinutes: b?.sessionMinutes ?? p.sessionMinutes,
+            raceDate: b.map { $0.isRace ? $0.raceDate : nil } ?? p.raceDate,
+            runningExperience: b?.runningExperience ?? level(Discipline.running.rawValue),
+            liftingExperience: b?.liftingExperience ?? level(Discipline.strength.rawValue),
+            raceDistanceM: b.map { $0.isRace ? $0.raceDistanceM : nil } ?? p.raceDistanceM,
+            currentWeeklyVolumeM: b?.weeklyRunVolumeM ?? p.weeklyRunVolumeM,
+            longestRunM: b?.longestRunM ?? p.longestRunM,
+            goalFinishTimeS: b.map { $0.isRace ? $0.goalFinishTimeS : nil } ?? p.goalFinishTimeS,
+            targetWeeklyVolumeM: b.map(\.targetWeeklyRunVolumeM) ?? p.targetWeeklyRunVolumeM,
+            hybridPriority: b.map(\.hybridPriority) ?? p.hybridPriority.flatMap(HybridPriority.init(rawValue:)),
+            strengthSplit: b?.strengthSplit ?? (StrengthSplitStyle(rawValue: p.strengthSplit) ?? .coach),
+            muscleFocus: b?.muscleFocus ?? p.muscleFocus.compactMap(MuscleGroup.init(rawValue:)),
             preferredDayOffsets: offsets,
             avoidDayOffsets: avoidOffsets,
-            intensity: PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced,
+            intensity: b?.intensity ?? (PlanIntensity(rawValue: p.planIntensity ?? "") ?? .balanced),
             injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
             age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) },
             distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved(),
             anchorWeekday: anchorWeekday)
+    }
+
+    /// Generate a plan for a blueprint WITHOUT persisting anything (2026-09-07): the same
+    /// calibration a rebuild would use (logged-run fitness, the athlete state, the current pace),
+    /// so a preview is the plan it would become. Reads only. Off the main actor is the caller's
+    /// job; this is synchronous engine work over already-fetched rows.
+    static func stagePreview(blueprint: PlanBlueprint, for profile: UserProfile, startDate: Date,
+                             in context: ModelContext, calendar: Calendar = .current)
+        -> (generated: GeneratedPlan, inputs: PlanInputs) {
+        var inputs = planInputs(from: profile, startDate: startDate, calendar: calendar, blueprint: blueprint)
+        inputs.opensWithRun = !hasLoggedRun(on: startDate, in: context, calendar: calendar)
+        let current = observedFitness(for: profile, on: startDate, in: context)
+        // The blueprint's declared fitness is the athlete's own word about where they are now; the
+        // logged-run read wins only when it exists, exactly as a rebuild treats the profile.
+        inputs.currentWeeklyVolumeM = current.weeklyM ?? blueprint.weeklyRunVolumeM
+        inputs.longestRunM = current.longestM ?? blueprint.longestRunM
+        let seed = profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none
+        let state = athleteState(for: profile, calibration: seed, on: startDate, in: context, calendar: calendar)
+        let seeded = AthleteStateEngine.seed(seed, with: state)
+        let generated = PlanEngine.generate(profile: inputs, catalog: catalog(in: context),
+                                            calibration: seeded, startDate: startDate, calendar: calendar)
+        return (generated, inputs)
     }
 
     /// Whether a run was logged on `day`. The plan opens with a run on its first day unless the

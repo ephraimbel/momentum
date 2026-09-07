@@ -122,6 +122,7 @@ enum DemoSeed {
             try? context.delete(model: PlannedSession.self);     try? context.delete(model: TrainingPlan.self)
             try? context.delete(model: PlanMetadataRecord.self); try? context.delete(model: RunningEventRecord.self)
             try? context.delete(model: PlanAthleteStateRecord.self)
+            try? context.delete(model: PlanShelfRecord.self)
             try? context.delete(model: RunningSeasonRecord.self); try? context.delete(model: PlanDecisionRecord.self)
             try? context.delete(model: MemoryNote.self);         try? context.delete(model: FitnessSnapshot.self)
             try? context.delete(model: AthleteModel.self);       try? context.delete(model: PersonalRecord.self)
@@ -165,6 +166,11 @@ enum DemoSeed {
         // the hero Fuel screenshot. Idempotent: skips if today already has meals.
         if ProcessInfo.processInfo.arguments.contains("--seed-fuel-today") {
             seedFuelToday(context)
+        }
+        // --seed-fuel-photo: a resolved photo meal and a rejected one, for the journal's photo
+        // states (2026-09-07).
+        if ProcessInfo.processInfo.arguments.contains("--seed-fuel-photo") {
+            seedFuelPhotos(in: context)
         }
         // --seed-plan-name on an ALREADY-seeded container: name the existing plan too, so UI
         // tests get the named-plan experience regardless of which test seeded the store first.
@@ -272,6 +278,11 @@ enum DemoSeed {
         // --seed-plan-name: exercise the named-plan experience (Plan title + Today's banner eyebrow).
         if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
             profile.plan?.name = "Austin Marathon"
+        }
+        // --seed-plan-shelf: a draft, an upcoming plan and a completed block on the shelf, so Your
+        // plans can be screenshot in its populated state (2026-09-07).
+        if ProcessInfo.processInfo.arguments.contains("--seed-plan-shelf") {
+            seedPlanShelf(for: profile, in: context)
         }
         // --seed-refuel: a 75 minute run that ended 8 minutes ago, so Fuel's refuel banner is open
         // and the refuel cue's words can be verified on the page (fuel integration 2026-09-06).
@@ -1282,6 +1293,119 @@ enum DemoSeed {
             prevLat = lat; prevLon = lon
         }
         return out
+    }
+}
+#endif
+
+#if DEBUG
+extension DemoSeed {
+    /// Three shelved plans around the seeded athlete (2026-09-07): a 10K draft, a half marathon
+    /// scheduled for the Monday after next, and a completed spring block. Previews run the real
+    /// generator, so the cards carry the numbers a real draft would.
+    static func seedPlanShelf(for profile: UserProfile, in context: ModelContext) {
+        let cal = Calendar.current
+        let today = Date()
+        var draft = PlanBlueprint(profile: profile)
+        draft.name = "Faster 10K"
+        draft.goal = .raceDistance
+        draft.raceDistanceM = RaceDistance.tenK.meters
+        draft.raceDate = cal.date(byAdding: .weekOfYear, value: 10, to: today)
+        draft.goalFinishTimeS = 48 * 60
+        draft.daysPerWeek = 4
+        let draftPreview = PlanLifecycleService.preview(for: draft, profile: profile, startDate: today, in: context)
+        _ = try? PlanLifecycleService.saveDraft(draft, preview: draftPreview, for: profile, now: today, in: context)
+
+        var upcoming = PlanBlueprint(profile: profile)
+        upcoming.name = "Autumn Half"
+        upcoming.goal = .raceDistance
+        upcoming.raceDistanceM = RaceDistance.half.meters
+        upcoming.raceDate = cal.date(byAdding: .weekOfYear, value: 16, to: today)
+        upcoming.goalFinishTimeS = nil
+        upcoming.daysPerWeek = 5
+        let weekOut = cal.date(byAdding: .day, value: 7, to: today) ?? today
+        let nextMonday = cal.nextDate(after: weekOut, matching: DateComponents(weekday: 2), matchingPolicy: .nextTime) ?? weekOut
+        let upcomingPreview = PlanLifecycleService.preview(for: upcoming, profile: profile, startDate: nextMonday, in: context)
+        if let record = try? PlanLifecycleService.saveDraft(upcoming, preview: upcomingPreview, for: profile, now: today, in: context) {
+            try? PlanLifecycleService.schedule(record, start: nextMonday, now: today, in: context)
+        }
+
+        var done = PlanBlueprint(profile: profile)
+        done.name = "Spring base"
+        done.goal = .generalFitness
+        done.raceDistanceM = nil; done.raceDate = nil; done.goalFinishTimeS = nil
+        done.daysPerWeek = 4
+        let started = cal.date(byAdding: .weekOfYear, value: -14, to: today) ?? today
+        let ended = cal.date(byAdding: .weekOfYear, value: -8, to: today) ?? today
+        let record = PlanShelfRecord(profileID: profile.id, status: .completed, name: done.name,
+                                     createdAt: ended, blueprintData: (try? JSONEncoder().encode(done)) ?? Data())
+        record.startedAt = started
+        record.endedAt = ended
+        var preview = PlanLifecycleService.preview(for: done, profile: profile, startDate: started, in: context)
+        preview.completedSessions = max(0, preview.plannedSessions - 3)
+        record.previewData = try? JSONEncoder().encode(preview)
+        context.insert(record)
+        try? context.save()
+    }
+}
+#endif
+
+#if DEBUG
+import UIKit
+
+extension DemoSeed {
+    /// Two photo meals for the journal's photo states (2026-09-07): a plate that resolved
+    /// (thumbnail, items, a modest confidence) and one the server could not read as food
+    /// (the honest line, no numbers). The image is drawn, not shipped.
+    static func seedFuelPhotos(in context: ModelContext) {
+        let plate = renderPlate()
+        let resolved = Meal()
+        resolved.text = ""
+        resolved.photoData = plate
+        resolved.eatenAt = Calendar.current.date(byAdding: .hour, value: -3, to: Date()) ?? Date()
+        resolved.items = [
+            MealItem(name: "Grilled Chicken", qty: 1, unit: "serving", kcal: 220, carbsG: 0, proteinG: 41, fatG: 5,
+                     sodiumMg: 90, fluidsMl: 0, potassiumMg: 360, magnesiumMg: 30, ironMg: 1.0, calciumMg: 15,
+                     fiberG: 0, sugarG: 0, satFatG: 1, nova: 1),
+            MealItem(name: "Rice", qty: 1.5, unit: "cup", kcal: 310, carbsG: 67, proteinG: 6, fatG: 1,
+                     sodiumMg: 5, fluidsMl: 0, potassiumMg: 80, magnesiumMg: 28, ironMg: 0.6, calciumMg: 20,
+                     fiberG: 1, sugarG: 0, satFatG: 0, nova: 1),
+            MealItem(name: "Broccoli", qty: 1, unit: "cup", kcal: 55, carbsG: 11, proteinG: 4, fatG: 1,
+                     sodiumMg: 60, fluidsMl: 0, potassiumMg: 460, magnesiumMg: 33, ironMg: 1.0, calciumMg: 60,
+                     fiberG: 5, sugarG: 2, satFatG: 0, nova: 1),
+        ]
+        resolved.source = "ai"
+        resolved.confidence = 0.55
+        resolved.note = "A photo estimate. Portions are a guess; fix them with the steppers."
+        context.insert(resolved)
+
+        let rejected = Meal()
+        rejected.text = ""
+        rejected.photoData = renderPlate(empty: true)
+        rejected.eatenAt = Calendar.current.date(byAdding: .minute, value: -40, to: Date()) ?? Date()
+        rejected.source = "pending"
+        rejected.estimateAttempts = 3
+        rejected.confidence = 0
+        rejected.note = FuelEstimator.rejectionLine("not_food")
+        context.insert(rejected)
+        try? context.save()
+    }
+
+    private static func renderPlate(empty: Bool = false) -> Data? {
+        let size = CGSize(width: 900, height: 900)
+        let image = UIGraphicsImageRenderer(size: size).image { ctx in
+            UIColor(red: 0.93, green: 0.90, blue: 0.86, alpha: 1).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 80, y: 80, width: 740, height: 740))
+            guard !empty else { return }
+            UIColor(red: 0.85, green: 0.62, blue: 0.35, alpha: 1).setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 180, y: 260, width: 300, height: 220))
+            UIColor(red: 0.97, green: 0.95, blue: 0.88, alpha: 1).setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 440, y: 330, width: 280, height: 240))
+            UIColor(red: 0.45, green: 0.66, blue: 0.35, alpha: 1).setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 330, y: 520, width: 220, height: 150))
+        }
+        return MealPhoto.prepare(image: image)
     }
 }
 #endif

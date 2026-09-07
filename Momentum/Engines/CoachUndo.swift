@@ -99,7 +99,16 @@ enum CoachUndo {
         snap.weeklyRunVolumeM = profile.weeklyRunVolumeM
         snap.weeklyVolumeCaptured = true
         if let plan = profile.plan {
-            snap.plan = Snapshot.PlanState(
+            snap.plan = planState(of: plan)
+        }
+        guard let data = try? JSONEncoder().encode(snap) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The plan half of a snapshot on its own (2026-09-07): the shelf keeps a retired plan in this
+    /// exact shape, so a previous plan reads back through the same decoder undo already trusts.
+    static func planState(of plan: TrainingPlan) -> Snapshot.PlanState {
+        var state = Snapshot.PlanState(
                 name: plan.name,
                 goal: plan.goal.rawValue,
                 disciplines: plan.disciplines,
@@ -131,10 +140,8 @@ enum CoachUndo {
                                 progression: pe.progression)
                         })
                 })
-            snap.plan?.blockIndex = plan.blockIndex
-        }
-        guard let data = try? JSONEncoder().encode(snap) else { return nil }
-        return String(decoding: data, as: UTF8.self)
+        state.blockIndex = plan.blockIndex
+        return state
     }
 
     // MARK: - Restore
