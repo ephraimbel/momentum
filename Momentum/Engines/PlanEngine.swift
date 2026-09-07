@@ -349,7 +349,7 @@ enum PlanEngine {
                     jog.runType = .recovery
                     jog.targetDistanceM = 3_000
                     jog.targetPaceSPerKm = pace(.recovery, p5k: p5k, threshold: threshold)
-                    jog.rationale = "Optional shakeout — twenty easy minutes keeps the legs turning between hard days. Flat today? Skipping it counts as rest too."
+                    jog.rationale = "Optional shakeout. Twenty easy minutes keeps the legs turning between hard days. Flat today? Skipping it counts as rest too."
                     scheduled.append(jog)
                     scheduled.sort { $0.dayOffset < $1.dayOffset }
                 }
@@ -482,7 +482,7 @@ enum PlanEngine {
                     weeks[raceWeek].sessions[i].targetDistanceM =
                         min(weeks[raceWeek].sessions[i].targetDistanceM ?? 3_000, 3_000)
                     weeks[raceWeek].sessions[i].targetPaceSPerKm = pace(.easy, p5k: p5k, threshold: threshold)
-                    weeks[raceWeek].sessions[i].rationale = "Shakeout — loose legs for tomorrow. Nothing to gain here, plenty to lose."
+                    weeks[raceWeek].sessions[i].rationale = "Shakeout. Loose legs for tomorrow. Nothing to gain here, plenty to lose."
                 }
                 var race = GeneratedSession(dayOffset: off, discipline: .running)
                 race.runType = .race
@@ -490,7 +490,7 @@ enum PlanEngine {
                 race.targetPaceSPerKm = goalRacePace ?? DanielsPaces.racePaceSPerKm(distanceM: raceM, p5kSPerKm: p5k,
                                                                                     riegelExponent: exponent)
                 race.isHardRun = true
-                race.rationale = "Race day — everything pointed here. Trust the taper and run your plan."
+                race.rationale = "Race day. Everything pointed here. Trust the taper and run your plan."
                 weeks[raceWeek].sessions.append(race)
                 weeks[raceWeek].sessions.sort { $0.dayOffset < $1.dayOffset }
             }
@@ -598,6 +598,11 @@ enum PlanEngine {
             }
             if !changed { break }
         }
+
+        // The coach's words on every session (2026-09-06). Written LAST, from the final weeks, so a
+        // note's "about a third of this week" is a true share after the cutback and governor passes.
+        // Only generic rationales are replaced; every special one the engine wrote above stands.
+        CoachNotes.annotate(&weeks, inputs: profile, startDate: startDate, calendar: calendar)
 
         var generated = GeneratedPlan(p5kSPerKm: p5k, weeks: weeks)
         generated.thresholdSPerKm = threshold
@@ -1098,7 +1103,7 @@ enum PlanEngine {
                                    (dist / 1000) * 0.4).rounded(.down)
                 if finishKm >= 2 {
                     s.intervals = "Last \(Int(finishKm))km @ race pace"
-                    s.rationale = "Long run with a race-pace finish — racing on tired legs is the skill."
+                    s.rationale = "Long run with a race pace finish. Racing on tired legs is the skill."
                 } else {
                     s.isHardRun = false   // too short for a real block → plain long run
                 }
@@ -1114,7 +1119,7 @@ enum PlanEngine {
                 // the dishonesty this coach exists to refuse.
                 if isRunning, level == .new, s.intervals == nil { s.intervals = "Run/walk 1:1" }
                 if runDays == 1, isRunning {
-                    s.rationale = "Your run this week — keep it easy and unhurried. One run a week holds your endurance; when you can add a second day, that is where it starts to grow again."
+                    s.rationale = "Your run this week. Keep it easy and unhurried. One run a week holds your endurance. When you can add a second day, that is where it starts to grow again."
                 }
                 out.append(s)
             }
@@ -1140,7 +1145,7 @@ enum PlanEngine {
             if timeTrial {
                 // The checkpoint race effort — replaces this week's quality menu. A .tempo carrier
                 // (planned quality, so a hard result banks recalibration evidence) at 5K race pace.
-                let tt = (type: RunType.tempo, intervals: Optional("Time trial — 5K at race effort"),
+                let tt = (type: RunType.tempo, intervals: Optional("Time trial: 5K at race effort"),
                           paceOverride: Optional(pace(.race, p5k: p5k)),
                           note: Optional("A checkpoint, not a race: run it honest. Your training paces recalibrate from the result."))
                 primaryQuality = tt
@@ -1262,9 +1267,9 @@ enum PlanEngine {
                 s.isMediumLong = true
                 if ultraBackToBack {
                     s.backToBack = true
-                    s.rationale = "Back-to-back — a medium-long the day before the long run. The ultra's own tool: running long on legs that already ran long."
+                    s.rationale = "Back to back. A medium-long run the day before the long run. The ultra's own tool: running long on legs that already ran long."
                 } else {
-                    s.rationale = "Medium-long run — the quiet aerobic engine-builder between the hard days."
+                    s.rationale = "Medium-long run. The quiet aerobic engine builder between the hard days."
                 }
                 // A capped medium-long hands what it could not carry to the runs still to come,
                 // so the texture never dents the week's volume (a dented week followed by a whole
@@ -1276,7 +1281,7 @@ enum PlanEngine {
             } else if recoveryTexture, !recoveryAdded {
                 recoveryAdded = true
                 var s = makeRun(.recovery, easyBase * 0.6, hard: false)
-                s.rationale = "Recovery jog — slower on purpose; this is where the hard work absorbs."
+                s.rationale = "Recovery jog. Slower on purpose. This is where the hard work absorbs."
                 out.append(s)
             } else {
                 let intervals = (isRunning && level == .new) ? "Run/walk 1:1" : nil
@@ -1406,8 +1411,8 @@ enum PlanEngine {
                                                                riegelExponent: riegelExponent)
         let avoidImpact = !injuryAreas.isDisjoint(with: impactSensitiveAreas)
         let avoidSpeed = !injuryAreas.isDisjoint(with: speedSensitiveAreas)
-        let impactNote = "A steady run instead of repeats today — building carefully around your injury history."
-        let speedNote = "Comfortably hard repeats instead of fast ones — protecting where you've been hurt before."
+        let impactNote = "A steady run instead of repeats today. We build carefully around your injury history."
+        let speedNote = "Comfortably hard repeats instead of fast ones. That protects where you've been hurt before."
 
         // Progressive overload within the block: rep counts climb with the calendar, capped at a
         // sane ceiling. Interval strings drive the guided-run builder, so growth flows through.
@@ -1450,8 +1455,8 @@ enum PlanEngine {
         let repM = 180 / max(1, pace(.intervals, p5k: p5k)) * 1000
         let iCeil = weeklyVolumeM.map { max(3, min(8, Int(($0 * 0.08) / repM))) } ?? 5
         let timeReps = min(iCeil, 4 + weekIndex / 3)
-        let steadyNote = "Steady run — comfortably hard, the pace you could hold for about an hour. This is what lifts your everyday pace."
-        let repeatNote = "Repeats — a little faster than steady, with an easy jog between. Short doses of quick running teach your legs to hold pace."
+        let steadyNote = "Steady run. Comfortably hard, about the pace you could hold for an hour. This is what lifts your everyday pace."
+        let repeatNote = "Repeats. A little faster than steady, with an easy jog between. Short doses of quick running teach your legs to hold pace."
         let goalNote = "Repeats at your goal race pace, with an easy jog between. Practice the pace and it stops feeling fast."
         if level == .new {
             // Beginners get ONE kind of hard: a steady run, every time. Consistency first;
@@ -1461,7 +1466,7 @@ enum PlanEngine {
             // reached the start line having never run the pace).
             menu = (phase == .taper || phase == .peak) && racePace != nil
                 ? [(.tempo, nil, goalRace,
-                    "Steady run at your race pace. Short, and the point is the pace — run it now and it will feel familiar on the day.")]
+                    "Steady run at your race pace. Short, and the point is the pace. Run it now and it will feel familiar on the day.")]
                 : [(.tempo, nil, nil, steadyNote)]
         } else {
             switch phase {
@@ -1472,7 +1477,7 @@ enum PlanEngine {
             case .peak:
                 menu = raceM >= 20_000
                     ? [(.intervals, "\(max(2, min(4, rKm / 2 + 1)))×2km @ threshold", threshold,
-                        "Longer repeats at your steady pace — the sharpening a long race actually needs."),
+                        "Longer repeats at your steady pace. This is the sharpening a long race actually needs."),
                        (.tempo, nil, nil, steadyNote)]
                     : [(.intervals, "\(rKm)×1km @ threshold", threshold, repeatNote),
                        (.tempo, nil, nil, steadyNote)]
@@ -1667,14 +1672,14 @@ enum PlanEngine {
         switch discipline {
         case .cycling:
             return long
-                ? "Your long ride — steady and conversational the whole way. This is the one that builds the engine."
-                : "Easy ride — comfortable enough to talk through. Most of your week should feel like this."
+                ? "Your long ride. Steady and conversational the whole way. This is the one that builds the engine."
+                : "Easy ride. Comfortable enough to talk through. Most of your week should feel like this."
         case .walking:
             return long
-                ? "Your long walk — unhurried, and further than the others. Time on your feet is the point."
-                : "Easy walk — a steady pace you could hold all day."
+                ? "Your long walk. Unhurried, and further than the others. Time on your feet is the point."
+                : "Easy walk. A steady pace you could hold all day."
         case .running, .strength:
-            return long ? "Long — steady and unhurried." : "Easy — most of your week should feel like this."
+            return long ? "Long session. Steady and unhurried." : "Easy session. Most of your week should feel like this."
         }
     }
 
@@ -1708,15 +1713,15 @@ enum PlanEngine {
             let primaryHasLongReps = primary.intervals?.contains("2km") ?? false
             return primaryHasLongReps
                 ? (.intervals, "\(rKm)×1km @ threshold", threshold,
-                   "Your second hard day — shorter threshold repeats beside the long ones. Your mileage has earned both.")
+                   "Your second hard day. Shorter threshold repeats beside the long ones. Your mileage has earned both.")
                 : (.intervals, "\(max(2, min(3, rKm / 2)))×2km @ threshold", threshold,
-                   "Your second hard day — longer repeats at your steady pace. A long race is built here, and your mileage has earned both.")
+                   "Your second hard day. Longer repeats at your steady pace. A long race is built here, and your mileage has earned both.")
         }
         return primaryIsSteady
             ? (.intervals, "\(reps)×3min", nil,
-               "Your second hard day — short repeats beside the steady work. Your mileage has earned both.")
+               "Your second hard day. Short repeats beside the steady work. Your mileage has earned both.")
             : (.intervals, "\(rKm)×1km @ threshold", threshold,
-               "Your second hard day — comfortably hard repeats beside the faster ones. Your mileage has earned both.")
+               "Your second hard day. Comfortably hard repeats beside the faster ones. Your mileage has earned both.")
     }
 
     /// The peak weekly long-run distance a race builds toward (meters). Short races multiply up; long
@@ -2048,7 +2053,7 @@ enum PlanEngine {
                 runs[idx].isHardRun = false
                 runs[idx].runType = .easy
                 runs[idx].intervals = nil
-                runs[idx].rationale = "Kept easy — the week has no room for another hard day with proper recovery."
+                runs[idx].rationale = "Kept easy. The week has no room for another hard day with proper recovery."
             }
         }
         // Recovery jog: the day after the first quality day when that is a run day; else the day
@@ -2224,7 +2229,17 @@ enum PlanEngine {
         return result.sorted()
     }
 
-    private static func rationale(for s: GeneratedSession) -> String {
+    /// True when a session carries no rationale, or exactly the fixed per type sentence that
+    /// `rationale(for:)` writes as the fallback. `CoachNotes.annotate` replaces those and nothing
+    /// else, so an eased, protected, tune up or shakeout note is never overwritten.
+    static func isGenericRationale(_ text: String?, for s: GeneratedSession) -> Bool {
+        guard let text, !text.isEmpty else { return true }
+        return text == rationale(for: s)
+    }
+
+    /// The fixed fallback sentence per session type. Kept for the paths that build a week without
+    /// running the full generator; the generator itself replaces these with `CoachNotes`.
+    static func rationale(for s: GeneratedSession) -> String {
         if s.discipline == .strength { return "\(s.strengthLabel ?? "Strength") day." }
         // A ride or a walk never borrows a runner's sentence — `runType` is nil on those, and the
         // `default` below used to describe every one of them as an easy run (2026-08-30).
@@ -2232,15 +2247,15 @@ enum PlanEngine {
             return cardioRationale(s.runType ?? .easy, s.discipline)
         }
         switch s.runType {
-        case .long: return "Long run — steady and unhurried. This is the run that builds your endurance."
+        case .long: return "Long run. Steady and unhurried. This is the run that builds your endurance."
         case .progression: return "Start easy and finish a little quicker. Teaches you to hold pace when your legs are tired."
-        case .tempo: return "Steady run — comfortably hard, the pace you could hold for about an hour."
+        case .tempo: return "Steady run. Comfortably hard, the pace you could hold for about an hour."
         case .intervals: return "Repeats with an easy jog between. Short doses of quicker running."
         case .fartlek: return "Easy run with a few quicker stretches whenever you feel like it."
-        case .hills: return "Hill repeats — strength and power, easy on the joints."
+        case .hills: return "Hill repeats. Strength and power, easy on the joints."
         case .strides: return "A few short, relaxed pick-ups to wake your legs up."
-        case .race: return "Race day — everything pointed here."
-        default: return "Easy run — most of your week should feel like this."
+        case .race: return "Race day. Everything pointed here."
+        default: return "Easy run. Most of your week should feel like this."
         }
     }
 

@@ -162,11 +162,11 @@ enum PlanPhase: String, Codable, Sendable {
     /// One line of coach's intent for the week header.
     var intent: String {
         switch self {
-        case .base: "Laying the foundation — easy volume first"
-        case .build: "The work phase — fitness is built here"
-        case .peak: "Biggest week, race-specific work — hold steady"
-        case .recovery: "Planned down week — absorb the training"
-        case .taper: "Sharpening up — arrive fresh"
+        case .base: "Laying the foundation. Easy volume first."
+        case .build: "The work phase. Fitness is built here."
+        case .peak: "Biggest week, race specific work. Hold steady."
+        case .recovery: "Planned down week. Absorb the training."
+        case .taper: "Sharpening up. Arrive fresh."
         }
     }
 }

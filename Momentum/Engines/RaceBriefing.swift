@@ -39,16 +39,16 @@ enum RaceBriefing {
         switch daysOut {
         case 0:
             return Briefing(
-                title: "Race day — go get your \(label)",
-                body: "The work is banked; trust it. Start controlled — the first miles should feel too easy. \(fuel.during)")
+                title: "Race day. Go get your \(label)",
+                body: "The work is banked. Trust it. Start controlled. The first miles should feel too easy. \(fuel.during)")
         case 1:
             return Briefing(
                 title: "Tomorrow is race day",
-                body: "\(fuel.before) Lay out your kit tonight, plan your morning backwards from the start gun — and nothing new tomorrow: no new shoes, foods, or pace plans.")
+                body: "\(fuel.before) Lay out your kit tonight and plan your morning backwards from the start gun. Then nothing new tomorrow: no new shoes, foods, or pace plans.")
         default:
             return Briefing(
                 title: "\(daysOut) days to your \(label)",
-                body: "Taper means taper: short, easy, and done. Sleep is training now. Start leaning your meals toward carbs — arrive topped up, not stuffed.")
+                body: "Taper means taper: short, easy, and done. Sleep is training now. Start leaning your meals toward carbs. Arrive topped up, not stuffed.")
         }
     }
 }

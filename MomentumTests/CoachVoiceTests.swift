@@ -234,6 +234,38 @@ struct CoachVoiceTests {
         }
     }
 
+    /// The plan's own words (2026-09-06): every session note, the Sunday message and the look back
+    /// line, across every run type, phase and week position, through the same checker.
+    @Test func everyCoachNoteSpeaksLikeACoach() {
+        for phase in [PlanPhase.base, .build, .peak, .taper, .recovery] {
+            for index in [0, 2, 7] {
+                let week = CoachNotes.Week(index: index, total: 12, phase: phase, isDeload: phase == .recovery,
+                                           isTaper: phase == .taper, runDays: 4, runVolumeM: 40_000, longRunDay: 6,
+                                           hardRunDay: 2, previousLongRunM: 14_000, weeksToRace: phase == .peak ? 3 : nil,
+                                           raceDistanceM: 42_195, liftDays: 1)
+                for type in RunType.allCases {
+                    for day in 0..<7 {
+                        var s = GeneratedSession(dayOffset: day, discipline: .running)
+                        s.runType = type; s.targetDistanceM = type == .long ? 16_000 : 8_000; s.targetPaceSPerKm = 360
+                        s.isHardRun = [.tempo, .intervals, .progression].contains(type)
+                        Self.assertCoachVoice(CoachNotes.session(s, week: week), "CoachNotes.session \(type) day \(day)")
+                    }
+                }
+                Self.assertCoachVoice(CoachNotes.weekAhead(index: index, total: 12, phase: phase, isDeload: phase == .recovery,
+                                                           isTaper: phase == .taper, runs: 4, lifts: 1, hasLong: true, hasHard: true,
+                                                           weeksToRace: phase == .peak ? 2 : nil, raceName: nil), "CoachNotes.weekAhead")
+            }
+        }
+        for actual in [330.0, 360.0, 400.0] {
+            for type in [RunType.easy, .tempo] {
+                if let l = CoachNotes.lookBack(distanceText: "4 mi", paceText: "10:00 /mi", actualPaceSPerKm: actual,
+                                               targetPaceSPerKm: 360, runType: type, daysAgo: 1) {
+                    Self.assertCoachVoice(l, "CoachNotes.lookBack")
+                }
+            }
+        }
+    }
+
     @Test func deDashTurnsModelDashesIntoSentences() {
         #expect(WorkoutReadTemplates.deDash("Strong run — the second half was quicker")
                 == "Strong run. The second half was quicker")

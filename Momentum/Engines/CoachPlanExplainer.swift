@@ -28,7 +28,7 @@ enum CoachPlanExplainer {
         if let raceDate = profile.raceDate, let distanceM = profile.raceDistanceM {
             let weeks = max(0, calendar.dateComponents([.weekOfYear], from: today, to: raceDate).weekOfYear ?? 0)
             let race = RaceDistance.nearest(toMeters: distanceM).label
-            var line = "Everything points at your \(race) on \(raceDate.formatted(.dateTime.month(.wide).day())) — \(weeks) week\(weeks == 1 ? "" : "s") out."
+            var line = "Everything points at your \(race) on \(raceDate.formatted(.dateTime.month(.wide).day())), \(weeks) week\(weeks == 1 ? "" : "s") out."
             if let goalS = profile.goalFinishTimeS {
                 line += " Target: \(PlanFeasibility.hms(goalS))."
             }
@@ -51,7 +51,7 @@ enum CoachPlanExplainer {
             if taper > 0 { line += ", then a \(taper)-week taper to arrive fresh" }
             line += "."
             if let intensity = profile.planIntensity.flatMap(PlanIntensity.init(rawValue:)) {
-                line += " Ramp: \(intensity.label.lowercased()) — your choice."
+                line += " Ramp: \(intensity.label.lowercased()), your choice."
             }
             out.append(Section(icon: "chart.bar", title: "The shape of your weeks", detail: line))
         }
@@ -76,7 +76,7 @@ enum CoachPlanExplainer {
                     line += " Steady runs are set from your observed threshold: \(tPace)."
                 }
             }
-            line += " Show real fitness on a hard run and they sharpen automatically — a bad day never slows them down."
+            line += " Show real fitness on a hard run and they sharpen automatically. A bad day never slows them down."
             out.append(Section(icon: "speedometer", title: "Your paces", detail: line))
         }
 
@@ -88,20 +88,20 @@ enum CoachPlanExplainer {
             days += ", on your days (\(names.joined(separator: " · ")))"
         }
         out.append(Section(icon: "calendar", title: "Your schedule",
-                           detail: days + ". Miss one and it moves — never a failure state."))
+                           detail: days + ". Miss one and it moves. Nothing gets marked as failed."))
 
         // 5. Load right now — the adaptive half, in their numbers.
         let insights = ProgressInsights(workouts: workouts, now: today, calendar: calendar)
         if insights.hasData, insights.acwr > 0 {
             out.append(Section(icon: "waveform.path.ecg", title: "Your load right now",
                                detail: TrainingLoadContext.summary(ratio: insights.acwr)
-                                   + " Momentum may propose a bounded ease when load and your response agree — at most one normal structural change a week."))
+                                   + " Momentum may propose a bounded ease when load and your response agree, at most one structural change a week."))
         }
 
         // 6. The long run — capped progression toward the race.
         let longs = plan.sessions.filter { $0.runType == .long }.compactMap(\.targetDistanceM)
         if let peak = longs.max(), peak > 0 {
-            var line = "Builds gradually to \(Formatters.distance(meters: peak, unit: unit)) at peak — far enough to be ready, capped so it never outruns your recovery."
+            var line = "Builds gradually to \(Formatters.distance(meters: peak, unit: unit)) at peak. Far enough to be ready, capped so it never outruns your recovery."
             switch athleteState?.durability {
             case .fragile:
                 line += " Your last long runs faded late, so the long run grows on more Sundays and the rest of the week carries the volume."
@@ -124,7 +124,7 @@ enum CoachPlanExplainer {
         if profile.activeInjuryArea != nil {
             let area = profile.activeInjuryArea.flatMap(InjuryArea.init(rawValue:))?.label.lowercased() ?? "injury"
             out.append(Section(icon: "bandage.fill", title: "Protecting you",
-                               detail: "The plan is training around your \(area) right now — reduced stress, fitness preserved, and a gated return when you're ready."))
+                               detail: "The plan is training around your \(area) right now. Reduced stress, fitness preserved, and a gated return when you're ready."))
         } else if !profile.injuryHistory.isEmpty {
             out.append(Section(icon: "shield", title: "Protecting you",
                                detail: "You've reported injuries before, so the ramp starts protective and the recovery leash stays tighter."))

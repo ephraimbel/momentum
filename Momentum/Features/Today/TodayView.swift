@@ -279,7 +279,7 @@ struct TodayView: View {
         let day = Calendar.current.isDateInTomorrow(next.date)
             ? "tomorrow" : next.date.formatted(.dateTime.weekday(.wide))
         return PlanStateLine(icon: "moon.zzz",
-                             text: "Rest day — next up \(day): \(PlanCoaching.brief(for: next, distanceUnit: distanceUnit))")
+                             text: "Rest day. Next up \(day): \(PlanCoaching.brief(for: next, distanceUnit: distanceUnit))")
     }
     /// The nearest upcoming planned session (within a week, not today) — the "next up" of a rest day.
     private func nextPlannedSession() -> PlannedSession? {
@@ -518,18 +518,22 @@ struct TodayView: View {
         // reconciled plan, or the deck's row shows a session that has already been moved.
         if let p = profiles.first { PlanService.settleRaces(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
+        // Plans built before the coach notes existed still carry the fixed fallback sentences.
+        // Rewrite those in place, once (a note is never generic again), so the coach reaches the
+        // athletes who already have a plan. Synchronous on purpose: the deck reads the note next.
+        if let plan { CoachNotes.annotate(existing: plan, calendar: .current) }
         // Everything below is observational (notifications, widget snapshot, inbox posts, proactive
         // coach, cloud sync, Health signal refresh, recovery adaptation) — nothing on screen waits for it,
         // and running it inline made the first Today frame pay a full ProfileStats history walk plus
         // three notification-scheduling passes while Mapbox was loading (perf audit 2026-08-13).
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
-            // Keep next-workout reminders in sync with the (possibly moved) plan; asks for
-            // notification permission on first run.
+            // Keep the plan's whole schedule in sync with the (possibly moved) plan: the per-day
+            // reminders, the catch-up, the win-back, race eve and the Sunday review all ride this
+            // one resync (docs/NOTIFICATIONS.md). Never prompts for permission.
             services.notifications.schedulePlannedReminders(plan)
-            // The rest of the notification taxonomy (PRD §24): the weekly recap nudge, and a gentle
-            // streak-protection nudge when a real streak is at risk on a planned, not-yet-trained day.
-            services.notifications.scheduleWeeklyCheckIn()
+            // The day nudges (PRD §24): a gentle streak-protection line when a real streak is at
+            // risk on a planned, not-yet-trained day, and the first-run line for a brand-new athlete.
             let stats = ProfileStats(workouts: workouts, plan: profiles.first?.plan)
             // One `todaySessions` pass for the whole bootstrap (it filters the full session list).
             let sessionsToday = PlanCoaching.todaySessions(plan, on: Date())
@@ -542,7 +546,8 @@ struct TodayView: View {
             NotificationService.scheduleFirstRunNudge(
                 totalWorkouts: stats.totalWorkouts,
                 plannedRunToday: sessionsToday.first { $0.status != .completed && $0.discipline != .strength },
-                hasWorkedOutToday: workedOutToday)
+                hasWorkedOutToday: workedOutToday,
+                distanceUnit: DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto)
             // The Home Screen widget snapshot rides the throttled pass. The write is change-guarded,
             // so an identical snapshot never wakes the widget. Reuses this pass's `stats` — the
             // bridge used to run its own full-history ProfileStats walk back-to-back with ours.
@@ -550,7 +555,8 @@ struct TodayView: View {
             // Mirror the day's messages into the in-app inbox (the bell), deduped so they don't stack.
             if let s = sessionsToday.first {
                 AppNotification.post(kind: .reminder, title: "Today's session is ready",
-                                     body: PlanCoaching.brief(for: s), in: context, dedupeToken: "reminder-today")
+                                     body: NotificationCopy.clean(PlanCoaching.brief(for: s)), in: context,
+                                     dedupeToken: "reminder-today", route: .planSession(s.id))
             }
             AppNotification.post(kind: .system, title: "Welcome to momentum",
                                  body: "Your plan is set. Tap Start whenever you're ready to move.",
@@ -1819,6 +1825,14 @@ struct TodayView: View {
                             .foregroundStyle(Theme.inkTertiary).lineLimit(2)
                             .padding(.top, 1)
                     }
+                    // The coach remembers yesterday: one line on the last run, in the athlete's
+                    // own numbers, before today's. Continuity is what makes a plan read as a
+                    // coach rather than a schedule; it appears only for a run one or two days old.
+                    if let back = lookBackLine(before: session) {
+                        Text(back).font(.rounded(Theme.FontSize.label, weight: .medium))
+                            .foregroundStyle(Theme.inkTertiary).lineLimit(2)
+                            .padding(.top, 1)
+                    }
                     // Fuel at a glance, only when today's session is long enough to need it (≥1h) —
                     // the row grows a third line exactly on the mornings fueling matters. Tap-through
                     // lands on the session sheet, which carries the full before/during/after guidance.
@@ -1864,9 +1878,35 @@ struct TodayView: View {
         .accessibilityLabel(state.text)
     }
 
-    /// "30–60 g carbs/hr · drink to thirst" — today's fuel line, from the same deterministic
+    /// "30 to 60 g carbs/hr · drink to thirst" — today's fuel line, from the same deterministic
     /// `FuelingGuide` gate as the session sheet (running, ≥1h estimated). nil on shorter days so
     /// the plan row stays slim except when fueling actually matters. Fueling, not dieting.
+    /// `CoachNotes.lookBack` over the most recent completed run: yesterday's (or the day before's)
+    /// distance and pace against the pace its planned session asked for. Nil on a fresh install,
+    /// after a rest day gap, or when the last run was today (the deck is about what is next).
+    private func lookBackLine(before session: PlannedSession) -> String? {
+        let cal = Calendar.current
+        // The cardio numbers live on the workout's GPS detail; a plain loop keeps the type checker
+        // away from SwiftData's Predicate overload of `filter`.
+        var last: Workout?
+        var lastGPS: GPSDetail?
+        for w in workouts where w.type.isGPS && !cal.isDateInToday(w.startedAt) {
+            guard let g = w.gps, g.distanceM > 0, g.avgPaceSPerKm > 0 else { continue }
+            if let current = last, current.startedAt >= w.startedAt { continue }
+            last = w; lastGPS = g
+        }
+        guard let last, let gps = lastGPS else { return nil }
+        let daysAgo = cal.dateComponents([.day], from: cal.startOfDay(for: last.startedAt),
+                                         to: cal.startOfDay(for: Date())).day ?? 99
+        return CoachNotes.lookBack(
+            distanceText: Formatters.distance(meters: gps.distanceM, unit: distanceUnit),
+            paceText: Formatters.pace(secPerKm: gps.avgPaceSPerKm, unit: distanceUnit),
+            actualPaceSPerKm: gps.avgPaceSPerKm,
+            targetPaceSPerKm: last.plannedSession?.targetPaceSPerKm,
+            runType: last.plannedSession?.runType, daysAgo: daysAgo,
+            weekday: last.startedAt.formatted(.dateTime.weekday(.wide)))
+    }
+
     private func planFuelLine(_ session: PlannedSession) -> String? {
         guard session.discipline == .running,
               let dur = FuelingGuide.estimatedDurationS(distanceM: session.targetDistanceM,
@@ -1874,7 +1914,7 @@ struct TodayView: View {
                                                         durationS: session.targetDurationS) else { return nil }
         let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
         guard let carbs = g.carbsPerHour else { return nil }
-        return "\(carbs.lowerBound)–\(carbs.upperBound) g carbs/hr · drink to thirst"
+        return "\(carbs.lowerBound) to \(carbs.upperBound) g carbs/hr · drink to thirst"
     }
 
     private var goalControl: some View {

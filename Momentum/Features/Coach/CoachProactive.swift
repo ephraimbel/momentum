@@ -37,8 +37,52 @@ enum CoachProactive {
                           today: today, in: context, calendar: calendar) { return }
         if seedPlanTruth(profile: profile, messages: messages, today: today,
                          in: context, calendar: calendar) { return }
-        seedWeekRecap(profile: profile, workouts: workouts, messages: messages,
-                      today: today, in: context, calendar: calendar)
+        if seedWeekRecap(profile: profile, workouts: workouts, messages: messages,
+                         today: today, in: context, calendar: calendar) { return }
+        seedWeekAhead(profile: profile, messages: messages, today: today, in: context, calendar: calendar)
+    }
+
+    // MARK: - The week ahead (the coach's Sunday message)
+
+    /// The first days of a week: the coach sets the week up in plain words, from the plan itself
+    /// (`CoachNotes.weekAhead`). This is what a new athlete gets before there is any week to
+    /// review, and what everyone gets on a week without a recap. Once per week.
+    @discardableResult
+    static func seedWeekAhead(profile: UserProfile, messages: [ChatMessage], today: Date,
+                              in context: ModelContext, calendar: Calendar) -> Bool {
+        guard let plan = profile.plan, !plan.isSelfCoached,
+              let week = calendar.dateInterval(of: .weekOfYear, for: today),
+              let daysIn = calendar.dateComponents([.day], from: week.start, to: today).day,
+              daysIn < 2 else { return false }
+        guard !messages.contains(where: {
+            $0.role == .coach && $0.text.hasPrefix("Week ")
+            && calendar.isDate($0.createdAt, equalTo: today, toGranularity: .weekOfYear)
+        }) else { return false }
+        let sessions = plan.sessions.filter { $0.date >= week.start && $0.date < week.end && $0.status != .missed }
+        guard !sessions.isEmpty else { return false }
+        // The block's week index, the same way the Plan board counts it: whole weeks since the
+        // week `blockStart` fell in (legacy plans have no blockStart and count from creation).
+        let anchor = plan.blockStart ?? plan.createdAt
+        let blockWeek = calendar.dateInterval(of: .weekOfYear, for: anchor)?.start ?? anchor
+        let index = max(0, (calendar.dateComponents([.day], from: blockWeek, to: week.start).day ?? 0) / 7)
+        let total = max(plan.weekPhases.count, index + 1)
+        let phase = plan.weekPhases.indices.contains(index)
+            ? (PlanPhase(rawValue: plan.weekPhases[index]) ?? .build) : .build
+        let cardio = sessions.filter { $0.discipline != .strength }
+        let text = CoachNotes.weekAhead(
+            index: index, total: total, phase: phase,
+            isDeload: phase == .recovery, isTaper: phase == .taper,
+            runs: cardio.count, lifts: sessions.count - cardio.count,
+            hasLong: cardio.contains { $0.runType == .long },
+            hasHard: cardio.contains { [.tempo, .intervals, .progression].contains($0.runType ?? .easy) },
+            weeksToRace: plan.raceDate.flatMap { calendar.dateComponents([.day], from: week.start, to: $0).day }
+                .map { max(0, $0 / 7) },
+            raceName: nil)
+        context.insert(ChatMessage(role: .coach, text: text, card: nil))
+        try? context.save()
+        AppNotification.post(kind: .coaching, title: "Your week ahead",
+                             body: text, on: today, in: context, dedupeToken: "coach-week-ahead")
+        return true
     }
 
     // MARK: - The first hello (once, the moment onboarding builds a plan)

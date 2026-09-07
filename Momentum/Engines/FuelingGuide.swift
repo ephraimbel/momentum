@@ -14,7 +14,7 @@ enum FuelingGuide {
         let during: String
         let after: String
 
-        static let disclaimer = "General guidance for healthy adults — not medical or nutrition advice."
+        static let disclaimer = "General guidance for healthy adults, not medical or nutrition advice."
     }
 
     /// Duration thresholds (seconds).
@@ -28,26 +28,26 @@ enum FuelingGuide {
             return Guidance(
                 carbsPerHour: nil,
                 headline: "No fuel needed",
-                before: "Run as you are — a light snack an hour out if you're hungry.",
+                before: "Run as you are. A light snack an hour out if you're hungry.",
                 during: "Water if it's warm; nothing else required under an hour.",
                 after: "A normal meal within a couple of hours covers it.")
         case ..<highCarbFromS:
             return Guidance(
                 carbsPerHour: 30...60,
-                headline: "Fuel every 30–40 minutes",
-                before: "A carb-focused meal 2–3 hours out; top up with water before you start.",
+                headline: "Fuel every 30 to 40 minutes",
+                before: "A carb heavy meal 2 to 3 hours out. Top up with water before you start.",
                 during: isRace
-                    ? "30–60 g of carbs per hour — the plan you practiced, from the first 30 minutes. Drink to thirst (roughly 400–800 ml/hr)."
-                    : "30–60 g of carbs per hour (a gel or chews every 30–40 min). Drink to thirst — practice this on long runs so race day is automatic.",
-                after: "Carbs + some protein within the hour — that's when the rebuild happens.")
+                    ? "30 to 60 g of carbs per hour from the first 30 minutes, the way you practiced. Drink to thirst, roughly 400 to 800 ml an hour."
+                    : "30 to 60 g of carbs per hour (a gel or chews every 30 to 40 min). Drink to thirst, and practice this on long runs so race day is automatic.",
+                after: "Carbs and some protein within the hour. That's when the rebuild happens.")
         default:
             return Guidance(
                 carbsPerHour: 60...90,
                 headline: "This one needs a fueling plan",
-                before: "Carb-focused meals the day before AND 2–3 hours out. Arrive topped up, not stuffed.",
+                before: "Carb heavy meals the day before and again 2 to 3 hours out. Arrive topped up, not stuffed.",
                 during: isRace
-                    ? "60–90 g of carbs per hour, starting early — never wait until you feel empty. Drink to thirst; add electrolytes if you're a salty sweater."
-                    : "Work up to 60–90 g of carbs per hour — the gut is trainable, so build to it across your long runs. Drink to thirst; electrolytes on hot days.",
+                    ? "60 to 90 g of carbs per hour, starting early. Never wait until you feel empty. Drink to thirst, and add electrolytes if you're a salty sweater."
+                    : "Work up to 60 to 90 g of carbs per hour. The gut is trainable, so build to it across your long runs. Drink to thirst, electrolytes on hot days.",
                 after: "Refuel properly: carbs + protein within the hour, and a real meal after that.")
         }
     }

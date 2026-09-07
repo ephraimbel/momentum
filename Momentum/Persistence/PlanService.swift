@@ -272,7 +272,7 @@ enum PlanService {
                 s.discipline = type.discipline
                 s.targetDurationS = 1800   // a 30-min default the athlete can adjust
                 s.status = .planned
-                s.rationale = "Cross-training — your call."
+                s.rationale = "Cross-training. Your call."
                 plan.sessions.append(s)
                 context.insert(s)
             }
@@ -494,7 +494,7 @@ enum PlanService {
                 let delta = Int((seedP5k - equivalent).rounded())
                 seedP5k = equivalent
                 CoachingEvent.record(kind: .recalibrate, headline: "Your race reset your paces",
-                                     detail: "That finish line is the truest fitness test there is — your training paces just got about \(max(1, delta)) s/km faster. You ran your way there.",
+                                     detail: "That finish line is the truest fitness test there is. Your training paces just got about \(max(1, delta)) s/km faster. You ran your way there.",
                                      on: today, in: context, calendar: calendar)
             }
         }
@@ -530,9 +530,9 @@ enum PlanService {
                 ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy so the fitness locks in. Then the block builds toward your \(label) on \(when)."
                 : "Your plan now builds toward your \(label) on \(when)."
         } else {
-            headline = raced ? "Race done — recovery block first" : "Race week's behind you"
+            headline = raced ? "Race done. Recovery block first" : "Race week's behind you"
             detail = raced
-                ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy — the fitness you built gets locked in by the recovery, not the next hard run. Then we roll."
+                ? "You did the thing. The next \(recovery) week\(recovery == 1 ? "" : "s") stay deliberately easy. The fitness you built gets locked in by the recovery, not the next hard run. Then we roll."
                 : "Your plan rolled into a fresh block. Whenever the next start line calls, set it and the season builds toward it."
         }
         CoachingEvent.record(kind: .recover, headline: headline, detail: detail,

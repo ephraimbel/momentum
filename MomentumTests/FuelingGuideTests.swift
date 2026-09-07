@@ -13,7 +13,7 @@ struct FuelingGuideTests {
     @Test func longRunGetsTheThirtyToSixtyRange() {
         let g = FuelingGuide.guidance(durationS: 95 * 60)
         #expect(g.carbsPerHour == 30...60)
-        #expect(g.during.contains("30–60 g"))
+        #expect(g.during.contains("30 to 60 g"))
         #expect(g.during.contains("practice"))            // training runs teach race day
     }
 

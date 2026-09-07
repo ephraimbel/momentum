@@ -25,14 +25,14 @@ struct RaceBriefingTests {
         let day = try #require(RaceBriefing.build(distanceM: marathon, p5kSPerKm: 300, daysOut: 0))
         #expect(day.title.contains("Race day"))
         // A ~4-hour predicted marathon lands in the 60–90 g/hr race plan.
-        #expect(day.body.contains("60–90 g"))
+        #expect(day.body.contains("60 to 90 g"))
         #expect(day.body.contains("too easy"))     // start-control coaching
     }
 
     @Test func shortRaceGetsTheLighterFuelPlan() throws {
         // A ~25-minute 5K predicts under an hour → no in-race carbs pushed on race day.
         let day = try #require(RaceBriefing.build(distanceM: RaceDistance.fiveK.meters, p5kSPerKm: 300, daysOut: 0))
-        #expect(!day.body.contains("60–90 g"))
-        #expect(!day.body.contains("30–60 g"))
+        #expect(!day.body.contains("60 to 90 g"))
+        #expect(!day.body.contains("30 to 60 g"))
     }
 }
