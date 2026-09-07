@@ -51,6 +51,11 @@ enum FuelReadiness {
         let endedAt: Date
         let durationS: Double
         let kcal: Int?
+        /// Whether the session was exerting by `PostWorkoutFuelCue`'s law (a long run, a race,
+        /// a quality or hard-rated session, a real lift). nil (older callers, tests) falls back
+        /// to the hour rule, so the Fuel page's refuel window and the refuel notification can
+        /// never disagree about the same workout (fuel integration 2026-09-06).
+        var exerting: Bool? = nil
     }
 
     /// How the daily energy target is set (the fueling adjuster). Default `.fuel` reproduces the
@@ -347,9 +352,10 @@ enum FuelReadiness {
             else { status = .behind }
         }
 
-        // Refuel window: last ≥1 h workout ended recently and nothing eaten since.
+        // Refuel window: an exerting workout (PostWorkoutFuelCue's law; ≥1 h when unknown) ended
+        // recently and nothing eaten since.
         let refuelDue = workoutsToday.contains { w in
-            w.durationS >= FuelingGuide.carbsFromS
+            (w.exerting ?? (w.durationS >= FuelingGuide.carbsFromS))
                 && now.timeIntervalSince(w.endedAt) >= 0
                 && now.timeIntervalSince(w.endedAt) <= refuelWindowS
                 && !today.contains { $0.eatenAt > w.endedAt && !($0.kcal == 0 && ($0.carbsG ?? 0) == 0 && ($0.proteinG ?? 0) == 0 && ($0.fatG ?? 0) == 0) }
@@ -374,7 +380,7 @@ enum FuelReadiness {
     /// Plain words, no shame: what's true about the leading macro and the one next step.
     private static func headline(status: Status, primary: Primary, value: Int, floor: Int,
                                  driving: String?, refuelDue: Bool) -> String {
-        if refuelDue { return "Refuel window — carbs + protein now beat carbs + protein later." }
+        if refuelDue { return "Refuel window. Carbs and protein now beat carbs and protein later." }
         // Protein-first (muscle goals): the session isn't the story, protecting muscle is.
         if primary == .protein {
             switch status {

@@ -397,6 +397,9 @@ struct LogWorkoutView: View {
             return
         }
         PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+        // A logged long run or hard session earns the refuel cue like a tracked one; a workout
+        // entered long after it ended earns none (the window has passed).
+        NotificationService.scheduleRefuelCue(for: w, in: context)
         // …and it earns records, reaches Apple Health, and counts in the funnel like a tracked one.
         // None of that used to happen here, so a hand-logged personal best simply never existed.
         RecordsBook.record(w, in: context)

@@ -273,6 +273,23 @@ enum DemoSeed {
         if ProcessInfo.processInfo.arguments.contains("--seed-plan-name") {
             profile.plan?.name = "Austin Marathon"
         }
+        // --seed-refuel: a 75 minute run that ended 8 minutes ago, so Fuel's refuel banner is open
+        // and the refuel cue's words can be verified on the page (fuel integration 2026-09-06).
+        if ProcessInfo.processInfo.arguments.contains("--seed-refuel") {
+            let run = Workout(); run.type = .run
+            run.durationS = 75 * 60; run.elapsedS = 76 * 60
+            run.startedAt = Date().addingTimeInterval(-(76 * 60 + 8 * 60))
+            run.calories = 820; run.title = "Long run"
+            let gps = GPSDetail(); gps.distanceM = 14_200; gps.avgPaceSPerKm = 317
+            run.gps = gps
+            context.insert(run)
+            // The window is "nothing eaten since the finish": the demo's fixed meal slots can land
+            // after it depending on the clock, so any such meal moves to before the run.
+            let meals = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
+            for meal in meals where meal.eatenAt > run.startedAt {
+                meal.eatenAt = run.startedAt.addingTimeInterval(-30 * 60)
+            }
+        }
 
         // A small demo lift library with real muscle mapping, so strength posts light the body map
         // (chest/back/legs/shoulders) instead of falling back to a glyph.

@@ -967,6 +967,7 @@ struct LogActivityView: View {
         }
         for w in workouts {
             PlanCoaching.creditWorkout(w, to: profiles.first?.plan, in: context)
+            NotificationService.scheduleRefuelCue(for: w, in: context)   // stale finishes earn none
             // A logged workout is a real workout — so it earns records, reaches Apple Health, and
             // counts in the funnel exactly like a tracked one. It did none of that: log your
             // longest-ever run by hand and the record book never heard about it (the history

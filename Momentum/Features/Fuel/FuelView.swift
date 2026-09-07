@@ -706,7 +706,7 @@ struct FuelView: View {
                     .font(.system(size: 13, weight: .bold)).foregroundStyle(Theme.purple)
                     .frame(width: 30, height: 30)
                     .background(Circle().fill(Theme.purple.opacity(0.1)))
-                Text("Recovery window is open — carbs + protein within the hour do the most good.")
+                Text(refuelBannerLine)
                     .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
@@ -721,8 +721,24 @@ struct FuelView: View {
         .buttonStyle(.plain)
         .background(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.purple.opacity(0.06)))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.purple.opacity(0.25)))
-        .accessibilityLabel("Recovery window is open — carbs and protein within the hour do the most good")
+        .accessibilityLabel(refuelBannerLine)
         .accessibilityHint("Opens the meal composer")
+        .accessibilityIdentifier("fuel-refuel-banner")
+    }
+
+    /// The banner speaks the same words the refuel notification did (fuel integration 2026-09-06):
+    /// a tap on "Refuel after your long run" lands on a page that says so. Today's most recent
+    /// exerting workout decides; the generic line covers a window the notification never named.
+    private var refuelBannerLine: String {
+        let cal = Calendar.current
+        if let cue = workouts
+            .filter({ cal.isDateInToday($0.startedAt) })
+            .sorted(by: { $0.startedAt > $1.startedAt })
+            .lazy.compactMap({ PostWorkoutFuelCue.cue(for: $0) })
+            .first {
+            return "\(cue.title). What and how much is your call."
+        }
+        return "Recovery window is open. Carbs and protein within the hour do the most good."
     }
 
     // MARK: Composer — jot it like a note, or speak it (Amy-style); logging never blocks

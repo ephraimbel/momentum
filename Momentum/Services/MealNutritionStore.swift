@@ -88,6 +88,8 @@ enum MealNutritionStore {
             context.delete(meal) // cancel this unsaved insertion, preserving unrelated edits
             throw error
         }
+        // A meal on the record answers the post-workout refuel cue, wherever it still waits.
+        NotificationService.cancelRefuelCue()
     }
 
     static func update(_ meal: Meal, in context: ModelContext,

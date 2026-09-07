@@ -379,8 +379,14 @@ enum WorkoutCompletion {
         if let profile {
             services.athleteModel.ingest(profile: profile, in: context)
         }
-        // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan.
+        // Refresh next-workout reminders so they reflect the completed/credited/recalibrated/eased plan
+        // (that resync also drops the catch-up this session would have earned), and withdraw today's
+        // evening nudges on the spot: the day is done.
         services.notifications.schedulePlannedReminders(plan)
+        NotificationService.clearDayNudgesAfterWorkout()
+        // A long run or an exerting session earns one refuel cue, 25 minutes out, pointing at
+        // Fuel (fuel integration 2026-09-06). Never an amount, never a food; a logged meal cancels it.
+        NotificationService.scheduleRefuelCue(for: workout, in: context)
     }
 
     /// One row by id — fetching the whole table to find it faulted every workout right at the

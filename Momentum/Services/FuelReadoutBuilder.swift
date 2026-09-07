@@ -34,7 +34,8 @@ enum FuelReadoutBuilder {
         let today: [FuelReadiness.WorkoutInput] = workouts
             .filter { !$0.isDeleted && cal.isDate($0.startedAt, inSameDayAs: now) }
             .map { FuelReadiness.WorkoutInput(endedAt: $0.startedAt.addingTimeInterval($0.durationS),
-                                              durationS: $0.durationS, kcal: $0.calories.map(Int.init)) }
+                                              durationS: $0.durationS, kcal: $0.calories.map(Int.init),
+                                              exerting: PostWorkoutFuelCue.cue(for: $0) != nil) }
         let waterRows: [WaterEntry]
         if let water { waterRows = water }
         else if let context = profile?.modelContext ?? meals.first?.modelContext {

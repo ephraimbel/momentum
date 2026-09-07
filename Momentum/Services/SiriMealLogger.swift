@@ -82,6 +82,7 @@ enum SiriMealLogger {
             context.delete(meal)   // never hand back a receipt for a write that didn't land
             return nil
         }
+        NotificationService.cancelRefuelCue()   // a meal on the record answers the refuel cue
         AppReview.recordMealLogged()   // counted only once the write actually landed
         return receipt(for: meal, resolved: resolved)
     }
@@ -230,8 +231,11 @@ enum SiriMealLogger {
         content.sound = .default
         content.categoryIdentifier = NotificationService.mealReceiptCategory
         // One thread: a day of voice-logged meals stacks as a tidy group, not a scattered pile.
-        content.threadIdentifier = "momentum.meal.receipts"
-        content.userInfo = ["mealID": receipt.mealID.uuidString]
+        // A tap opens Fuel, where the meal landed (the Undo action is separate, see the category).
+        content.threadIdentifier = NotificationFamily.meal.thread
+        content.userInfo = ["mealID": receipt.mealID.uuidString,
+                            NotificationRoute.familyKey: NotificationFamily.meal.rawValue,
+                            NotificationRoute.userInfoKey: NotificationRoute.fuel.rawValue]
         center.add(UNNotificationRequest(
             identifier: "momentum.meal.receipt.\(receipt.mealID.uuidString)",
             content: content, trigger: nil))
