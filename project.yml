@@ -258,6 +258,7 @@ targets:
     deploymentTarget: "11.0"
     sources:
       - path: MomentumWatchWidgets
+      - path: Momentum/Engines/WristHealthSnapshot.swift # shared: the complications read the same snapshot bytes from the app group
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ephraimbel.momentum.app.watchkitapp.widgets
@@ -294,6 +295,7 @@ targets:
       - path: Momentum/Engines/CoachSpeech.swift        # shared: how each sport talks
       - path: Momentum/Engines/CoachingCueBuilder.swift # shared: the words themselves
       - path: Momentum/Engines/LiveRunCoach.swift       # shared: what to say and when
+      - path: Momentum/Engines/WristHealthSnapshot.swift # shared: the phone-built health snapshot (readiness · sleep · HRV · strain · week) the wrist renders
     dependencies:
       - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:

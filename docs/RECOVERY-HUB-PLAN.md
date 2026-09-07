@@ -251,3 +251,33 @@ The audit's bar: *every chart/vital must change a plan decision*. Verdict: the r
 - **P2** + `PlannedLoad` + `RecoverySignals` illness fields + the two `decide()` lines (+ fixtures for all).
 - **P3** = `HealthSegmentView` (segment, not pushed) + `ReadinessStrip` in Trends + `AppRouter`/`pendingNav.viewHealth` + `--progress-health` + truthfulness copy + overreaching proposal + VitalsBoard adaptive tile + monotony footer + ACWR chip.
 - **P4** + race-day Form projection + ghost bars + HRR Trends card + measured-VO₂ upgrade.
+
+## 12. The wrist (2026-09-06) — the same numbers, on the watch
+
+The Apple Watch app shows the athlete's health the way the phone's Health hub does, from the
+**same engines and the same run of them**. `WristHealthSnapshot` (`Momentum/Engines/`, pure Codable,
+compiled into the phone, the watch app and the complications) carries readiness (score · band ·
+driver · guidance · confidence · the pillars with their points · the two modifiers), last night's
+sleep (hours vs need, efficiency, deep/REM share, 14-day debt, the week of nights), HRV and resting
+HR against the athlete's own norm with a 7-day series, breathing rate and wrist temperature z/Δ,
+today's strain (`DayStrain` seeded with the hub's fitness-fatigue CTL) with the week, and the week's
+training (the Plan board's planned-vs-done ledger, streak, acute:chronic load word).
+
+- **Built once, on the phone**: `ReadinessToday.compute` is the one readiness assembly and already
+  holds the recovery feed, so `WristHealth.build` runs there and caches; `PhoneWatchSync.push` adds
+  the training block (needs the plan) and sends it in the application context (`health`).
+- **The watch never computes a score.** `WatchHealthStore` decodes, persists to the app group (the
+  complications read the same bytes), labels an older snapshot "Yesterday" instead of going blank at
+  midnight, and asks the phone for a fresher one (`transferUserInfo` `kind: refresh`, at most every
+  ten minutes) when what it holds is from another day or over three hours old; the phone answers by
+  recomputing readiness and pushing.
+- **Surfaces**: three home cards (readiness · sleep/HRV/RHR · strain beside the week ring) → a
+  readiness page (ring, guidance, pillar rows with points, confidence), a Vitals vertical pager
+  (Sleep · HRV · Resting HR · Signals), a Strain pager (today · this week), and a **Sleep & Vitals**
+  complication (circular hours-vs-need ring, rectangular sleep + HRV/RHR arrows, inline). Black
+  canvas, white ink, one quiet colour per signal; the iridescent stroke only for a primed morning
+  and a finished week.
+- **Honest empties**: no Health → "Connect Apple Health in momentum on iPhone…"; connected but no
+  night yet → "Your first night… builds the picture"; no phone contact yet → "Open momentum on iPhone once…".
+- Simulator: `--watch-health-demo` · `--watch-health-stale` · `--watch-health-empty` ·
+  `--watch-health-disconnected`, with `--watch-screen=readiness|vitals|strain` and `--watch-page=<tag>`.

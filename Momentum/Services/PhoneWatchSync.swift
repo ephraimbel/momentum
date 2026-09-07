@@ -137,6 +137,17 @@ final class PhoneWatchSync: NSObject {
             }
         }
 
+        // The wrist's health snapshot (2026-09-06): built by `ReadinessToday.compute`, the week's
+        // training added here because it needs the plan.
+        if var health = WristHealth.cached() {
+            // Half a year is plenty for the week's ledger, a streak and a 90-day chronic load, and
+            // keeps a long history from making every push a full table walk.
+            let floor = Calendar.current.date(byAdding: .day, value: -180, to: Date()) ?? .distantPast
+            let recent = FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt >= floor })
+            let workouts = (try? ctx.fetch(recent)) ?? []
+            health.training = WristHealth.training(plan: profiles.first?.plan, workouts: workouts)
+            if let data = health.encoded() { context["health"] = data }
+        }
         guard !context.isEmpty else { return }
         try? session.updateApplicationContext(context)
     }
@@ -190,6 +201,24 @@ final class PhoneWatchSync: NSObject {
     }
 }
 
+extension PhoneWatchSync {
+    /// Recompute readiness (which rebuilds the wrist snapshot) and push. Without a Health service
+    /// there is nothing new to compute, so the cached snapshot goes out as it is.
+    fileprivate func receiveRefresh() {
+        guard let health else { scheduleRefresh(); return }
+        let ctx = PersistenceController.shared.container.mainContext
+        Task {
+            let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
+            let checkins = (try? ctx.fetch(FetchDescriptor<DailyCheckin>())) ?? []
+            if let r = await ReadinessToday.compute(health: health, workouts: workouts, checkins: checkins) {
+                ReadinessToday.publish(r)
+            } else {
+                self.scheduleRefresh()
+            }
+        }
+    }
+}
+
 extension PhoneWatchSync: WCSessionDelegate {
     nonisolated func session(_ session: WCSession, activationDidCompleteWith state: WCSessionActivationState,
                              error: Error?) {
@@ -202,6 +231,11 @@ extension PhoneWatchSync: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        // The wrist asking for a fresher snapshot (it launches this app in the background).
+        if userInfo["kind"] as? String == "refresh" {
+            Task { @MainActor in self.receiveRefresh() }
+            return
+        }
         guard userInfo["kind"] as? String == "checkin" else { return }
         let energy = userInfo["energy"] as? String ?? "ok"
         let legs = userInfo["legs"] as? String ?? "ok"

@@ -17,6 +17,7 @@ struct MomentumWatchWidgetBundle: WidgetBundle {
     var body: some Widget {
         ReadinessComplication()
         TodaySessionComplication()
+        SleepComplication()
     }
 }
 
@@ -29,6 +30,16 @@ struct WatchFaceData {
     var readinessBand: String
     var sessionTitle: String?
     var sessionDetail: String?
+    /// From the phone-built health snapshot (2026-09-06), today's only.
+    var sleepH: Double?
+    var sleepNeedH: Double?
+    var sleepBand: String?
+    var hrv: Int?
+    var hrvTrend: String?
+    var restingHR: Int?
+    var restingHRTrend: String?
+    var strain: Int?
+    var strainBand: String?
 
     static func load(now: Date = Date()) -> WatchFaceData {
         let d = UserDefaults(suiteName: appGroup) ?? .standard
@@ -49,11 +60,29 @@ struct WatchFaceData {
             data.sessionTitle = d.string(forKey: "sync.session.title")
             data.sessionDetail = d.string(forKey: "sync.session.detail")
         }
+        if let raw = d.data(forKey: "sync.health.snapshot"),
+           let snapshot = WristHealthSnapshot.decode(raw), snapshot.dayKey == today {
+            if let s = snapshot.sleep { data.sleepH = s.asleepH; data.sleepNeedH = s.needH; data.sleepBand = s.band }
+            data.hrv = snapshot.hrv.map { Int($0.value.rounded()) }
+            data.hrvTrend = snapshot.hrv?.trend
+            data.restingHR = snapshot.restingHR.map { Int($0.value.rounded()) }
+            data.restingHRTrend = snapshot.restingHR?.trend
+            data.strain = snapshot.strain?.score
+            data.strainBand = snapshot.strain?.band
+            // A face without the readiness-only keys still gets the ring from the snapshot.
+            if data.readinessScore == nil, let r = snapshot.readiness {
+                data.readinessScore = r.score
+                data.readinessBand = r.band
+            }
+        }
         return data
     }
 
     static let placeholder = WatchFaceData(readinessScore: 87, readinessBand: "primed",
-                                           sessionTitle: "Long run", sessionDetail: "6 mi · ~11:56 /mi")
+                                           sessionTitle: "Long run", sessionDetail: "6 mi · ~11:56 /mi",
+                                           sleepH: 7.7, sleepNeedH: 7.5, sleepBand: "Good",
+                                           hrv: 52, hrvTrend: "up", restingHR: 51, restingHRTrend: "steady",
+                                           strain: 34, strainBand: "Light")
 }
 
 struct FaceEntry: TimelineEntry {
@@ -230,5 +259,128 @@ struct TodaySessionFaceView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Sleep (2026-09-06) — last night on the face: the ring is hours against the athlete's
+// own need, the rectangle adds HRV and resting heart rate against their norms.
+
+struct SleepComplication: Widget {
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: "momentum.sleep", provider: FaceProvider()) { entry in
+            SleepFaceView(entry: entry)
+                .containerBackground(.clear, for: .widget)
+        }
+        .configurationDisplayName("Sleep & Vitals")
+        .description("Last night against your own need, with HRV and resting heart rate.")
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline])
+    }
+}
+
+struct SleepFaceView: View {
+    @Environment(\.widgetFamily) private var family
+    let entry: FaceEntry
+
+    private static let sleepTint = Color(red: 0.66, green: 0.70, blue: 1.0)
+    private static let good = Color(red: 0.62, green: 0.90, blue: 0.78)
+    private static let bad = Color(red: 1.0, green: 0.42, blue: 0.52)
+
+    private var hours: String? { entry.data.sleepH.map(Self.clock) }
+
+    var body: some View {
+        switch family {
+        case .accessoryInline:
+            if let hours {
+                Text([("Sleep \(hours)"), entry.data.hrv.map { "HRV \($0)" }].compactMap { $0 }.joined(separator: " · "))
+            } else {
+                Text("momentum")
+            }
+        case .accessoryRectangular:
+            rectangularView
+        default:
+            circularView
+        }
+    }
+
+    private var circularView: some View {
+        ZStack {
+            Circle().stroke(FaceInk.track, lineWidth: 4.5)
+            if let h = entry.data.sleepH, let need = entry.data.sleepNeedH, need > 0 {
+                Circle()
+                    .trim(from: 0, to: max(0.02, min(1, h / need)))
+                    .stroke(Self.sleepTint, style: StrokeStyle(lineWidth: 4.5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text(Self.clock(h))
+                    .font(.system(size: 13, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(FaceInk.ink)
+                    .minimumScaleFactor(0.7)
+            } else {
+                Image(systemName: "moon.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(FaceInk.dim)
+            }
+        }
+        .accessibilityLabel("Sleep")
+        .accessibilityValue(entry.data.sleepH.map { Self.spoken($0) } ?? "Not available")
+    }
+
+    private var rectangularView: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            if let h = entry.data.sleepH {
+                Text("SLEEP")
+                    .font(.system(size: 10, weight: .bold)).tracking(0.8)
+                    .foregroundStyle(Self.sleepTint)
+                HStack(spacing: 4) {
+                    Text(Self.spokenShort(h))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(FaceInk.ink)
+                    if let band = entry.data.sleepBand {
+                        Text("· \(band)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(FaceInk.dim)
+                    }
+                }
+                HStack(spacing: 6) {
+                    if let hrv = entry.data.hrv { vital("HRV \(hrv)", trend: entry.data.hrvTrend, higherIsBetter: true) }
+                    if let rhr = entry.data.restingHR { vital("RHR \(rhr)", trend: entry.data.restingHRTrend, higherIsBetter: false) }
+                }
+                .font(.system(size: 12, weight: .medium)).monospacedDigit()
+                .foregroundStyle(FaceInk.dim)
+            } else {
+                Text("momentum")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(FaceInk.ink)
+                Text("Last night arrives with your iPhone.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(FaceInk.dim)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func vital(_ text: String, trend: String?, higherIsBetter: Bool) -> some View {
+        HStack(spacing: 1) {
+            Text(text)
+            if trend == "up" || trend == "down" {
+                let good = (trend == "up") == higherIsBetter
+                Image(systemName: trend == "up" ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(good ? Self.good : Self.bad)
+            }
+        }
+    }
+
+    private static func clock(_ h: Double) -> String {
+        let total = Int((h * 60).rounded())
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+    private static func spokenShort(_ h: Double) -> String {
+        let total = Int((h * 60).rounded())
+        return "\(total / 60)h \(String(format: "%02d", total % 60))m"
+    }
+    private static func spoken(_ h: Double) -> String {
+        let total = Int((h * 60).rounded())
+        return "\(total / 60) hours \(total % 60) minutes"
     }
 }

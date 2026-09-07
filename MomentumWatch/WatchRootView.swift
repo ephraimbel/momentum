@@ -12,7 +12,7 @@ struct WatchRootView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                morningCard
+                healthCards
                 sessionCard
                 raceCard
                 card(.cardio(.run), title: "Run", icon: "figure.run",
@@ -34,11 +34,44 @@ struct WatchRootView: View {
                 case .strength: WatchStrengthView()
                 case .voiceLog: WatchVoiceLogView()
                 case .checkin: WatchCheckinView()
+                case .readiness: WatchReadinessDetailView()
+                case .vitals: WatchVitalsView()
+                case .strain: WatchStrainView()
                 }
             }
         }
         .tint(WatchTheme.accent)
-        .onAppear(perform: applyLaunchDestination)
+        .onAppear {
+            applyLaunchDestination()
+            health.requestRefreshIfStale()
+        }
+    }
+
+    private let health = WatchHealthStore.shared
+
+    /// The morning, in order: readiness, last night's vitals, today's strain beside the week.
+    /// The phone's snapshot wins; the older readiness-only sync still fills the first card for a
+    /// watch that has not received a snapshot yet; the check-in prompt stays until it is answered.
+    @ViewBuilder
+    private var healthCards: some View {
+        if let snapshot = health.current {
+            if snapshot.readiness != nil {
+                WatchReadinessCard(snapshot: snapshot)
+            } else {
+                morningCard
+            }
+            if snapshot.hasVitals {
+                WatchVitalsCard(snapshot: snapshot)
+            }
+            if snapshot.strain != nil || snapshot.training != nil {
+                WatchStrainCard(snapshot: snapshot)
+            }
+            if snapshot.readiness == nil, !snapshot.hasVitals, let line = snapshot.emptyLine {
+                WatchHealthEmptyCard(line: line)
+            }
+        } else {
+            morningCard
+        }
     }
 
     // MARK: The morning moment — check-in prompt until answered, then the readiness ring
@@ -174,6 +207,9 @@ struct WatchRootView: View {
         if value == "strength" { path = [.strength] }
         else if value == "log" { path = [.voiceLog] }
         else if value == "checkin" { path = [.checkin] }
+        else if value == "readiness" { path = [.readiness] }
+        else if value == "vitals" { path = [.vitals] }
+        else if value == "strain" { path = [.strain] }
         else if let type = WorkoutType(rawValue: value) { path = [.cardio(type)] }
         #endif
     }
@@ -218,4 +254,7 @@ enum WatchDestination: Hashable {
     case strength
     case voiceLog
     case checkin
+    case readiness
+    case vitals
+    case strain
 }

@@ -19,6 +19,9 @@ enum WatchTheme {
     static let heart = Color(red: 1.0, green: 0.42, blue: 0.52)
     /// Active-energy metric colour.
     static let energy = Color(red: 1.0, green: 0.72, blue: 0.42)
+    // The health pages (2026-09-06): one quiet colour per signal, never decoration.
+    static let sleep = Color(red: 0.66, green: 0.70, blue: 1.0)
+    static let hrv = Color(red: 0.62, green: 0.90, blue: 0.78)
 
     /// The five HR-zone colours (Z1…Z5) — the Garmin/COROS convention (cool → hot) tuned to sit on
     /// true black. Functional colour, not brand iridescence: zones are information, not achievement.

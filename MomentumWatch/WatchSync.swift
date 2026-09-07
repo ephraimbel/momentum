@@ -245,6 +245,10 @@ final class WatchSyncStore: NSObject {
             defaults.removeObject(forKey: "sync.race.name")
             defaults.removeObject(forKey: "sync.race.dateKey")
         }
+        // The phone-built health snapshot (2026-09-06) — decoded and persisted by its own store.
+        if let health = context["health"] as? Data {
+            WatchHealthStore.shared.apply(data: health)
+        }
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif

@@ -60,9 +60,22 @@ enum ReadinessToday {
             SleepReport.Night(date: $0.date, asleepH: $0.asleepH, coreS: $0.coreS,
                               deepS: $0.deepS, remS: $0.remS, awakeS: $0.awakeS, inBedS: $0.inBedS)
         }
-        return build(workouts: workouts, checkins: checkins, signals: feed.signals,
-                     hrvHist: feed.hrvHist, rhrHist: feed.rhrHist, nights: nights,
-                     now: now, calendar: calendar)
+        let readiness = build(workouts: workouts, checkins: checkins, signals: feed.signals,
+                              hrvHist: feed.hrvHist, rhrHist: feed.rhrHist, nights: nights,
+                              now: now, calendar: calendar)
+        // The wrist's snapshot is built HERE, from the same feed (2026-09-06): one recipe, one
+        // number on every surface. Steps are the one extra read — today's strain needs them.
+        let steps = await health.dailySteps(daysBack: 7)
+        let connected = feed.signals.hasPhysio || !nights.isEmpty
+            || !feed.hrvHist.isEmpty || !feed.rhrHist.isEmpty || !steps.isEmpty
+        let snapshot = await WristHealth.build(
+            .init(readiness: readiness, signals: feed.signals,
+                  hrvHist: feed.hrvHist, rhrHist: feed.rhrHist, nights: nights,
+                  workouts: workouts, checkin: DailyCheckin.today(in: checkins, calendar: calendar, now: now),
+                  dailySteps: steps, healthConnected: connected),
+            now: now, calendar: calendar)
+        await WristHealth.store(snapshot)
+        return readiness
     }
 
     /// Publish today's number for the sibling surfaces (`ReadinessTodayCache` — the strip's
