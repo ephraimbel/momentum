@@ -40,9 +40,117 @@ enum PlanCoaching {
     static func reschedule(_ session: PlannedSession, to date: Date, in context: ModelContext,
                            calendar: Calendar = .current) {
         session.date = calendar.startOfDay(for: date)
-        if session.status == .moved { session.status = .planned }
-        session.rationale = nil
+        clearMovedNote(session)
         try? context.save()
+    }
+
+    /// Drop only the auto-"moved" note, which is what a deliberate move is meant to clear.
+    ///
+    /// This used to blank `rationale` outright, which also destroyed the engines' adaptation
+    /// explanations — "Eased after your 8/10 day.", the injury-converted and deload notes — for no
+    /// reason beyond the athlete having chosen a different day. Those reasons are still true after
+    /// a move, and the board renders them precisely so the athlete can read them where they look.
+    /// A `.moved` session is the only one whose rationale IS the slipped-forward note, because
+    /// clearing the two together is what makes that so.
+    private static func clearMovedNote(_ session: PlannedSession) {
+        guard session.status == .moved else { return }
+        session.status = .planned
+        session.rationale = nil
+    }
+
+    /// Move several sessions at once, saving ONCE.
+    ///
+    /// The week-shaped edits (push the week on a day, work around days away) move up to seven
+    /// sessions in one gesture. Looping over the single-session `reschedule` saved seven times, and
+    /// every save posts `ModelContext.didSave`, which the Plan board listens to and answers with a
+    /// full analytics rebuild — `PaceInsights`, hybrid sequencing and the intensity mix, seven times
+    /// over, for one tap. One write, one notification, one rebuild.
+    static func reschedule(_ moves: [(session: PlannedSession, date: Date)],
+                           in context: ModelContext, calendar: Calendar = .current) {
+        guard !moves.isEmpty else { return }
+        for move in moves {
+            move.session.date = calendar.startOfDay(for: move.date)
+            clearMovedNote(move.session)
+        }
+        try? context.save()
+    }
+
+    /// Trade two planned sessions' days — the Plan board's drop-one-session-onto-another gesture.
+    ///
+    /// A swap is two deliberate moves at once, so both sessions clear the auto-"moved" note for the
+    /// same reason a single manual move does: the week now reads as the athlete arranged it, not as
+    /// one that slipped. Same-day pairs are a no-op rather than a silent write.
+    static func swapDays(_ a: PlannedSession, _ b: PlannedSession, in context: ModelContext,
+                         calendar: Calendar = .current) {
+        let dayA = calendar.startOfDay(for: a.date)
+        let dayB = calendar.startOfDay(for: b.date)
+        guard dayA != dayB else { return }
+        a.date = dayB
+        b.date = dayA
+        clearMovedNote(a)
+        clearMovedNote(b)
+        try? context.save()
+    }
+
+    /// Copy a planned session onto other days — "repeat this next week", "every Tuesday for a
+    /// month". Athletes build routines, and before this every recurrence was retyped from scratch.
+    ///
+    /// The copy is a fresh prescription, never a record: it starts `.planned` with no completed
+    /// workout attached, and carries no rationale (the original's "why" belonged to the day the
+    /// engine placed it on, not to a day the athlete chose). Strength targets are deep-copied —
+    /// `PlannedExercise` rows cascade from their session, so sharing them would delete the copy's
+    /// lifts along with the original.
+    ///
+    /// Days that already hold a copy-identical session are skipped, so tapping "every week" twice
+    /// does not silently double the block. Returns the number of sessions actually written.
+    @discardableResult
+    static func duplicate(_ session: PlannedSession, onto days: [Date], to plan: TrainingPlan?,
+                          in context: ModelContext, calendar: Calendar = .current) -> Int {
+        guard let plan else { return 0 }
+        var written = 0
+        for day in days {
+            let target = calendar.startOfDay(for: day)
+            let alreadyThere = plan.sessions.contains {
+                calendar.startOfDay(for: $0.date) == target
+                    && $0.discipline == session.discipline
+                    && $0.runType == session.runType
+                    && $0.intervals == session.intervals
+                    && $0.targetDistanceM == session.targetDistanceM
+                    && $0.targetDurationS == session.targetDurationS
+            }
+            guard !alreadyThere else { continue }
+
+            let copy = PlannedSession()
+            copy.date = target
+            copy.discipline = session.discipline
+            copy.sportType = session.sportType
+            copy.runType = session.runType
+            copy.targetDistanceM = session.targetDistanceM
+            copy.targetDurationS = session.targetDurationS
+            copy.targetPaceSPerKm = session.targetPaceSPerKm
+            copy.intervals = session.intervals
+            copy.strengthLabel = session.strengthLabel
+            copy.status = .planned
+            copy.strengthTargets = session.strengthTargets
+                .sorted { $0.order < $1.order }
+                .map { source in
+                    let lift = PlannedExercise()
+                    lift.order = source.order
+                    lift.exercise = source.exercise     // the catalog row is shared, never copied
+                    lift.targetSets = source.targetSets
+                    lift.targetRepLow = source.targetRepLow
+                    lift.targetRepHigh = source.targetRepHigh
+                    lift.targetRPE = source.targetRPE
+                    lift.targetPctRM = source.targetPctRM
+                    lift.progression = source.progression
+                    return lift
+                }
+            context.insert(copy)
+            plan.sessions.append(copy)
+            written += 1
+        }
+        if written > 0 { try? context.save() }
+        return written
     }
 
     /// Credit the session the athlete **launched from the plan** — but only if the work they did
@@ -159,7 +267,7 @@ enum PlanCoaching {
         var changed = false
         var movedCount = 0
         // The first landed move, kept for the coaching headline ("Tuesday's run moved to Thursday").
-        var firstMove: (from: String, to: String, word: String)?
+        var firstMove: (id: UUID, from: String, to: String, word: String)?
         // Slips are counted by ORIGINAL weekday here, at the only moment it still exists — the
         // Athlete Model's avoid-day evidence (a recompute after the move sees only the new date).
         let athlete = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.athlete
@@ -180,13 +288,14 @@ enum PlanCoaching {
                 if !occupied.contains(cand) {
                     occupied.remove(calendar.startOfDay(for: session.date))
                     if firstMove == nil {
-                        firstMove = (from: session.date.formatted(.dateTime.weekday(.wide)),
+                        firstMove = (id: session.id,
+                                     from: session.date.formatted(.dateTime.weekday(.wide)),
                                      to: cand.formatted(.dateTime.weekday(.wide)),
                                      word: sessionWord(session.discipline))
                     }
                     session.date = cand
                     session.status = .moved
-                    session.rationale = "Shifted to \(cand.formatted(.dateTime.weekday(.wide))) — still on track."
+                    session.rationale = "Shifted to \(cand.formatted(.dateTime.weekday(.wide))). Still on track."
                     occupied.insert(cand)
                     moved = true
                     changed = true
@@ -195,7 +304,7 @@ enum PlanCoaching {
             }
             if !moved {
                 session.status = .moved
-                session.rationale = "Rolled forward — no streak lost."
+                session.rationale = "Rolled forward. Your streak holds."
                 changed = true
             }
             movedCount += 1
@@ -226,7 +335,7 @@ enum PlanCoaching {
                     s.intervals = nil
                 }
                 for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.7).rounded())) }
-                s.rationale = "Rebuild week — easing back in at ~70% after time away. The plan meets you here."
+                s.rationale = "Rebuild week. Easing back in at about 70% after time away. The plan meets you here."
             }
             // Re-derive every future planned pace at the eased fitness (this week's converted easies
             // AND the weeks beyond — a comeback's interval day shouldn't demand last month's legs).
@@ -243,7 +352,7 @@ enum PlanCoaching {
                     unit: unit, type: rt)
             }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
-            CoachingEvent.record(kind: .ease, headline: "Welcome back — rebuild week",
+            CoachingEvent.record(kind: .ease, headline: "Welcome back, a rebuild week",
                                  detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. One good session earns them right back.",
                                  on: today, in: context, calendar: calendar)
         } else if movedCount > 0 {
@@ -255,9 +364,11 @@ enum PlanCoaching {
             } else {
                 headline = "\(movedCount) sessions moved forward"
             }
+            // A single move carries its session, so the notification opens the session that moved.
             CoachingEvent.record(kind: .moved, headline: headline,
                                  detail: "Nothing was lost. Your week reflowed around the days you missed, and every session kept its purpose.",
-                                 on: today, in: context, calendar: calendar)
+                                 on: today, in: context, calendar: calendar,
+                                 focusSessionID: movedCount == 1 ? firstMove?.id : nil)
         }
         if changed { try? context.save() }
     }
@@ -350,7 +461,7 @@ enum PlanCoaching {
             } else {
                 for pe in next.strengthTargets { pe.targetSets = 2 }
             }
-            next.rationale = "Recovery day — rest is where the gains land."
+            next.rationale = "Recovery day. Rest is where the gains land."
         case .hold, .start:
             return 0   // advisory only — nothing to change
         }
@@ -429,7 +540,7 @@ enum PlanCoaching {
             plan.pendingP5kAt = today
             try? context.save()
             CoachingEvent.record(kind: .recalibrate, headline: "Strong run banked",
-                                 detail: "That looked faster than your training paces assume. One more strong session in the next two weeks and I'll sharpen them — real fitness shows up twice.",
+                                 detail: "That looked faster than your training paces assume. One more strong session in the next two weeks and I'll sharpen them. Real fitness shows up twice.",
                                  on: today, in: context, calendar: calendar)
             return nil
         }
@@ -460,7 +571,7 @@ enum PlanCoaching {
             let delta = Int((current - bounded).rounded())
             let why = isRaceResult
                 ? "A race is the truest fitness test there is, so I sharpened your target paces by about \(delta) s/km. You've earned it."
-                : "Two strong runs in two weeks — that's real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it."
+                : "Two strong runs in two weeks. That's real fitness, so I sharpened your target paces by about \(delta) s/km. You've earned it."
             CoachingEvent.record(kind: .recalibrate, headline: "Your paces got faster",
                                  detail: why, on: today, in: context, calendar: calendar)
         }
@@ -687,7 +798,7 @@ enum PlanCoaching {
             where s.status == .planned && s.completedWorkout == nil && !s.strengthTargets.isEmpty
                   && calendar.startOfDay(for: s.date) >= todayStart && s.date < horizon {
             for pe in s.strengthTargets { pe.targetSets = max(1, Int((Double(pe.targetSets) * 0.6).rounded())) }
-            s.rationale = "Deload — your last sessions read near-max effort, so this week absorbs instead of adds."
+            s.rationale = "Deload week. Your last sessions read near max effort, so this week absorbs instead of adds."
             changed += 1
         }
         guard changed > 0 else { return nil }
@@ -794,7 +905,7 @@ enum PlanCoaching {
                     sPerKm: PlanEngine.pace(.easy, p5k: plan.p5kSPerKm), unit: unit, type: .easy)
             }
             for pe in s.strengthTargets { pe.targetSets = max(2, pe.targetSets - 1) }
-            s.rationale = "Eased for a busy week — showing up small still counts."
+            s.rationale = "Eased for a busy week. Showing up small still counts."
         }
         plan.lastAdaptedAt = today
         CoachingEvent.record(kind: .ease, headline: "Eased for your busy week",
@@ -860,12 +971,12 @@ enum PlanCoaching {
     static func brief(for session: PlannedSession, distanceUnit: DistanceUnit = .auto,
                       dropLeadingType: Bool = false) -> String {
         if session.discipline == .strength {
-            // The persisted split label names the day ("Push day — 4 exercises"); plans built
+            // The persisted split label names the day ("Push day, 4 exercises"); plans built
             // before the label existed fall back to the old count heuristic.
             let label = StrengthSplit.dayTitle(forLabel: session.strengthLabel)
                 ?? (session.strengthTargets.count >= 5 ? "Full body" : "Strength")
             let n = session.strengthTargets.count
-            return n > 0 ? "\(label) — \(n) exercise\(n == 1 ? "" : "s")" : "Strength session"
+            return n > 0 ? "\(label), \(n) exercise\(n == 1 ? "" : "s")" : "Strength session"
         }
         // Timed sports (swim, row, yoga, tennis…) — no distance/pace; show the sport + any duration.
         if let wt = session.workoutType, wt.isTimed {

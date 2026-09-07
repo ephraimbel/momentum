@@ -82,21 +82,61 @@ struct PlanView: View {
     @State private var weekBarBaseLabels: [String] = []
     /// The tune proposal uses the load-only engine path; chart series are never built here.
     @State private var tuneProposal: PlanCoaching.Proposal?
+    // — Drag to move (2026-09-05) —
+    /// The day row currently under a dragged session, and the session row that would trade days
+    /// with it. Only one is ever set: a hovered session outranks the day beneath it, so the board
+    /// never shows a move target and a swap target at once.
+    @State private var dropDay: Date?
+    @State private var swapTargetID: UUID?
+    /// The transient placement note for the session the athlete just moved (`PlanMoveAdvice`).
+    /// Deliberately not persisted onto `rationale` — the sentence is true about a week the next
+    /// drag can change, so it lives beside the session until the athlete moves on.
+    @State private var moveNote: (id: UUID, text: String)?
+    @State private var showAwayDays = false
 
     private struct CoachsReadModel: Equatable {
         var hasRacePrediction = false
         var paceResult: PaceInsights.Result?
         var hybridInsight: String?
-        var hasContent: Bool { hasRacePrediction || paceResult != nil || hybridInsight != nil }
+        var intensityMix: IntensityMix.Mix?
+        var hasContent: Bool {
+            hasRacePrediction || paceResult != nil || hybridInsight != nil || intensityMix != nil
+        }
     }
 
     /// Identifiable wrapper so `.sheet(item:)` works regardless of the model's own conformance.
     private struct EditingSession: Identifiable {
         let session: PlannedSession
+        /// Open straight into the sheet's "Move to" strip — the pointer-free path to the same
+        /// reschedule the board's drag performs (context menu, and the VoiceOver action).
+        var startInMove = false
         var id: PersistentIdentifier { session.persistentModelID }
     }
 
     private var plan: TrainingPlan? { profiles.first?.plan }
+
+    /// The notification mailboxes (`AppRouter.pendingPlanWeek` / `pendingPlanSessionID`): jump to
+    /// the week, then open the session once the tab switch has settled (a sheet presented in the
+    /// same update as a tab change is dropped on the floor). A week still behind the Pro boundary
+    /// stays there: the board lands on the current week and the sheet is not forced past the gate
+    /// the + button and a menu move already respect.
+    private func consumeNotificationMailboxes() {
+        let cal = Calendar.current
+        if let date = router.pendingPlanWeek {
+            router.pendingPlanWeek = nil
+            if let start = cal.dateInterval(of: .weekOfYear, for: date)?.start,
+               start <= currentWeekStart || paywall.isEntitled(to: .fullPlan) {
+                weekStart = start
+            }
+        }
+        guard let id = router.pendingPlanSessionID else { return }
+        router.pendingPlanSessionID = nil
+        guard let session = plan?.sessions.first(where: { $0.id == id }),
+              let start = cal.dateInterval(of: .weekOfYear, for: session.date)?.start else { return }
+        guard start <= currentWeekStart || paywall.isEntitled(to: .fullPlan) else { return }
+        weekStart = start
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { editing = EditingSession(session: session) }
+    }
     private var distanceUnit: DistanceUnit {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
     }
@@ -175,9 +215,10 @@ struct PlanView: View {
     private var observedPlanContent: some View {
         planContent
         .onAppear { isVisible = true; rebuildDerived() }
-        .onDisappear { isVisible = false }
+        .onDisappear { isVisible = false; moveNote = nil }
         // Page changes only refresh week data; structural/data changes refresh the whole readout.
-        .onChange(of: weekStart) { rebuildDerived(refreshPlan: false) }
+        // The just-moved note is scoped to the week the athlete moved it in, and to this visit.
+        .onChange(of: weekStart) { moveNote = nil; rebuildDerived(refreshPlan: false) }
         .onChange(of: plan?.persistentModelID) { rebuildDerived() }
         .onChange(of: plan?.sessions.count) { rebuildDerived() }
         // Counts are not revisions: a date, pace, completed run or unit can change without adding
@@ -222,6 +263,7 @@ struct PlanView: View {
             if let s = pendingStart { pendingStart = nil; start(s) }
         }) { item in
             SessionDetailSheet(session: item.session, distanceUnit: distanceUnit, profile: profiles.first,
+                               startInMove: item.startInMove,
                                onRemove: { delete(item.session) },
                                onStart: { pendingStart = $0 })
         }
@@ -232,6 +274,16 @@ struct PlanView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Upcoming prescribed sessions are removed — everything you've completed stays. You write your own weeks from here (add sessions, use the library), and the coach stops prescribing or adjusting. You can ask for a new plan anytime.")
+        }
+        .sheet(isPresented: $showAwayDays) {
+            let cal = Calendar.current
+            let weekDays = days
+            let busy = Set(weekSessions.filter { $0.status != .completed }.compactMap { session in
+                weekDays.firstIndex { cal.isDate($0, inSameDayAs: session.date) }
+            })
+            AwayDaysSheet(days: weekDays, daysWithSessions: busy) { blocked in
+                applyAwayDays(blocked)
+            }
         }
         .sheet(isPresented: $showSettings, onDismiss: { rebuildDerived() }) {
             // No plan yet → the sheet must open in CREATE mode, or Save quietly rebuilds nothing
@@ -252,6 +304,11 @@ struct PlanView: View {
             coach.wantsPlanSettings = false
             showSettings = true
         }
+        // A notification about a session (notification pass 2026-09-06): land on its week and open
+        // its sheet. `initial: true` covers the tab being built by the switch itself; the change
+        // covers Plan already being on screen. Consume-then-nil, like the coach mailbox above.
+        .onChange(of: router.pendingPlanSessionID, initial: true) { _, _ in consumeNotificationMailboxes() }
+        .onChange(of: router.pendingPlanWeek, initial: true) { _, _ in consumeNotificationMailboxes() }
         .onAppear {
             if coach.wantsPlanSettings {
                 coach.wantsPlanSettings = false
@@ -269,6 +326,15 @@ struct PlanView: View {
             // --plan-add: open the plan-a-session sheet directly (screenshot verification).
             if ProcessInfo.processInfo.arguments.contains("--plan-add") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { presentAdd(for: Date()) }
+            }
+            // --plan-away: open the "I'm away" week editor directly (screenshot verification).
+            if ProcessInfo.processInfo.arguments.contains("--plan-away") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showAwayDays = true }
+            }
+            // --plan-library: open the workout library directly (screenshot verification — the
+            // catalog is browsed several levels in, and sim taps through two sheets are unreliable).
+            if ProcessInfo.processInfo.arguments.contains("--plan-library") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showLibrary = true }
             }
             // --plan-self-coached: take over the seeded plan (screenshot verification of the mode).
             if ProcessInfo.processInfo.arguments.contains("--plan-self-coached") {
@@ -390,6 +456,59 @@ struct PlanView: View {
         return HybridSequencing.weekInsight(items)
     }
 
+    /// The easy-versus-quality split of the athlete's recent RUNNING (`IntensityMix`). The engine
+    /// has been built and tested since the endurance pivot and rendered on no surface at all — this
+    /// is the page it belongs on, because it is the one number that says whether the week you are
+    /// looking at is the week you have actually been running.
+    ///
+    /// Six weeks of runs, priced against the athlete's own calibrated 5k; a session the plan
+    /// prescribed as quality counts as quality regardless of the pace it came out at. Nil until
+    /// there are enough runs to mean anything (`IntensityMix.minRuns`).
+    private func recentIntensityMix(p5k: Double, calendar cal: Calendar) -> IntensityMix.Mix? {
+        guard p5k > 0, let since = cal.date(byAdding: .day, value: -42, to: Date()) else { return nil }
+        let inputs: [IntensityMix.RunInput] = workouts
+            .filter { $0.type == .run && $0.startedAt >= since }
+            .compactMap { workout in
+                guard let pace = workout.gps?.avgPaceSPerKm, pace > 0 else { return nil }
+                return .init(paceSPerKm: pace,
+                             plannedQuality: workout.plannedSession?.runType?.isQuality)
+            }
+        return IntensityMix.analyze(runs: inputs, p5kSPerKm: p5k)
+    }
+
+    @ViewBuilder
+    private var intensityCard: some View {
+        if let mix = coachsReadModel.intensityMix {
+            let easyPct = Int((mix.easyFraction * 100).rounded())
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 20, weight: .semibold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("YOUR RECENT MIX").font(.rounded(Theme.FontSize.label, weight: .bold))
+                        .tracking(1.2).foregroundStyle(Theme.inkTertiary)
+                    Text("\(easyPct)% easy · \(100 - easyPct)% quality")
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                        .foregroundStyle(Theme.ink)
+                    Text(mix.blurb)
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    // The sample, said plainly. A split off six runs is not the same claim as a
+                    // split off thirty, and the card should never let it read like one.
+                    Text("Last 6 weeks · \(mix.easyCount + mix.hardCount) runs")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(Theme.inkTertiary)
+                        .padding(.top, 1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(Theme.Space.md).frame(maxWidth: .infinity, alignment: .leading)
+            .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Your recent mix. \(easyPct) percent easy. \(mix.blurb)")
+        }
+    }
+
     /// The coach's read, grouped BELOW the week (the schedule is the page's job; analysis supports
     /// it): race projection, quality-pace verdict, and the hybrid sequencing note.
     @ViewBuilder
@@ -408,9 +527,222 @@ struct PlanView: View {
                 if let result = coachsReadModel.paceResult {
                     PaceInsightCard(result: result)
                 }
+                intensityCard
                 hybridCard
             }
         }
+    }
+
+    // MARK: Moving a session (drag on the board, or the Move menu)
+
+    /// The Move submenu — the same three destinations the drag covers, reachable without one.
+    /// "Next week" is the only door here that leaves the displayed week, so it is the only one that
+    /// meets the Pro boundary the board itself draws over future weeks.
+    @ViewBuilder
+    private func moveMenu(_ session: PlannedSession) -> some View {
+        Menu {
+            Button { shift(session, byDays: 1) } label: { Label("To tomorrow", systemImage: "arrow.right") }
+            Button { shift(session, byDays: 7) } label: { Label("To next week", systemImage: "arrow.uturn.right") }
+            Button { editing = EditingSession(session: session, startInMove: true) } label: {
+                Label("Pick a day…", systemImage: "calendar")
+            }
+        } label: {
+            Label("Move", systemImage: "calendar")
+        }
+    }
+
+    // MARK: Week-shaped edits (the whole week at once)
+
+    /// Every still-open session in the displayed week slides a day. Completed work never moves —
+    /// a finished day is a record of what happened, not a plan.
+    private func shiftDisplayedWeek(by days: Int) {
+        let cal = Calendar.current
+        let movable = weekSessions.filter { $0.status != .completed }
+        guard !movable.isEmpty else {
+            ToastCenter.shared.show(icon: "calendar", line: "Nothing to move this week")
+            return
+        }
+        let targets = movable.compactMap { cal.date(byAdding: .day, value: days, to: $0.date) }
+        // Sliding forward can push the last day of the week over the Pro boundary, where the
+        // athlete could not see where it went. Same gate the + button and a menu move already use.
+        if let furthest = targets.max(),
+           let week = cal.dateInterval(of: .weekOfYear, for: furthest)?.start,
+           week > currentWeekStart, !paywall.isEntitled(to: .fullPlan) {
+            paywall.present(for: .fullPlan)
+            return
+        }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
+            PlanCoaching.reschedule(movable.compactMap { session in
+                cal.date(byAdding: .day, value: days, to: session.date).map { (session, $0) }
+            }, in: context)
+            moveNote = nil
+            rebuildDerived(refreshPlan: false)
+        }
+        Haptics.success()
+        ToastCenter.shared.show(icon: "calendar",
+                                line: days > 0 ? "Week pushed on a day" : "Week pulled back a day")
+    }
+
+    /// Take days out of the week and let the work find the nearest open day around them
+    /// (`PlanWeekEdit`). Anything with nowhere to go stays put and is named, never stacked onto a
+    /// day that is already carrying a session.
+    private func applyAwayDays(_ blocked: Set<Int>) {
+        guard !blocked.isEmpty else { return }
+        let cal = Calendar.current
+        let weekDays = days.map { cal.startOfDay(for: $0) }
+        let movable = weekSessions.filter { $0.status != .completed }
+        let indexed: [(id: UUID, dayIndex: Int)] = movable.compactMap { session in
+            guard let index = weekDays.firstIndex(of: cal.startOfDay(for: session.date)) else { return nil }
+            return (session.id, index)
+        }
+        let placements = PlanWeekEdit.awayPlacements(sessions: indexed, blocked: blocked)
+        let strandedCount = indexed.filter { blocked.contains($0.dayIndex) && placements[$0.id] == nil }.count
+
+        guard !placements.isEmpty else {
+            ToastCenter.shared.show(
+                icon: "airplane",
+                line: strandedCount > 0 ? "No free days left to move to" : "Nothing planned on those days")
+            return
+        }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
+            PlanCoaching.reschedule(movable.compactMap { session in
+                guard let index = placements[session.id], index < weekDays.count else { return nil }
+                return (session, weekDays[index])
+            }, in: context)
+            moveNote = nil
+            rebuildDerived(refreshPlan: false)
+        }
+        Haptics.success()
+        let moved = placements.count
+        // Say what actually happened, including the part that did not work out.
+        let line = strandedCount > 0
+            ? "Moved \(moved), \(strandedCount) stayed put"
+            : (moved == 1 ? "Moved 1 session" : "Moved \(moved) sessions")
+        ToastCenter.shared.show(icon: "airplane", line: line)
+    }
+
+    /// Repeat a session onto later weeks. The three answers athletes actually give when asked how
+    /// often: once more, for a month, or all the way to the end of the block.
+    @ViewBuilder
+    private func repeatMenu(_ session: PlannedSession) -> some View {
+        Menu {
+            Button { repeatSession(session, weeks: 1) } label: { Label("Next week", systemImage: "arrow.uturn.right") }
+            Button { repeatSession(session, weeks: 4) } label: { Label("Every week for 4 weeks", systemImage: "repeat") }
+            if remainingBlockWeeks(after: session) > 4 {
+                Button { repeatSession(session, weeks: remainingBlockWeeks(after: session)) } label: {
+                    Label("Every week to the end of the block", systemImage: "flag.checkered")
+                }
+            }
+        } label: {
+            Label("Repeat", systemImage: "plus.square.on.square")
+        }
+    }
+
+    /// Whole weeks left in the block after this session's own week — the ceiling on "to the end".
+    private func remainingBlockWeeks(after session: PlannedSession) -> Int {
+        let cal = Calendar.current
+        guard let last = planWeekStarts.last,
+              let week = cal.dateInterval(of: .weekOfYear, for: session.date)?.start,
+              let span = cal.dateComponents([.weekOfYear], from: week, to: last).weekOfYear else { return 0 }
+        return max(0, span)
+    }
+
+    private func repeatSession(_ session: PlannedSession, weeks: Int) {
+        guard weeks > 0 else { return }
+        // Every copy lands on a future week, which is the Pro boundary the board already draws.
+        guard paywall.isEntitled(to: .fullPlan) else { paywall.present(for: .fullPlan); return }
+        let cal = Calendar.current
+        let days = (1...weeks).compactMap { cal.date(byAdding: .weekOfYear, value: $0, to: session.date) }
+        let written = PlanCoaching.duplicate(session, onto: days, to: plan, in: context)
+        guard written > 0 else {
+            // Every target day already held this session. Say so rather than buzzing success at a
+            // no-op — the athlete asked for something that was already true.
+            ToastCenter.shared.show(icon: "checkmark", line: "Already on those weeks")
+            return
+        }
+        withAnimation(reduceMotion ? nil : Motion.standard) { rebuildDerived() }
+        Haptics.success()
+        ToastCenter.shared.show(icon: "plus.square.on.square",
+                                line: written == 1 ? "Repeated next week" : "Added to \(written) weeks")
+    }
+
+    /// Move a session relative to its own date (not to today — "tomorrow" means the day after the
+    /// session, which is what "move this on by a day" means when you are looking at a future week).
+    private func shift(_ session: PlannedSession, byDays days: Int) {
+        guard let target = Calendar.current.date(byAdding: .day, value: days, to: session.date) else { return }
+        let targetDay = Calendar.current.startOfDay(for: target)
+        // Landing behind the Pro frost would drop the session where the athlete cannot see it —
+        // the same reason the + button routes to the paywall on a locked week.
+        if let week = Calendar.current.dateInterval(of: .weekOfYear, for: targetDay)?.start,
+           week > currentWeekStart, !paywall.isEntitled(to: .fullPlan) {
+            paywall.present(for: .fullPlan)
+            return
+        }
+        move(session, to: targetDay)
+    }
+
+    /// Resolve a dropped payload against the live plan and move it. Returns false (the drop is
+    /// refused, and the session springs back) when the payload names nothing we hold or the session
+    /// is already on that day, so an accidental drop on the row it started in is a no-op.
+    @discardableResult
+    private func move(sessionID: UUID, to day: Date) -> Bool {
+        guard let session = plan?.sessions.first(where: { $0.id == sessionID }),
+              Calendar.current.startOfDay(for: session.date) != day else { return false }
+        move(session, to: day)
+        return true
+    }
+
+    private func move(_ session: PlannedSession, to day: Date) {
+        // Read the landing spot BEFORE the move, so the moved session is not counted as its own
+        // neighbour, then write the note against the week as it will actually be.
+        let advice = placementNote(for: session, landingOn: day)
+        withAnimation(reduceMotion ? nil : Motion.standard) {
+            PlanCoaching.reschedule(session, to: day, in: context)
+            // A move changes neither the session count nor the displayed week, so the week map's
+            // signature does not flip on its own — rebuild explicitly or the board keeps drawing
+            // the session on the day it left.
+            rebuildDerived(refreshPlan: false)
+            moveNote = advice.map { (session.id, $0) }
+        }
+        Haptics.success()
+        ToastCenter.shared.show(icon: "calendar",
+                                line: "Moved to \(day.formatted(.dateTime.weekday(.wide)))")
+    }
+
+    /// Trade two sessions' days. The move athletes actually ask for, and the reason dropping onto a
+    /// session reads differently from dropping onto its day.
+    @discardableResult
+    private func swap(sessionID: UUID, with target: PlannedSession) -> Bool {
+        guard sessionID != target.id,
+              let source = plan?.sessions.first(where: { $0.id == sessionID }),
+              Calendar.current.startOfDay(for: source.date) != Calendar.current.startOfDay(for: target.date)
+        else { return false }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
+            PlanCoaching.swapDays(source, target, in: context)
+            rebuildDerived(refreshPlan: false)
+            // A swap moves two sessions and leaves no single "here is where it landed" to annotate.
+            moveNote = nil
+        }
+        Haptics.success()
+        ToastCenter.shared.show(icon: "arrow.left.arrow.right", line: "Swapped days")
+        return true
+    }
+
+    /// `PlanMoveAdvice` fed from the live plan: what the landing day already holds, and what sits on
+    /// either side of it. The moved session is excluded from its own landing day so it can never be
+    /// its own reason for a "two hard sessions" note.
+    private func placementNote(for session: PlannedSession, landingOn day: Date) -> String? {
+        guard let plan else { return nil }
+        let cal = Calendar.current
+        func kinds(_ offset: Int) -> RestDayLine.Neighbor {
+            guard let d = cal.date(byAdding: .day, value: offset, to: day) else { return .none }
+            let target = cal.startOfDay(for: d)
+            return RestDayLine.strongest(plan.sessions
+                .filter { $0.id != session.id && cal.startOfDay(for: $0.date) == target }
+                .map(neighborKind))
+        }
+        return PlanMoveAdvice.note(moved: neighborKind(session), sameDay: kinds(0),
+                                   dayBefore: kinds(-1), dayAfter: kinds(1))
     }
 
     private func delete(_ session: PlannedSession) {
@@ -449,6 +781,20 @@ struct PlanView: View {
                     // coach's plan; self-coached keeps every surface and drops every prescription).
                     // Goals change — starting over is a first-class move, never buried.
                     Menu {
+                        // Week-shaped edits, scoped by name to the week on screen. Travel and
+                        // illness take DAYS, not sessions, and doing that one drag at a time was
+                        // five gestures for a long weekend.
+                        Section(weekTitle) {
+                            Button { shiftDisplayedWeek(by: 1) } label: {
+                                Label("Push the week on a day", systemImage: "arrow.right")
+                            }
+                            Button { shiftDisplayedWeek(by: -1) } label: {
+                                Label("Pull the week back a day", systemImage: "arrow.left")
+                            }
+                            Button { showAwayDays = true } label: {
+                                Label("I'm away some days…", systemImage: "airplane")
+                            }
+                        }
                         if plan?.isSelfCoached != true {
                             Button { showSettings = true } label: {
                                 Label("Adjust this plan", systemImage: "slider.horizontal.3")
@@ -781,6 +1127,9 @@ struct PlanView: View {
                 Text(weekTitle).font(.display(20, weight: .black)).foregroundStyle(Theme.ink)
                     .contentTransition(.opacity)
                     .animation(Motion.crossfade, value: weekStart)
+                    // The row now carries a phase chip, the This-week pill and two chevrons; the
+                    // title yields first rather than pushing any of them off the edge.
+                    .lineLimit(1).minimumScaleFactor(0.7).layoutPriority(1)
                 if let phase = weekPhase {
                     Text(phase.label.uppercased())
                         .font(.rounded(9, weight: .black)).tracking(1)
@@ -795,10 +1144,33 @@ struct PlanView: View {
                         }
                 }
                 Spacer(minLength: 0)
-                if planWeekStarts.count <= 1 {
-                    chevron("chevron.left") { shiftWeek(-1) }
-                    chevron("chevron.right") { shiftWeek(1) }
+                // Back to now, one tap, and only when the athlete has browsed away. Without it,
+                // returning from week 12 meant finding the ink-pilled numeral among a row of 27.
+                if !isCurrentWeek {
+                    Button {
+                        Haptics.selection()
+                        weekStart = currentWeekStart
+                    } label: {
+                        Text("This week")
+                            .font(.rounded(Theme.FontSize.label, weight: .bold))
+                            .foregroundStyle(Theme.purpleDeep)
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .background {
+                                Capsule().fill(Theme.purpleTint)
+                                Capsule().stroke(Theme.purple.opacity(0.25))
+                            }
+                            .fixedSize()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back to this week")
                 }
+                // Step a week either way. These used to render ONLY on plans with no derivable
+                // weeks (`count <= 1`) — which is to say, almost never — leaving every real plan
+                // to navigate by tapping an arc bar. Those bars sit in tap columns barely 13 pt
+                // wide on a marathon block, well under the 44 pt minimum, for the most common
+                // action on the page. The arc stays for jumping far; these are for next and back.
+                chevron("chevron.left", enabled: canShift(-1)) { shiftWeek(-1) }
+                chevron("chevron.right", enabled: canShift(1)) { shiftWeek(1) }
             }
             Text(weekPhase?.intent ?? summary)
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -916,6 +1288,7 @@ struct PlanView: View {
         }
         let runs = PaceInsights.recentQualityRuns(plan)
         if !runs.isEmpty { model.paceResult = PaceInsights.evaluate(runs) }
+        model.intensityMix = recentIntensityMix(p5k: plan.p5kSPerKm, calendar: cal)
         model.hybridInsight = coachsReadModel.hybridInsight
         coachsReadModel = model
 
@@ -992,13 +1365,33 @@ struct PlanView: View {
         return PlanPhase(rawValue: plan.weekPhases[idx])
     }
 
-    private func chevron(_ system: String, _ action: @escaping () -> Void) -> some View {
+    private func chevron(_ system: String, enabled: Bool = true, _ action: @escaping () -> Void) -> some View {
         Button { Haptics.light(); action() } label: {
             Image(systemName: system).font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
                 .frame(width: 36, height: 36).background(Circle().fill(Theme.background)).overlay(Circle().stroke(Theme.hairline))
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.25)
+    }
+
+    /// A day already gone. Days are compared at start-of-day so "today" is never past.
+    private func isPastDay(_ day: Date) -> Bool {
+        let cal = Calendar.current
+        return cal.startOfDay(for: day) < cal.startOfDay(for: Date())
+    }
+
+    /// Is there a week to step to in that direction, inside the block the arc draws? Stepping past
+    /// either end would land on an empty board that looks like a plan with nothing in it, so the
+    /// ends dim instead. Plans with no derivable weeks page freely — the arc is hidden for those,
+    /// and the chevrons are then the only navigation there is.
+    private func canShift(_ delta: Int) -> Bool {
+        guard planWeekStarts.count > 1,
+              let first = planWeekStarts.first, let last = planWeekStarts.last,
+              let target = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekStart)
+        else { return true }
+        return target >= first && target <= last
     }
 
     // MARK: Tune this week (coach proposal)
@@ -1138,8 +1531,12 @@ struct PlanView: View {
     private static let dateColWidth: CGFloat = 42
 
     private func boardDayRow(_ day: Date, map: [Date: [PlannedSession]]) -> some View {
-        let sessions = map[Calendar.current.startOfDay(for: day)] ?? []
+        let dayKey = Calendar.current.startOfDay(for: day)
+        let sessions = map[dayKey] ?? []
         let isToday = Calendar.current.isDateInToday(day)
+        // A hovered session owns the drop (the two trade days); the day beneath it stands down, so
+        // the board never offers both readings of the same gesture at once.
+        let isMoveTarget = dropDay == dayKey && swapTargetID == nil
         return HStack(alignment: .top, spacing: Theme.Space.md) {
             boardDateColumn(day, isToday: isToday, hasSessions: !sessions.isEmpty)
             Group {
@@ -1148,20 +1545,56 @@ struct PlanView: View {
                 } else {
                     VStack(spacing: Theme.Space.sm + 2) {
                         ForEach(sessions, id: \.persistentModelID) { session in
+                            // Long press belongs to the DRAG, and only the drag. `.contextMenu` on
+                            // the same view competes for that gesture and wins nondeterministically
+                            // — measured on the simulator, the identical press either lifted the
+                            // session, opened the menu and froze there, or did nothing at all, run
+                            // to run. A move you cannot trust is worse than no drag, so the quick
+                            // menu moved onto the row's own icon chip (`sessionMenu`), which is a
+                            // deliberate, unambiguous target and leaves the body of the row free.
                             sessionLine(session)
-                                .contextMenu {
-                                    if session.status != .completed {
-                                        Button { Haptics.medium(); start(session) } label: {
-                                            Label("Start", systemImage: "play.fill")
-                                        }
+                                .planSwapTarget(swapTargetID == session.id)
+                                .modifier(DraggableSessionModifier(
+                                    session: session, distanceUnit: distanceUnit,
+                                    enabled: session.status != .completed))
+                                // A completed session is not a swap target either: trading days with
+                                // finished work would move the record of a run that already happened.
+                                // The drop falls through to the day row beneath, which is a plain move.
+                                .dropDestination(for: PlannedSessionTransfer.self) { items, _ in
+                                    guard session.status != .completed, let dropped = items.first else { return false }
+                                    return swap(sessionID: dropped.id, with: session)
+                                } isTargeted: { targeted in
+                                    guard session.status != .completed else { return }
+                                    withAnimation(reduceMotion ? nil : Motion.selection) {
+                                        if targeted { swapTargetID = session.id }
+                                        else if swapTargetID == session.id { swapTargetID = nil }
                                     }
-                                    Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
-                                        Label(session.status == .completed ? "Mark not done" : "Mark done",
-                                              systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
-                                    }
-                                    Button { editing = EditingSession(session: session) } label: { Label("Adjust…", systemImage: "slider.horizontal.3") }
-                                    Button(role: .destructive) { delete(session) } label: { Label("Remove", systemImage: "trash") }
                                 }
+                        }
+                        // Adding a SECOND session to a day used to be impossible from that day:
+                        // the per-day "+" lives on the rest line, which only renders when the day
+                        // is empty, so a lift alongside Tuesday's run meant the header "+" and
+                        // then re-picking Tuesday in the sheet while looking straight at Tuesday.
+                        //
+                        // Today and forward only. A line on all seven rows added real height to a
+                        // board whose whole job is reading the week at a glance, and you plan
+                        // FORWARD — a past day is a record of what happened, and work done then
+                        // gets logged, not planned.
+                        if !isPastDay(day) {
+                            Button { presentAdd(for: day) } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("Add")
+                                        .font(.rounded(Theme.FontSize.label, weight: .semibold))
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(Theme.inkTertiary.opacity(0.5))
+                                .frame(height: 20)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Add another session on \(day.formatted(.dateTime.weekday(.wide).month().day()))")
                         }
                     }
                 }
@@ -1173,6 +1606,17 @@ struct PlanView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // Today wears a whisper of tint so the eye lands on it inside the week.
         .background(isToday ? Theme.ink.opacity(0.045) : Color.clear)
+        .planDropTarget(isMoveTarget)
+        // The whole row is the target, rest days included — an open day is the commonest place a
+        // session goes, and it would be perverse to make the emptiest rows the hardest to hit.
+        .dropDestination(for: PlannedSessionTransfer.self) { items, _ in
+            guard let dropped = items.first else { return false }
+            return move(sessionID: dropped.id, to: dayKey)
+        } isTargeted: { targeted in
+            withAnimation(reduceMotion ? nil : Motion.selection) {
+                if targeted { dropDay = dayKey } else if dropDay == dayKey { dropDay = nil }
+            }
+        }
     }
 
     /// The day's anchor: weekday + date, left-aligned. Today fills an ink pill; days with work read
@@ -1201,13 +1645,25 @@ struct PlanView: View {
     private func sessionLine(_ session: PlannedSession) -> some View {
         let done = session.status == .completed
         return HStack(spacing: Theme.Space.sm + 2) {
+            // The drag handle. It lives OUTSIDE the row's button-and-context-menu subtree on
+            // purpose: `.contextMenu` and `.draggable` on one view fight over the long press and
+            // resolve differently run to run, so each gesture gets its own target instead. Grab the
+            // session's own glyph and carry it to another day.
+            Image(systemName: PlanCoaching.icon(for: session))
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(done ? Theme.inkTertiary : Theme.ink)
+                .frame(width: 34, height: 34)
+                .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
+                // A 34pt glyph is under the 44pt touch minimum, so the grabbable area is padded out
+                // to the row's full height without moving a pixel of the drawing.
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
+                .modifier(DraggableSessionModifier(
+                    session: session, distanceUnit: distanceUnit,
+                    enabled: session.status != .completed))
+                .accessibilityHidden(true)   // the row's own element carries the session and its actions
             Button { editing = EditingSession(session: session) } label: {
                 HStack(spacing: Theme.Space.sm + 2) {
-                    Image(systemName: PlanCoaching.icon(for: session))
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(done ? Theme.inkTertiary : Theme.ink)
-                        .frame(width: 34, height: 34)
-                        .background { Circle().fill(Theme.background); Circle().stroke(Theme.hairline) }
                     VStack(alignment: .leading, spacing: 2) {
                         let kind = sessionKindLabel(session)
                         if let kind {
@@ -1247,6 +1703,21 @@ struct PlanView: View {
                                 .foregroundStyle(Theme.inkTertiary)
                                 .lineLimit(2).multilineTextAlignment(.leading)
                         }
+                        // What the athlete just did with this session, said once. Transient by
+                        // design (`PlanMoveAdvice`): it describes a week the next drag can change,
+                        // so it is never written to `rationale` where it would go quietly stale.
+                        if !done, moveNote?.id == session.id, let note = moveNote?.text {
+                            HStack(spacing: 4) {
+                                Image(systemName: "calendar")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Theme.purple)
+                                Text(note)
+                                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                                    .foregroundStyle(Theme.inkSecondary)
+                                    .lineLimit(2).multilineTextAlignment(.leading)
+                            }
+                            .transition(.opacity)
+                        }
                         // The long run is the keystone session of an endurance week, and it now
                         // wears its fuel plan on the board — the same deterministic FuelingGuide
                         // line the Today deck and the detail sheet already show (≥1 h runs only,
@@ -1268,6 +1739,34 @@ struct PlanView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // The quick menu stays exactly where it shipped — on the body of the row — because the
+            // drag now lives on the glyph beside it and the two no longer contend.
+            .contextMenu {
+                if session.status != .completed {
+                    Button { Haptics.medium(); start(session) } label: {
+                        Label("Start", systemImage: "play.fill")
+                    }
+                }
+                Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
+                    Label(session.status == .completed ? "Mark not done" : "Mark done",
+                          systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
+                }
+                // Move without a drag — the pointer-free path, and the only one that reaches
+                // another week.
+                moveMenu(session)
+                repeatMenu(session)
+                // "Adjust…" collided with the header menu's "Adjust this plan" — one word, two
+                // scopes, on one screen. This one opens ONE session, so it says so.
+                Button { editing = EditingSession(session: session) } label: { Label("Edit session…", systemImage: "slider.horizontal.3") }
+                Button(role: .destructive) { delete(session) } label: { Label("Remove", systemImage: "trash") }
+            }
+            // Drag is a pointing gesture and reaches no assistive technology, so the same
+            // reschedule surface hangs off the row's own accessibility element as a rotor action.
+            // It sits on the body BUTTON, not the enclosing stack: an action on a container that
+            // is not itself an element never surfaces in VoiceOver.
+            .accessibilityAction(named: "Move to another day") {
+                editing = EditingSession(session: session, startInMove: true)
+            }
             checkButton(session, done: done)
         }
         .frame(maxWidth: .infinity)

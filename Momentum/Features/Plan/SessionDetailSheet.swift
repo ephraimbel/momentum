@@ -8,6 +8,9 @@ struct SessionDetailSheet: View {
     @Bindable var session: PlannedSession
     var distanceUnit: DistanceUnit = .auto
     var profile: UserProfile? = nil
+    /// Open with the "Move to" strip already showing — the board's context menu and its VoiceOver
+    /// action land here, so the athlete arrives at the day picker instead of hunting for it.
+    var startInMove: Bool = false
     var onRemove: () -> Void
     var onStart: (PlannedSession) -> Void = { _ in }
 
@@ -16,6 +19,7 @@ struct SessionDetailSheet: View {
     @State private var rescheduling = false
     @State private var adjusting = false
     @State private var confirmRemove = false
+    @State private var detent: PresentationDetent = .medium
 
     /// The structured-workout expansion, memoized per input change — `body` needed it in two
     /// places, and every distance-stepper tap re-rendered the whole sheet, so the builder was
@@ -71,9 +75,16 @@ struct SessionDetailSheet: View {
             .scrollIndicators(.hidden)
         }
         .background(Theme.background)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+        // Arriving from "Move" opens on the day picker, and at `.large` — the wrapped strip is three
+        // rows of days, so at the medium detent the thing the athlete came for starts below the fold.
+        .onAppear {
+            guard startInMove else { return }
+            rescheduling = true
+            detent = .large
+        }
         .confirmationDialog("Remove this session?", isPresented: $confirmRemove, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { Haptics.medium(); onRemove(); dismiss() }
             Button("Cancel", role: .cancel) {}
@@ -238,34 +249,38 @@ struct SessionDetailSheet: View {
 
     // MARK: Reschedule
 
+    /// The fourteen days ahead, WRAPPED rather than scrolled sideways (owner rule 2026-08-20: no
+    /// page-level horizontal motion anywhere — a vertical thumb on a horizontal strip drifts the row
+    /// and hides half its days). This is also the pointer-free path to the board's drag-to-move, so
+    /// every destination has to be reachable without a swipe: VoiceOver and Switch Control both walk
+    /// a wrapped grid, and neither can scroll a hidden strip into view.
     private var rescheduleStrip: some View {
         section("Move to") {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.Space.sm) {
-                    ForEach(next14, id: \.self) { day in
-                        let on = Calendar.current.isDate(day, inSameDayAs: session.date)
-                        Button {
-                            Haptics.selection()
-                            PlanCoaching.reschedule(session, to: day, in: context)
-                            withAnimation(.easeOut(duration: 0.2)) { rescheduling = false }
-                        } label: {
-                            VStack(spacing: 3) {
-                                Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
-                                    .font(.rounded(Theme.FontSize.label, weight: .bold))
-                                Text(day.formatted(.dateTime.day())).font(.display(20, weight: .heavy)).monospacedDigit()
-                            }
-                            .foregroundStyle(on ? .white : Theme.ink)
-                            .frame(width: 54, height: 66)
-                            .background {
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
-                                RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline)
-                            }
+            FlowLayout(spacing: Theme.Space.sm) {
+                ForEach(next14, id: \.self) { day in
+                    let on = Calendar.current.isDate(day, inSameDayAs: session.date)
+                    Button {
+                        Haptics.selection()
+                        PlanCoaching.reschedule(session, to: day, in: context)
+                        withAnimation(.easeOut(duration: 0.2)) { rescheduling = false }
+                    } label: {
+                        VStack(spacing: 3) {
+                            Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
+                                .font(.rounded(Theme.FontSize.label, weight: .bold))
+                            Text(day.formatted(.dateTime.day())).font(.display(20, weight: .heavy)).monospacedDigit()
                         }
-                        .buttonStyle(.plain)
+                        .foregroundStyle(on ? .white : Theme.ink)
+                        .frame(width: 54, height: 66)
+                        .background {
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? Theme.purple : Theme.surface)
+                            RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(on ? Color.clear : Theme.hairline)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(day.formatted(.dateTime.weekday(.wide).month().day()))
                 }
-                .padding(.vertical, 2)
             }
+            .padding(.vertical, 2)
         }
     }
 

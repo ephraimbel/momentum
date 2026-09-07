@@ -114,6 +114,15 @@ targets:
         NSHealthShareUsageDescription: "momentum reads recovery signals and workout time windows to personalize coaching without importing workouts."
         NSHealthUpdateUsageDescription: "momentum saves your completed workouts to Apple Health."
         NSPhotoLibraryAddUsageDescription: "momentum saves the share cards you make to your photo library."
+        # The Plan board's drag-to-move payload (PlanBoardMove.swift). Declaring the type keeps the
+        # drag in-app: a planned session cannot be dropped into another app as junk text, and the
+        # board never lights up as a drop target for a string dragged in from outside.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: app.momentum.planned-session
+            UTTypeDescription: momentum planned session
+            UTTypeConformsTo:
+              - public.data
+            UTTypeTagSpecification: {}
         NSSupportsLiveActivities: true          # rest-timer Live Activity (lock screen + Dynamic Island)
         UIUserInterfaceStyle: Automatic
         # Portrait-locked (2026-08-06 user call): no landscape anywhere — the app is a phone-in-hand
@@ -296,6 +305,7 @@ targets:
       - path: Momentum/Engines/CoachingCueBuilder.swift # shared: the words themselves
       - path: Momentum/Engines/LiveRunCoach.swift       # shared: what to say and when
       - path: Momentum/Engines/WristHealthSnapshot.swift # shared: the phone-built health snapshot (readiness · sleep · HRV · strain · week) the wrist renders
+      - path: Momentum/Engines/CoachVerbosity.swift     # shared: how much is spoken (the phone's dial, synced)
     dependencies:
       - target: MomentumWatchWidgets   # embeds the complications extension into the watch app
     settings:

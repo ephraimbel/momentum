@@ -79,4 +79,85 @@ final class PlanFlowsUITests: XCTestCase {
         XCTAssertLessThan(nameField.frame.minY, goalHeader.frame.minY,
                           "Plan name must remain above goal when adjusting an existing plan.")
     }
+
+    /// Drag to move (2026-09-05). Before this, rescheduling cost four taps and a sheet, and "Move"
+    /// was not even in the row's context menu. The gesture is the feature, so it is pinned by the
+    /// gesture: press a session, drag it onto another day, and the board must actually move it.
+    @MainActor
+    func testDraggingASessionOntoAnotherDayMovesIt() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--seed-plan-5day", "--plan-tab"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+
+        // The 5-day seed puts three easy runs at the top of the week and leaves Wednesday a rest
+        // day that explains itself. That rest row is the drop target.
+        let restRow = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Rest — two days out'")).firstMatch
+        XCTAssertTrue(restRow.waitForExistence(timeout: 25),
+                      "The board should show Wednesday as an explained rest day.")
+
+        // Tuesday's easy run: the third of the three identical easy runs, top to bottom.
+        let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS '5 mi'"))
+        XCTAssertGreaterThanOrEqual(runs.count, 3, "The 5-day seed should plan three easy runs.")
+        let tuesdayRun = runs.element(boundBy: 2)
+        XCTAssertTrue(tuesdayRun.exists)
+
+        // The drag handle is the session's glyph, which sits just left of the row body and is
+        // deliberately not its own accessibility element (the row already carries the session and
+        // a "Move to another day" action), so it is addressed by coordinate. The glyph spans
+        // roughly 44 to 10 points left of the body's leading edge.
+        let handle = tuesdayRun.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+            .withOffset(CGVector(dx: -25, dy: 0))
+        let target = restRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+
+        // The full drag-and-drop form: a press to lift the session, a slow travel so the drop
+        // destination registers the hover, and a hold at the target before release. The plain
+        // `press(forDuration:thenDragTo:)` releases too fast for a drop session to commit.
+        handle.press(forDuration: 0.8, thenDragTo: target,
+                     withVelocity: .slow, thenHoldForDuration: 1.0)
+
+        // The receipt names the day it landed on...
+        XCTAssertTrue(app.staticTexts.matching(
+            NSPredicate(format: "label BEGINSWITH 'Moved to'")).firstMatch.waitForExistence(timeout: 10),
+                      "Dropping a session on a day should confirm where it landed.")
+        // ...and that day is no longer a rest day, which is the move actually happening rather than
+        // a toast fired over an unchanged board.
+        XCTAssertFalse(restRow.exists,
+                       "The day the session was dropped on must stop reading as a rest day.")
+    }
+
+    /// The intensity mix reaches a SCREEN (2026-09-05).
+    ///
+    /// `IntensityMix` was written and unit-tested at the endurance pivot and then rendered on no
+    /// surface at all for months — the recurring failure mode in this codebase is an engine that
+    /// computes something true and shows it to nobody. Unit tests cannot catch that, because the
+    /// engine passes them either way. This walks the real page and looks for the words.
+    @MainActor
+    func testTheIntensityMixReachesThePlanPage() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-pro", "--plan-tab"]
+        addUIInterruptionMonitor(withDescription: "System alert") { alert in
+            for label in ["Allow", "Allow Once", "Allow While Using App", "OK", "Don’t Allow", "Don't Allow"] {
+                let button = alert.buttons[label]
+                if button.exists { button.tap(); return true }
+            }
+            return false
+        }
+        app.launch()
+
+        // The coach's read sits below the week board, so the card is always a scroll away.
+        let card = app.staticTexts["YOUR RECENT MIX"]
+        for _ in 0..<8 where !card.exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(card.waitForExistence(timeout: 5),
+                      "The demo athlete has ten runs in the last six weeks; their easy/quality split must be on the page.")
+    }
 }

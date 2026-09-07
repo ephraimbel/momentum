@@ -363,14 +363,16 @@ struct PlanCoachingTests {
         farRun.date = far; farRun.discipline = .running; farRun.runType = .long; farRun.status = .planned
         let plan = makePlan(in: ctx, sessions: [run, doneToday, farRun])
 
-        let payloads = NotificationService.reminderPayloads(for: plan, now: today, hour: 7, minute: 30)
+        let payloads = NotificationPlanner.sessionReminders(for: plan, now: today, hour: 7, minute: 30,
+                                                            unit: .metric, calendar: cal)
 
         #expect(payloads.count == 1)                                     // completed + far-future excluded
-        #expect(payloads.first?.id == "momentum.session.\(run.id.uuidString)")
+        #expect(payloads.first?.id == "momentum.plan.session.\(run.id.uuidString)")
         #expect(payloads.first?.title == "Run day")
-        #expect(payloads.first?.body == PlanCoaching.brief(for: run))    // carries the current prescription
-        #expect(payloads.first?.fireComponents.hour == 7)
-        #expect(payloads.first?.fireComponents.minute == 30)
+        #expect(payloads.first?.body == PlanCoaching.brief(for: run, distanceUnit: .metric))   // carries the current prescription
+        #expect(payloads.first?.route == .planSession(run.id))          // a tap opens THIS session
+        #expect(payloads.first?.fire.hour == 7)
+        #expect(payloads.first?.fire.minute == 30)
     }
 
     @Test func missedSessionMovesNeverFails() throws {
