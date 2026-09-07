@@ -116,14 +116,14 @@ final class TimedTrackingViewModel {
         switch gate.admit(line, at: currentActive()) {
         case .deliver:
             pendingCueTask?.cancel(); pendingCueTask = nil
-            voice?.announce(line.text)
+            voice?.announce(line.text, kind: line.kind)
         case let .park(delayS):
             pendingCueTask?.cancel()
             pendingCueTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(delayS))
                 guard !Task.isCancelled, let self, !self.isPaused else { return }
                 if let owed = self.gate.takePending(at: self.currentActive()) {
-                    self.voice?.announce(owed.text)
+                    self.voice?.announce(owed.text, kind: owed.kind)
                 }
             }
         case .drop:

@@ -60,6 +60,9 @@ final class PhoneWatchSync: NSObject {
         // phone silences the watch on the next sync rather than at the next install.
         context["voiceCoach"] = (paywall?.isEntitled(to: .voiceCoach) ?? false)
             && (UserDefaults.standard.object(forKey: VoiceCoachService.storageKey) as? Bool ?? true)
+        // The verbosity dial rides with the mute, for the same reason: the wrist cannot see the row.
+        context["coachVerbosity"] = UserDefaults.standard.string(forKey: VoiceCoachService.verbosityKey)
+            ?? CoachVerbosity.default.rawValue
         if let r = ReadinessTodayCache.today() {
             context["readinessScore"] = r.score
             context["readinessBand"] = r.band

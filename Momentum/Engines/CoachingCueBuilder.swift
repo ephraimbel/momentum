@@ -13,16 +13,28 @@ enum CoachingCueBuilder {
     /// A bike hears the same moment as a speed ("Mile 10. 16.4 miles per hour."): a rider does not
     /// think in minutes per mile, and the figure used to be dropped entirely rather than converted,
     /// so every ride split was a bare "Mile 10."
+    ///
+    /// `zone` appends the live heart-rate zone — "Mile 3. 8:45 per mile. Zone 2." — when the
+    /// athlete asked for it (`CoachVerbosity.full`) and a monitor is live. Same five-zone banding as
+    /// the live screen's zone cell, so the ear and the eye never disagree.
     static func milestone(unitCount: Int, splitSecPerUnit: Double, unit: DistanceUnit,
-                          speech: CoachSpeech = .run) -> String {
+                          speech: CoachSpeech = .run, zone: Int? = nil) -> String {
         let name = unitName(unit)
         let header = "\(name.capitalized) \(unitCount)."
-        guard splitSecPerUnit > 0 else { return header }
+        let tail = zoneWord(zone)
+        guard splitSecPerUnit > 0 else { return header + tail }
         if speech.splitsInSpeed {
             let speed = spokenSpeed(secPerUnit: splitSecPerUnit, unit: unit)
-            return speed.isEmpty ? header : "\(header) \(speed)."
+            return (speed.isEmpty ? header : "\(header) \(speed).") + tail
         }
-        return "\(header) \(clockFigure(seconds: splitSecPerUnit)) per \(name)."
+        return "\(header) \(clockFigure(seconds: splitSecPerUnit)) per \(name)." + tail
+    }
+
+    /// " Zone 2." for a valid zone, empty otherwise — a sentence of its own so it can trail any
+    /// split without the split having to know.
+    static func zoneWord(_ zone: Int?) -> String {
+        guard let zone, (1...5).contains(zone) else { return "" }
+        return " Zone \(zone)."
     }
 
     static func paused() -> String { "Paused." }
@@ -116,6 +128,13 @@ enum CoachingCueBuilder {
             let name = step.title.map { "\($0)." } ?? ""
             return "\(name) \(spokenTarget(step.target)). Hold your effort.".trimmingCharacters(in: .whitespaces)
         }
+    }
+
+    /// The call before a timed step ends: "10 seconds." The words are the same for a rep and a
+    /// recovery — what to do about them is already known from the step call.
+    static func stepEnding(seconds: Int) -> String {
+        guard seconds > 0 else { return "" }
+        return "\(seconds) seconds."
     }
 
     /// A gentle pace nudge inside a work step. Never a shame state — just a direction.

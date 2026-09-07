@@ -17,7 +17,7 @@ struct CoachCueGate: Equatable, Sendable {
         static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
     }
     struct Line: Equatable, Sendable {
-        enum Kind: Sendable { case intro, split, halfway, finalStretch, goal, nudge, encouragement, stepStart, complete, other }
+        enum Kind: Sendable { case intro, split, halfway, finalStretch, goal, nudge, encouragement, stepStart, stepWarning, complete, other }
         let text: String
         let priority: Priority
         var kind: Kind = .other
@@ -93,6 +93,14 @@ struct LiveRunCoach: Equatable, Sendable {
     static let encouragementAfterS: TimeInterval = 30
     static let encouragementSpacingS: TimeInterval = 240
     static let encouragementAfterNudgeS: TimeInterval = 60
+    /// Seconds to go when a timed step's end is called. Ten is what a coach with a stopwatch says;
+    /// the haptic 3-2-1 finishes the count.
+    static let stepWarningS: TimeInterval = 10
+    /// A step shorter than this gets no warning: on a 20-second stride "10 seconds" is half the rep.
+    static let stepWarningMinStepS: TimeInterval = 30
+    /// The warning is only true near its moment. A tick that lands late (the app was suspended)
+    /// past this window says nothing rather than "10 seconds" with 4 left.
+    static let stepWarningGraceS: TimeInterval = 3
 
     let unit: DistanceUnit
     let goalMeters: Double?
@@ -115,6 +123,7 @@ struct LiveRunCoach: Equatable, Sendable {
     private var lastEncouragementAt: TimeInterval = -.greatestFiniteMagnitude
     private var encouragementCount = 0
     private var encouragedStepIndex = -1
+    private var warnedStepIndex = -1
 
     init(unit: DistanceUnit, goalMeters: Double? = nil, targetPaceSPerKm: Double? = nil,
          speech: CoachSpeech = .run) {
@@ -135,8 +144,11 @@ struct LiveRunCoach: Equatable, Sendable {
 
     /// Everything a non-structured run says, in the order it should be said. Empty while paused
     /// (pace reads are stale and time isn't advancing). `elapsedS` is MOVING time.
+    ///
+    /// `zone` is the live heart-rate zone to read with the split, or nil to leave it out — the
+    /// caller decides from the verbosity dial and whether a monitor is actually live.
     mutating func plannedFix(distanceM: Double, elapsedS: TimeInterval, smoothedPaceSPerKm: Double,
-                             paused: Bool, gpsLost: Bool) -> [Line] {
+                             paused: Bool, gpsLost: Bool, zone: Int? = nil) -> [Line] {
         guard !paused else { return [] }
         var out: [Line] = []
         let goalReachedNow = goalMeters.map { $0 > 0 && !goalAnnounced && distanceM >= $0 } ?? false
@@ -151,7 +163,8 @@ struct LiveRunCoach: Equatable, Sendable {
             if !goalReachedNow {
                 out.append(Line(text: CoachingCueBuilder.milestone(unitCount: count,
                                                                    splitSecPerUnit: splitS,
-                                                                   unit: unit, speech: speech),
+                                                                   unit: unit, speech: speech,
+                                                                   zone: zone),
                                 priority: .milestone, kind: .split))
             }
         }
@@ -235,6 +248,22 @@ struct LiveRunCoach: Equatable, Sendable {
             lastDriftDirection = .noTarget
             return nil
         }
+    }
+
+    /// The call before a TIMED step ends — "10 seconds." — once per step, at the moment and not
+    /// after it. Distance steps get nothing: the athlete is watching the track or the GPS for the
+    /// line, and a metre count read aloud is a number nobody can act on. A transition, not a
+    /// milestone: a warning that parks behind the spacing window and fires with 4 seconds left is
+    /// wrong, and wrong is worse than close on the heels of a nudge.
+    mutating func stepEnding(stepIndex: Int, stepDurationS: TimeInterval, remainingS: TimeInterval,
+                             paused: Bool) -> Line? {
+        guard !paused, warnedStepIndex != stepIndex,
+              stepDurationS >= Self.stepWarningMinStepS,
+              remainingS <= Self.stepWarningS,
+              remainingS > Self.stepWarningS - Self.stepWarningGraceS else { return nil }
+        warnedStepIndex = stepIndex
+        return Line(text: CoachingCueBuilder.stepEnding(seconds: Int(Self.stepWarningS)),
+                    priority: .transition, kind: .stepWarning)
     }
 
     /// Book-keeping for an ambient line that was actually spoken. Cooldowns start only when the

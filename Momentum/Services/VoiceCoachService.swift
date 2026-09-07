@@ -34,6 +34,18 @@ final class VoiceCoachService: NSObject, VoiceCoachServing {
         set { UserDefaults.standard.set(newValue, forKey: Self.storageKey) }
     }
 
+    /// The verbosity dial (`CoachVerbosity`), same `@AppStorage` contract as the mute: Settings
+    /// writes the raw value, this reads it per cue, so a change mid-run takes effect on the next
+    /// line. Unset or unknown reads as the default.
+    static let verbosityKey = "voiceCoachVerbosity"
+    var verbosity: CoachVerbosity {
+        get {
+            UserDefaults.standard.string(forKey: Self.verbosityKey)
+                .flatMap(CoachVerbosity.init(rawValue:)) ?? .default
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: Self.verbosityKey) }
+    }
+
     /// How long the ducking ramp is given before the first word of a burst, wired or on the
     /// phone's own speaker.
     private static let duckRampS: TimeInterval = 0.2

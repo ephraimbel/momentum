@@ -225,8 +225,14 @@ extension AthleteModelServing {
 protocol VoiceCoachServing: AnyObject {
     /// User/Pro toggle. When false, `announce` is a no-op.
     var isEnabled: Bool { get set }
+    /// How much is spoken (`CoachVerbosity`). The default is the coach as shipped.
+    var verbosity: CoachVerbosity { get }
     /// Speak a short coaching cue (ducks other audio). Cue text comes from `CoachingCueBuilder`.
+    /// Unconditional: the ad-hoc transitions (pause, resume, a rest) come through here.
     func announce(_ text: String)
+    /// Speak a cue of a known kind, subject to the verbosity dial. Every line that passes through a
+    /// `CoachCueGate` arrives here, so the dial is honoured in one place for every sport.
+    func announce(_ text: String, kind: CoachCueGate.Line.Kind)
     /// Stop any in-flight speech and release the audio session.
     func stop()
     /// Warm the speech stack (synthesizer + voice lookup) before the first cue, so the opening line
@@ -235,6 +241,11 @@ protocol VoiceCoachServing: AnyObject {
 }
 
 extension VoiceCoachServing {
+    var verbosity: CoachVerbosity { .default }
+    func announce(_ text: String, kind: CoachCueGate.Line.Kind) {
+        guard verbosity.speaks(kind) else { return }
+        announce(text)
+    }
     func prepare() {}
 }
 

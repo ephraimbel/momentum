@@ -51,6 +51,8 @@ final class WatchVoiceCoach {
     /// both decided on the phone and pushed across (`WatchSyncStore.voiceCoachOn`). A watch that
     /// has never heard from its phone stays silent rather than guessing an entitlement.
     var isEnabled: Bool { WatchSyncStore.shared.voiceCoachOn }
+    /// How much is spoken — the phone's dial, pushed across with the mute.
+    var verbosity: CoachVerbosity { WatchSyncStore.shared.coachVerbosity }
 
     #if DEBUG
     /// Every line actually handed to the synthesizer, in order. The watch simulator cannot play
@@ -65,6 +67,12 @@ final class WatchVoiceCoach {
         guard isEnabled else { return }
         _ = synthesizer
         _ = voice()
+    }
+
+    /// Speak a cue of a known kind, subject to the verbosity dial — the phone's contract exactly.
+    func announce(_ text: String, kind: CoachCueGate.Line.Kind) {
+        guard verbosity.speaks(kind) else { return }
+        announce(text)
     }
 
     func announce(_ text: String) {

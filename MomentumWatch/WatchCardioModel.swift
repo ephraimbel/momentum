@@ -182,7 +182,7 @@ final class WatchCardioModel: NSObject {
 
     private func deliver(_ line: CoachCueGate.Line, at now: TimeInterval) {
         coach.spoke(line, stepIndex: guide?.index, at: now)
-        voice.announce(line.text)
+        voice.announce(line.text, kind: line.kind)
     }
 
     /// Paused/resumed, deduped. Every pause on the wrist is one the athlete made (there is no
@@ -416,6 +416,13 @@ final class WatchCardioModel: NSObject {
     private func speakCoachingIfDue() {
         if let g = guide {
             guard !g.isComplete else { return }
+            // "10 seconds" before a timed step ends — the phone's call, on the wrist too.
+            if let step = g.current, case let .duration(total) = step.target,
+               let warning = coach.stepEnding(stepIndex: g.index, stepDurationS: total,
+                                              remainingS: g.remaining(distanceM: distanceM, elapsedS: elapsed),
+                                              paused: paused) {
+                cue(warning)
+            }
             let adherence = g.adherence(currentPaceSPerKm: rollingPaceSPerKm)
             if let line = coach.structuredTick(stepIndex: g.index, stepAnchorElapsedS: g.anchorElapsedS,
                                                adherence: adherence, elapsedS: elapsed, paused: paused) {

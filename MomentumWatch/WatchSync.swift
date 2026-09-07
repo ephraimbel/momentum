@@ -60,6 +60,8 @@ final class WatchSyncStore: NSObject {
     /// on the phone and pushed across. Defaults to false — a watch that has never heard from its
     /// phone stays silent rather than guessing at an entitlement it cannot see.
     private(set) var voiceCoachOn = false
+    /// How much the wrist's coach says — the phone's Settings dial, pushed with the mute.
+    private(set) var coachVerbosity: CoachVerbosity = .default
 
     private let defaults = UserDefaults(suiteName: WatchSyncStore.appGroup) ?? .standard
 
@@ -159,6 +161,8 @@ final class WatchSyncStore: NSObject {
                                    purpose: resolved.purpose)
         }
         voiceCoachOn = defaults.bool(forKey: "sync.voiceCoach")
+        coachVerbosity = defaults.string(forKey: "sync.coachVerbosity")
+            .flatMap(CoachVerbosity.init(rawValue:)) ?? .default
         if let name = defaults.string(forKey: "sync.race.name"),
            let dateKey = defaults.string(forKey: "sync.race.dateKey") {
             race = Race(name: name, dateKey: dateKey)
@@ -170,6 +174,10 @@ final class WatchSyncStore: NSObject {
         if let on = context["voiceCoach"] as? Bool {
             voiceCoachOn = on
             defaults.set(on, forKey: "sync.voiceCoach")
+        }
+        if let raw = context["coachVerbosity"] as? String, let level = CoachVerbosity(rawValue: raw) {
+            coachVerbosity = level
+            defaults.set(raw, forKey: "sync.coachVerbosity")
         }
         if let score = context["readinessScore"] as? Int,
            let band = context["readinessBand"] as? String,

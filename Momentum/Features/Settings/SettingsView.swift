@@ -46,6 +46,7 @@ struct SettingsView: View {
     @State private var notifyStreak = NotificationPrefs.streakEnabled()
     @State private var notifyWeekly = NotificationPrefs.weeklyEnabled()
     @State private var notifyMorning = NotificationPrefs.morningReadinessEnabled()
+    @State private var notifyRefuel = NotificationPrefs.refuelEnabled()
     @State private var reminderCustom = NotificationPrefs.customReminderTime() != nil
     @State private var reminderDate = Date()   // seeded from the resolved time in .onAppear
 
@@ -53,6 +54,7 @@ struct SettingsView: View {
     /// Persisted mute for the run voice coach — the live service reads this same key, so flipping it
     /// takes effect on the very next cue, mid-run included.
     @AppStorage(VoiceCoachService.storageKey) private var voiceCoachEnabled = true
+    @AppStorage(VoiceCoachService.verbosityKey) private var voiceCoachVerbosity = CoachVerbosity.default.rawValue
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
@@ -326,17 +328,38 @@ struct SettingsView: View {
                 .onChange(of: voiceCoachEnabled) { _, _ in PhoneWatchSync.shared.scheduleRefresh() }
                 if voiceCoachEnabled {
                     inset
+                    // How much it says. The dial travels to the wrist with the mute, for the same
+                    // reason: the watch cannot see this row.
+                    unitRow(icon: "text.bubble", label: "Detail", a11yNoun: "coach detail",
+                            options: CoachVerbosity.allCases.map { ($0.rawValue, $0.title) },
+                            selected: voiceCoachVerbosity) {
+                        voiceCoachVerbosity = $0
+                        PhoneWatchSync.shared.scheduleRefresh()
+                    }
+                    Text(coachVerbosity.blurb)
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 44)
+                        .padding(.bottom, 6)
+                    inset
                     // "The voice coach doesn't work" is unanswerable over email: the athlete can't
                     // tell a muted app from a silenced phone from a Bluetooth route that went to the
                     // car. One tap here settles it, in their own units, without leaving the house.
+                    // The sample is the split as the dial would say it, zone and all at Full.
                     actionRow("Hear a sample", icon: "speaker.wave.2") {
                         services.voiceCoach.announce(
                             CoachingCueBuilder.milestone(unitCount: 3, splitSecPerUnit: 525,
-                                                         unit: sampleDistanceUnit))
+                                                         unit: sampleDistanceUnit,
+                                                         zone: coachVerbosity.speaksZone ? 2 : nil))
                     }
                 }
             }
         }
+    }
+
+    private var coachVerbosity: CoachVerbosity {
+        CoachVerbosity(rawValue: voiceCoachVerbosity) ?? .default
     }
 
     /// The athlete's own distance unit, so the sample cue says the thing they'd actually hear.
@@ -346,7 +369,7 @@ struct SettingsView: View {
 
     private var preferencesFooter: String? {
         services.paywall.isEntitled(to: .voiceCoach)
-            ? "The voice coach speaks splits, step changes, and pace cues on runs and rides, the clock on timed sports, and your rests in the gym. It keeps talking with the screen locked."
+            ? "The voice coach speaks splits, step changes, and pace cues on runs and rides, the clock on timed sports, and your rests in the gym. It keeps talking with the screen locked. Detail sets how much: step changes and the finish are always called."
             : nil
     }
 
@@ -354,6 +377,7 @@ struct SettingsView: View {
 
     private var notificationsCard: some View {
         card {
+            NotificationPermissionRow()   // only when iOS has notifications off for the app
             prefToggle("Session reminders", icon: "bell", isOn: $notifySessions)
             if notifySessions {
                 inset
@@ -363,6 +387,8 @@ struct SettingsView: View {
             prefToggle("Morning readiness", icon: "sunrise", isOn: $notifyMorning)
             inset
             prefToggle("Coaching updates", icon: "figure.run", isOn: $notifyCoaching)
+            inset
+            prefToggle("Refuel reminders", icon: "fork.knife", isOn: $notifyRefuel)
             inset
             prefToggle("Streak check-ins", icon: "flame", isOn: $notifyStreak)
             inset
@@ -380,6 +406,10 @@ struct SettingsView: View {
             NotificationPrefs.set(NotificationPrefs.morningKey, to: on)
             if !on { UNUserNotificationCenter.current()
                 .removeDeliveredNotifications(withIdentifiers: [MorningReadinessRefresh.notificationID]) }
+        }
+        .onChange(of: notifyRefuel) { _, on in
+            NotificationPrefs.set(NotificationPrefs.refuelKey, to: on)
+            if !on { NotificationService.cancelRefuelCue() }
         }
         .onChange(of: notifyStreak) { _, on in
             NotificationPrefs.set(NotificationPrefs.streakKey, to: on)
@@ -412,6 +442,9 @@ struct SettingsView: View {
         }
         if notifyCoaching {
             lines.insert("Coaching updates are capped at one notification a day.", at: lines.count - 1)
+        }
+        if notifyRefuel {
+            lines.insert("After a long run or a hard session, one refuel reminder arrives about half an hour later. It never names amounts or foods, and logging a meal clears it.", at: lines.count - 1)
         }
         return lines.joined(separator: " ")
     }
