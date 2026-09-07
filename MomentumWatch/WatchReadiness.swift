@@ -9,7 +9,9 @@ struct WatchReadinessRing: View {
     let band: String
     var lineWidth: CGFloat = 5
 
-    private var primed: Bool { band == "primed" }
+    // The phone's older readiness keys arrive as display words ("Primed"); the snapshot's as
+    // keys ("primed"). Compare case-blind so the earned stroke fires either way.
+    private var primed: Bool { band.lowercased() == "primed" }
 
     var body: some View {
         ZStack {
@@ -125,7 +127,7 @@ struct WatchCheckinView: View {
 }
 
 func bandWord(_ band: String) -> String {
-    switch band {
+    switch band.lowercased() {
     case "primed": "Primed"
     case "ready": "Ready"
     case "steady": "Steady"

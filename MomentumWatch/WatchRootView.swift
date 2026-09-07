@@ -12,8 +12,9 @@ struct WatchRootView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                healthCards
+                // Running first: the session is the action, the health cards are the context.
                 sessionCard
+                healthCards
                 raceCard
                 card(.cardio(.run), title: "Run", icon: "figure.run",
                      tint: WatchTheme.accent, detail: "Pace · zones")
@@ -71,6 +72,10 @@ struct WatchRootView: View {
             }
         } else {
             morningCard
+            // No snapshot has ever arrived: say how one does, rather than hide the feature.
+            if sync.todayReadiness == nil {
+                WatchHealthEmptyCard(line: "Open momentum on iPhone once to bring your readiness, sleep and HRV here.")
+            }
         }
     }
 

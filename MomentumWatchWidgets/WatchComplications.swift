@@ -149,7 +149,7 @@ struct ReadinessFaceView: View {
     let entry: FaceEntry
 
     private var score: Int? { entry.data.readinessScore }
-    private var primed: Bool { entry.data.readinessBand == "primed" }
+    private var primed: Bool { entry.data.readinessBand.lowercased() == "primed" }
 
     var body: some View {
         switch family {
