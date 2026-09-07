@@ -32,6 +32,11 @@ supabase secrets set GEMINI_API_KEY=AIza...   # shared by coach-chat / workout-a
   carries headroom, thought parts (`thought: true`) are filtered out of replies, and structured
   output rides `responseJsonSchema` (standard JSON Schema; the OpenAPI-dialect `responseSchema` is
   2.5-only). meal-estimate keeps a legacy Anthropic *fallback* path that goes quiet without its key.
+- **meal-estimate is PINNED (2026-09-07)** to `gemini-3.8-flash` rather than the alias: the same plate
+  must get the same answer on any day, and a hot-swapped alias cannot promise that. Gemini 3.8
+  refuses a response schema that carries `maxItems` (bare 400 "invalid argument"), accepts `anyOf`
+  nulls, `seed`, `mediaResolution` and `thinkingLevel`, and has deprecated `temperature`.
+  `scripts/meal_bench.ts` measures any deployed copy's repeatability and cost before a model move.
 - **Auth:** invoked with the Supabase user JWT; deploy with JWT verification on.
 - **Rate limit:** enforce ~60/user/day at the edge or via a Postgres counter (§8.8).
 - **Status:** committed for Phase 4 deploy. `AIService.swift` currently returns the template; wire
