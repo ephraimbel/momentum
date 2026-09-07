@@ -120,6 +120,11 @@ struct FuelView: View {
     /// athlete's own "Estimate again" always overrides the cap.
     private static let maxEstimateAttempts = 3
 
+    /// The composer's scroll anchor, and where it parks while the keyboard is up: its bottom a
+    /// little above the keyboard (the visible area's 93% line), never flush against it.
+    private static let composerAnchor = "fuel.composer.anchor"
+    private static let composerKeyboardAnchor = UnitPoint(x: 0.5, y: 0.93)
+
     // MARK: The day (2026-09-07)
 
     private var isToday: Bool { Calendar.current.isDateInToday(selectedDay) }
@@ -210,6 +215,7 @@ struct FuelView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
                     dayStrip
@@ -228,6 +234,7 @@ struct FuelView: View {
                     ringsRow.reveal(0.02, once: "fuel.rings")
                     fluidsLine.reveal(0.03, once: "fuel.fluids")
                     composer.reveal(0.04, once: "fuel.composer")
+                        .id(Self.composerAnchor)
                     nutritionActions
                     if dayMeals.isEmpty { emptyDay.reveal(0.05, once: "fuel.empty") }
                     usualsRow.reveal(0.05, once: "fuel.usuals")
@@ -312,6 +319,23 @@ struct FuelView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            // The chat box rides just above the keyboard (owner call 2026-09-07). SwiftUI only
+            // nudges a focused field into view by the minimum; this brings the whole composer
+            // up to sit a little clear of the keyboard's top edge, once as the keyboard starts
+            // to rise and again when its safe area has settled.
+            .onChange(of: composing) { _, focused in
+                guard focused else { return }
+                Task { @MainActor in
+                    for delay in [0.06, 0.32] {
+                        try? await Task.sleep(for: .seconds(delay))
+                        guard composing else { return }
+                        withAnimation(reduceMotion ? nil : Motion.standard) {
+                            proxy.scrollTo(Self.composerAnchor, anchor: Self.composerKeyboardAnchor)
+                        }
+                    }
+                }
+            }
+            }
             .sheet(item: $editing, onDismiss: refreshDerived) { MealDetailSheet(meal: $0) }
             .sheet(item: $manualMeal, onDismiss: refreshDerived) {
                 MealDetailSheet(meal: $0, isNew: true) {

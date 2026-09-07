@@ -59,6 +59,32 @@ final class FuelPhotoLaneUITests: XCTestCase {
         shot(app, "3-library-picker")
     }
 
+    /// The chat box rides just above the keyboard (owner call 2026-09-07): focused, the whole
+    /// composer is visible and its bottom edge sits a little clear of the keyboard's top.
+    @MainActor
+    func testComposerRidesJustAboveTheKeyboard() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--seed-demo", "--debug-pro", "--fuel", "--seed-fuel-today"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Fuel"].waitForExistence(timeout: 20))
+        let field = app.descendants(matching: .any)["fuel-composer"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 8))
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        if !keyboard.waitForExistence(timeout: 3) {
+            field.tap()
+            XCTAssertTrue(keyboard.waitForExistence(timeout: 3), "The keyboard never came up.")
+        }
+        // Let the settle scroll land.
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let gap = keyboard.frame.minY - field.frame.maxY
+            return field.isHittable && gap >= 8 && gap <= 120
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [settled], timeout: 4), .completed,
+                       "Composer bottom \(field.frame.maxY) vs keyboard top \(keyboard.frame.minY): the chat box should sit just above the keyboard.")
+        shot(app, "1-composer-above-keyboard")
+    }
+
     /// The day strip: yesterday is a real page (its own empty state, its own composer prompt),
     /// and the name is the way home.
     @MainActor
