@@ -1672,7 +1672,7 @@ struct OnboardingFlow: View {
             GlowGlyph(systemName: "bell.fill", tint: Theme.iridescent[1])
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "A nudge before each run",
-                              subtitle: "One reminder ahead of every planned session, and a heads-up when your week adapts. Nothing else.", alignment: .center)
+                              subtitle: "One reminder ahead of every planned session, a heads-up when your week adapts, and a refuel nudge after a hard one. Nothing else.", alignment: .center)
                 .padding(.top, Theme.Space.md)
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)

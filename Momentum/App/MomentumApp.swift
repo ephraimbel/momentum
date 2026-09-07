@@ -9,7 +9,7 @@ struct MomentumApp: App {
     @State private var paywall: PaywallController
     @State private var auth: AuthController
     @State private var coach = CoachPresenter()
-    @State private var router = AppRouter()          // cross-tab routing mailbox (Health segment, RECOVERY-HUB-PLAN §2)
+    @State private var router: AppRouter             // cross-tab routing mailbox (Health segment, RECOVERY-HUB-PLAN §2)
     // The five community stores — injected in EVERY configuration since 2026-07-29 (the launch
     // gate's step 1, docs/COMMUNITY-FEED-REDESIGN.md §6): each is UserDefaults-backed with no
     // network on init, and `RemoteFeedStore` keeps a nil backend until community actually flips,
@@ -43,6 +43,16 @@ struct MomentumApp: App {
         _paywall = State(initialValue: controller)
         let services = Services.live(paywall: controller)
         _services = State(initialValue: services)
+        // The router is created HERE, not as a property default, because the notification
+        // delegate needs its handle before any tap can arrive (a tap that launches the app is
+        // delivered right after this init returns): a tapped notification lands in
+        // `router.pendingNotificationRoute`, and the shell opens what it was about.
+        let router = AppRouter()
+        _router = State(initialValue: router)
+        if let notifications = services.notifications as? NotificationService {
+            notifications.router = router
+            notifications.analytics = services.analytics   // the per-family open rate
+        }
         let authController = AuthController()
         // First-ever cloud session (fresh sign-in or guest upgrade): re-mark everything dirty so
         // the personal sync re-uploads local history under the new account (idempotent — upserts

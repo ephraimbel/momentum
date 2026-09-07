@@ -13,6 +13,9 @@ struct AppToast: Identifiable, Equatable {
         case tab(AppTab)
         /// Progress, landed on a segment (the raw display word, e.g. "Health").
         case progressSegment(String)
+        /// Any notification destination (notification pass 2026-09-06): the same route a push or
+        /// an inbox row carries, so a coaching toast opens the exact session it is about.
+        case deepLink(NotificationRoute)
     }
 
     let id: UUID
@@ -151,6 +154,8 @@ struct ToastHost: View {
         case .progressSegment(let segment):
             router.pendingTab = .progress
             router.pendingProgressSegment = segment
+        case .deepLink(let route):
+            router.pendingNotificationRoute = route
         }
         center.dismissCurrent()
     }

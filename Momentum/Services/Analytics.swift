@@ -54,6 +54,11 @@ enum AnalyticsEvent: Equatable {
     /// The daily aggregated launch/responsiveness histogram, reduced to its p90-ish tail bucket.
     /// `-1` means the payload carried no histogram for that metric.
     case appPerformance(launchMs: Int, hangMs: Int)
+    /// A local notification was tapped (notification pass 2026-09-06). `family` is the
+    /// notification's kind (session, catchUp, weekly, coaching, readiness, race, trial …), and
+    /// `routed` whether it carried a destination. This is the open rate per family, which is the
+    /// only honest way to know whether a notification earns its place or nags.
+    case notificationOpened(family: String, routed: Bool)
 
     /// The canonical event name (PRD §13.5).
     var name: String {
@@ -81,6 +86,7 @@ enum AnalyticsEvent: Equatable {
         case .syncFailed:        "sync_failed"
         case .appDiagnostics:    "app_diagnostics"
         case .appPerformance:    "app_performance"
+        case .notificationOpened:"notification_opened"
         }
     }
 
@@ -115,6 +121,7 @@ enum AnalyticsEvent: Equatable {
                                                    "cpu_exceptions": String(x)]
         case .appPerformance(let launch, let hang): ["launch_ms": String(launch),
                                                     "hang_ms": String(hang)]
+        case .notificationOpened(let family, let routed): ["family": family, "routed": String(routed)]
         }
     }
 }

@@ -42,8 +42,11 @@ final class CoachingEvent {
     /// decision doesn't double-log, but two *different* decisions that share a kind (an injury
     /// report and an overtraining cutback both record `.recover`) must each keep their receipt —
     /// and their inbox notification.
+    /// `focusSessionID` (notification pass 2026-09-06): the session the decision was about, when
+    /// there is exactly one (a move). Not persisted — the model is a released schema — it only
+    /// steers where the inbox row and the live toast/push land when tapped.
     static func record(kind: Kind, headline: String, detail: String, on date: Date, in context: ModelContext,
-                       calendar: Calendar = .current) {
+                       calendar: Calendar = .current, focusSessionID: UUID? = nil) {
         let dayStart = calendar.startOfDay(for: date)
         // The dedupe only ever compares against SAME-DAY events, so bound the fetch to the day —
         // the unbounded version materialized every event ever recorded, growing with tenure
@@ -57,12 +60,16 @@ final class CoachingEvent {
         }
         guard !dup else { return }
         context.insert(CoachingEvent(kind: kind, headline: headline, detail: detail, date: date))
-        // A coaching decision is also a notification the athlete gets — mirror it into the bell inbox.
-        AppNotification.post(kind: .coaching, title: headline, body: detail, on: date, in: context)
+        // A coaching decision is also a notification the athlete gets — mirror it into the bell inbox,
+        // carrying the same door the live surface opens.
+        let route = NotificationRoute.forCoaching(kind, focusSessionID: focusSessionID)
+        AppNotification.post(kind: .coaching, title: headline, body: detail, on: date, in: context,
+                             route: route)
         // And surface it live: a toast in the foreground, a (budgeted) push in the background.
         // Record sites run on engines and view models alike, so hop rather than assume an actor.
         Task { @MainActor in
-            CoachSurface.deliver(kind: kind, headline: headline, detail: detail)
+            CoachSurface.deliver(kind: kind, headline: headline, detail: detail,
+                                 focusSessionID: focusSessionID)
         }
     }
 }

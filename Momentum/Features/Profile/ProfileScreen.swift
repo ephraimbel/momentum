@@ -33,6 +33,8 @@ struct ProfileScreen: View {
     @State private var showingAwards = false
     /// Pushes the follow graph — from the hero's followers line, or `--following-list` in DEBUG.
     @State private var showingFollowList = false
+    /// Pushed on request from a notification (the trial reminder lands on Manage subscription).
+    @State private var showingSettings = false
     // Persisted rather than @State so the Grid/Highlights face the athlete chose is still the one
     // they get on the next launch (it dates from the era of two live instances, where per-instance
     // @State meant picking Highlights on the tab and then seeing Grid again via Today's avatar).
@@ -405,6 +407,15 @@ struct ProfileScreen: View {
         }
         .navigationDestination(isPresented: $showingAwards) { AwardsGalleryView() }
         .navigationDestination(isPresented: $showingFollowList) { FollowingListView() }
+        .navigationDestination(isPresented: $showingSettings) { SettingsView() }
+        // `AppRouter.pendingSettings` (notification pass 2026-09-06): consume-then-act, on first
+        // appearance and on change, so the push lands whether this tab was already built or is
+        // being built by the switch itself.
+        .onChange(of: router.pendingSettings, initial: true) { _, wants in
+            guard wants else { return }
+            router.pendingSettings = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showingSettings = true }
+        }
         .fullScreenCover(item: $immersive) { start in
             ImmersiveWorkoutPager(workouts: workouts, startID: start.id,
                                   weightUnit: weightUnit, distanceUnit: distanceUnit,

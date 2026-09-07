@@ -95,6 +95,11 @@ struct RootView: View {
     // Straight into the planned-lift checklist (screenshot verification of the live strength flow).
     @State private var showStrengthLivePlanned = false
     @State private var showStrengthSave = false
+    /// `--notify-fire=` / `--refuel-fire`: the notification to schedule the first time the app
+    /// goes to the background. Armed by the launch-arg block, fired by the scenePhase change, so
+    /// the UI test can answer the permission alert at its own pace, press Home, and read the
+    /// banner on SpringBoard whether or not permission was already granted by an earlier test.
+    @State private var debugBackgroundFire: (() -> Void)?
     #endif
 
     /// The splash rides over EVERYTHING for ~1.15s at cold launch (owner ask 2026-08-20) — it
@@ -109,6 +114,10 @@ struct RootView: View {
             .task(id: auth.userID) { await refreshSocialInbox() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await refreshSocialInbox() } }
+                if phase == .background, let fire = debugBackgroundFire {
+                    debugBackgroundFire = nil
+                    fire()
+                }
             }
         #else
         mainBody
@@ -168,6 +177,37 @@ struct RootView: View {
     private var rootCoverOwnsScreen: Bool {
         paywall.presentedFeature != nil || coach.isPresented
             || showOnboarding || showRecoveryPrompt || recoverySave != nil
+    }
+
+    /// Where a tapped notification lands. Each route switches the tab and fills the per-tab
+    /// mailbox its owner consumes (Plan opens the session, Progress switches segment, Profile
+    /// pushes Settings). The coach is a cover, opened after a beat so a dismissing sheet (the
+    /// inbox) has left the screen first. Dropped when there is no profile yet (nothing to open)
+    /// or a workout is live (the recorder owns the screen).
+    private func follow(_ route: NotificationRoute) {
+        guard !profiles.isEmpty, router.workoutLaunch == nil else { return }
+        switch route {
+        case .today:
+            selection = .today
+        case .plan:
+            selection = .plan
+        case .planWeek(let date):
+            router.pendingPlanWeek = date
+            selection = .plan
+        case .planSession(let id):
+            router.pendingPlanSessionID = id
+            selection = .plan
+        case .progress(let segment):
+            router.pendingProgressSegment = segment
+            selection = .progress
+        case .fuel:
+            selection = .fuel
+        case .settings:
+            router.pendingSettings = true
+            selection = .profile
+        case .coach:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { coach.open() }
+        }
     }
 
     private func routeCoachNavigation(afterDismissal: Bool = false) {
@@ -315,6 +355,14 @@ struct RootView: View {
                     guard let tab else { return }
                     router.pendingTab = nil
                     selection = tab
+                }
+                // A tapped notification (notification pass 2026-09-06). `initial: true`, so a tap
+                // that launched the app, delivered before this shell existed, is honored the moment
+                // it mounts. Consume-then-nil like every mailbox here.
+                .onChange(of: router.pendingNotificationRoute, initial: true) { _, route in
+                    guard let route else { return }
+                    router.pendingNotificationRoute = nil
+                    follow(route)
                 }
                 #if DEBUG
                 .fullScreenCover(isPresented: $showRunDetail) {
@@ -632,6 +680,65 @@ struct RootView: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettingsDeepLink = true }
+            }
+            // --notify-open=<route>: stand in for a notification tap. Goes through the SAME door
+            // the push delegate uses (`NotificationService.open`), so this verifies the real
+            // consumer path, not a harness-only presentation. `plan.session` resolves to the
+            // seeded plan's next undone session.
+            if let arg = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--notify-open=") }) {
+                let raw = String(arg.dropFirst("--notify-open=".count))
+                let route: NotificationRoute?
+                if raw == "plan.session" {
+                    let today = Calendar.current.startOfDay(for: Date())
+                    route = profiles.first?.plan?.sessions
+                        .filter { $0.status != .completed && $0.completedWorkout == nil && $0.date >= today }
+                        .min { $0.date < $1.date }
+                        .map { .planSession($0.id) }
+                } else {
+                    route = NotificationRoute(rawValue: raw)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    (services.notifications as? NotificationService)?.open(route, family: "debug")
+                }
+            }
+            // --notify-authorize + --notify-fire=<route>: the END-TO-END proof. Ask iOS for
+            // permission (the UI test answers Allow), then fire a REAL local notification a few
+            // seconds out carrying the route; the test backgrounds the app, taps the banner on
+            // SpringBoard, and the delegate path (`didReceive` → `open` → the shell) is what lands
+            // the athlete on the destination.
+            // --notify-authorize: ask iOS for permission now (the UI test answers Allow, or it is
+            // already granted from an earlier test in the run).
+            if ProcessInfo.processInfo.arguments.contains("--notify-authorize") {
+                services.notifications.requestAuthorization()
+            }
+            // --notify-fire=<route>: one real local notification carrying the route, scheduled the
+            // first time the app is backgrounded (see `debugBackgroundFire`), so the test can tap
+            // the banner on SpringBoard and the delegate path lands the athlete on the destination.
+            if let fireRoute = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--notify-fire=") })
+                .flatMap({ NotificationRoute(rawValue: String($0.dropFirst("--notify-fire=".count))) }) {
+                debugBackgroundFire = { NotificationService.debugFire(route: fireRoute) }
+            }
+            // --refuel-fire: the refuel cue's END-TO-END proof. On the first backgrounding, mint a
+            // long run that ended a minute ago and schedule its cue through the PRODUCTION path
+            // (`scheduleRefuelCue`: request + inbox row + toast) with the lead cut to seconds, so
+            // the test can tap the real banner on SpringBoard and land on Fuel.
+            if ProcessInfo.processInfo.arguments.contains("--refuel-fire") {
+                PostWorkoutFuelCue.debugLead = (delay: 4, floor: 4)
+                debugBackgroundFire = {
+                    let run = Workout(); run.type = .run
+                    run.durationS = 75 * 60; run.elapsedS = 76 * 60
+                    run.startedAt = Date().addingTimeInterval(-(76 * 60 + 60))
+                    run.calories = 820
+                    context.insert(run)
+                    // Fuel's window is "nothing eaten since the finish": move the demo's seeded
+                    // meals ahead of the run so the page shows the window on arrival.
+                    let meals = (try? context.fetch(FetchDescriptor<Meal>())) ?? []
+                    for meal in meals where meal.eatenAt > run.startedAt {
+                        meal.eatenAt = run.startedAt.addingTimeInterval(-30 * 60)
+                    }
+                    try? context.save()
+                    NotificationService.scheduleRefuelCue(for: run, in: context)
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("--explainer-demo") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showExplainerDemo = true }

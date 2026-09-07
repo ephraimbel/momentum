@@ -13,7 +13,6 @@ struct NotificationsView: View {
     @Query(sort: \AppNotification.date, order: .reverse) private var notifications: [AppNotification]
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router
 
     var body: some View {
@@ -117,21 +116,25 @@ struct NotificationsView: View {
 
     // MARK: Rows
 
-    /// A notification is a promise — tapping it keeps it. Coaching notes open the coach chat,
-    /// reminders and streak nudges land on Today, achievements open Progress. System notes are
-    /// informational and stay put (no chevron, no dead tap).
-    private enum Destination { case coach, today, progress, communityPost(UUID), athlete(String) }
+    /// A notification is a promise — tapping it keeps it. A row posted with a route (notification
+    /// pass 2026-09-06) opens exactly what it was about: the session it reminds of, the session
+    /// that moved, the Health hub behind an easing, the plan a coach action changed. Rows without
+    /// one fall back to their kind's door: coaching notes open the coach chat, reminders and streak
+    /// nudges land on Today, achievements open Progress. System notes are informational and stay
+    /// put (no chevron, no dead tap).
+    private enum Destination { case route(NotificationRoute), communityPost(UUID), athlete(String) }
 
     private func destination(for notification: AppNotification) -> Destination? {
+        if let route = NotificationRouteStore.route(for: notification.id) { return .route(route) }
         switch notification.kind {
-        case .coaching: .coach
-        case .reminder, .streak, .nudge: .today
-        case .achievement: .progress
-        case .system: nil
+        case .coaching: return .route(.coach)
+        case .reminder, .streak, .nudge: return .route(.today)
+        case .achievement: return .route(.progress("Trends"))
+        case .system: return nil
         case .respect, .comment:
-            notification.targetPostID.map(Destination.communityPost)
+            return notification.targetPostID.map(Destination.communityPost)
         case .follow:
-            notification.targetHandle.map(Destination.athlete)
+            return notification.targetHandle.map(Destination.athlete)
         }
     }
 
@@ -139,14 +142,11 @@ struct NotificationsView: View {
         Haptics.light()
         dismiss()
         switch destination {
-        case .coach:
-            // Let the sheet's dismissal settle before presenting the cover — presenting during
-            // a dismissal transition drops the presentation on the floor.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { coach.open() }
-        case .today:
-            coach.navigate(.startToday)
-        case .progress:
-            coach.navigate(.viewProgress)
+        case .route(let route):
+            // Let the sheet's dismissal settle before the shell acts — a cover presented during
+            // a dismissal transition drops the presentation on the floor. Same mailbox a tapped
+            // push or toast writes, so the inbox can never land somewhere the push would not.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { router.pendingNotificationRoute = route }
         case .communityPost(let id):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 router.pendingCommunityPostID = id

@@ -1015,6 +1015,7 @@ struct StrengthActivityAttributes: ActivityAttributes {
 Cardio Dynamic Island: distance / duration / pace-or-speed. Strength: current exercise + set X/Y + rest countdown. Update per §8.3/§8.4 throttles; end on stop/recover.
 
 ## 24. Notifications & weekly check-in
+> Superseded by [`docs/NOTIFICATIONS.md`](NOTIFICATIONS.md) (2026-09-06): every notification carries a route and opens what it is about; the plan's schedule (per-day reminder, catch-up, win-back, race eve/morning, Sunday preview) is one planner pass.
 - **Permission primer** after the first workout (not at launch).
 - **Today reminder:** local notification on planned days at a user-set time (default 7:00): "Today: {session label}."
 - **Rest-timer completion:** scheduled local notification + haptic (fires when backgrounded).

@@ -414,7 +414,7 @@ enum CoachActions {
 
     private static func notify(_ receipt: Receipt, today: Date, in context: ModelContext) -> Outcome {
         AppNotification.post(kind: .coaching, title: receipt.headline, body: receipt.detail,
-                             on: today, in: context)
+                             on: today, in: context, route: .plan)
         return .applied(receipt)
     }
 

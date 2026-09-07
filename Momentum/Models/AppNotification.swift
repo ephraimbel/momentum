@@ -55,18 +55,23 @@ final class AppNotification {
 
     /// Record a notification in the inbox. When `dedupeToken` is set, skips if one with that token was
     /// already posted the same day — so a daily reminder or a one-off welcome never stacks up.
+    /// `route` (notification pass 2026-09-06): where the row lands when tapped. Kept beside the
+    /// store in `NotificationRouteStore` (the model is a released schema); a row without one falls
+    /// back to its kind's default door in `NotificationsView`.
     static func post(kind: Kind, title: String, body: String, on date: Date = Date(),
                      in context: ModelContext, dedupeToken: String? = nil, daily: Bool = true,
                      targetPostID: UUID? = nil, targetHandle: String? = nil,
-                     calendar: Calendar = .current) {
+                     calendar: Calendar = .current, route: NotificationRoute? = nil) {
         if let token = dedupeToken {
             let existing = (try? context.fetch(FetchDescriptor<AppNotification>())) ?? []
             // `daily` → one per day; otherwise once ever (a welcome shouldn't reappear tomorrow).
             if existing.contains(where: { $0.dedupeToken == token && (!daily || calendar.isDate($0.date, inSameDayAs: date)) }) { return }
         }
-        context.insert(AppNotification(kind: kind, title: title, body: body, date: date,
-                                       dedupeToken: dedupeToken, targetPostID: targetPostID,
-                                       targetHandle: targetHandle))
+        let row = AppNotification(kind: kind, title: title, body: body, date: date,
+                                  dedupeToken: dedupeToken, targetPostID: targetPostID,
+                                  targetHandle: targetHandle)
+        context.insert(row)
+        if let route { NotificationRouteStore.set(route, for: row.id) }
         try? context.save()
     }
 }

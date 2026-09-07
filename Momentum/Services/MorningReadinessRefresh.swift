@@ -79,8 +79,12 @@ enum MorningReadinessRefresh {
     static func push(_ r: MorningReadiness) {
         let content = UNMutableNotificationContent()
         content.title = "Readiness \(r.score)"
-        content.body = "\(r.displayDriverWithConfidence). \(r.guidance)"
-        content.sound = .default
+        content.body = NotificationCopy.clean("\(r.displayDriverWithConfidence). \(r.guidance)")
+        // Quiet by design: it lands around 6:30 and must never be the thing that wakes someone
+        // on a rest day. It sits on the lock screen for whenever they look.
+        content.sound = nil
+        content.relevanceScore = 0.7
+        NotificationService.decorate(content, family: .readiness, route: .progress("Health"))
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [notificationID])
         center.add(UNNotificationRequest(identifier: notificationID, content: content, trigger: nil))

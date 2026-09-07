@@ -120,6 +120,7 @@ struct NotificationPrefsTests {
         #expect(NotificationPrefs.streakEnabled(d))
         #expect(NotificationPrefs.weeklyEnabled(d))
         #expect(NotificationPrefs.morningReadinessEnabled(d))
+        #expect(NotificationPrefs.refuelEnabled(d))
     }
 
     @Test func togglesPersist() {
@@ -135,6 +136,7 @@ struct NotificationPrefsTests {
         NotificationPrefs.setOnboardingChoice(enabled: true, in: d)
         #expect(NotificationPrefs.sessionRemindersEnabled(d))
         #expect(NotificationPrefs.coachingEnabled(d))
+        #expect(NotificationPrefs.refuelEnabled(d))     // the refuel cue rides with coaching
         #expect(!NotificationPrefs.streakEnabled(d))
         #expect(!NotificationPrefs.weeklyEnabled(d))
         #expect(!NotificationPrefs.morningReadinessEnabled(d))
@@ -142,6 +144,7 @@ struct NotificationPrefsTests {
         NotificationPrefs.setOnboardingChoice(enabled: false, in: d)
         #expect(!NotificationPrefs.sessionRemindersEnabled(d))
         #expect(!NotificationPrefs.coachingEnabled(d))
+        #expect(!NotificationPrefs.refuelEnabled(d))
     }
 
     @Test func customTimeRoundTripsAndClears() {

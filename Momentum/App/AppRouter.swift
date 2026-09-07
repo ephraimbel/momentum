@@ -38,6 +38,17 @@ final class AppRouter {
     var pendingCommunityPostID: UUID?
     var pendingCommunityAthleteHandle: String?
 
+    /// A tapped notification (notification pass 2026-09-06): the push delegate, the toast capsule
+    /// and the bell inbox all write here, and `RootView` alone consumes it, switching the tab and
+    /// filling the per-tab mailboxes below. One door for every notification the app sends.
+    var pendingNotificationRoute: NotificationRoute?
+    /// The Plan board should land on the week holding this date. Owner: `PlanView`.
+    var pendingPlanWeek: Date?
+    /// The Plan board should open this session's detail sheet (on its week). Owner: `PlanView`.
+    var pendingPlanSessionID: UUID?
+    /// Profile should push Settings. Owner: `ProfileScreen`.
+    var pendingSettings = false
+
     /// The live workout in flight (2026-08-19 shared-map pass). NOT a one-shot mailbox: this is
     /// presentation state — non-nil for the whole recording → save → celebration journey. Writers
     /// are Today's Start controls and the Plan tab's session sheet; the single owner is the ONE

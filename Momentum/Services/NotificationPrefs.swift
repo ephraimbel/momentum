@@ -11,6 +11,8 @@ enum NotificationPrefs {
     static let streakKey = "notify.streak"
     static let weeklyKey = "notify.weekly"
     static let morningKey = "notify.morningReadiness"
+    /// The post-workout refuel cue (fuel integration 2026-09-06).
+    static let refuelKey = "notify.refuel"
     /// "learned" (default — the reminder rides the athlete's own training rhythm) | "custom".
     static let reminderModeKey = "notify.reminderMode"
     static let customHourKey = "notify.customHour"
@@ -26,16 +28,19 @@ enum NotificationPrefs {
     static func streakEnabled(_ d: UserDefaults = .standard) -> Bool { flag(streakKey, in: d) }
     static func weeklyEnabled(_ d: UserDefaults = .standard) -> Bool { flag(weeklyKey, in: d) }
     static func morningReadinessEnabled(_ d: UserDefaults = .standard) -> Bool { flag(morningKey, in: d) }
+    static func refuelEnabled(_ d: UserDefaults = .standard) -> Bool { flag(refuelKey, in: d) }
 
     static func set(_ key: String, to value: Bool, in d: UserDefaults = .standard) {
         d.set(value, forKey: key)
     }
 
     /// Persist exactly what the onboarding copy promises. Accepting enables planned-session
-    /// reminders and adaptation heads-ups; the other categories stay off until chosen in Settings.
+    /// reminders and adaptation heads-ups (the refuel cue rides with the latter: it is the coach
+    /// speaking after a session); the other categories stay off until chosen in Settings.
     static func setOnboardingChoice(enabled: Bool, in d: UserDefaults = .standard) {
         set(sessionKey, to: enabled, in: d)
         set(coachingKey, to: enabled, in: d)
+        set(refuelKey, to: enabled, in: d)
         set(streakKey, to: false, in: d)
         set(weeklyKey, to: false, in: d)
         set(morningKey, to: false, in: d)
