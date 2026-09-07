@@ -180,15 +180,10 @@ struct PlanPreviewContent: View {
                     if let days = byDay[weekday], !days.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(days.enumerated()), id: \.offset) { _, day in
-                                HStack(spacing: 6) {
-                                    Text(day.title)
-                                        .font(.rounded(Theme.FontSize.caption, weight: day.isLong || day.isQuality ? .bold : .semibold))
-                                        .foregroundStyle(Theme.ink)
-                                    if let detail = day.detail {
-                                        Text(detail)
-                                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
-                                            .foregroundStyle(Theme.inkSecondary)
-                                    }
+                                // Title and detail on one line while they fit; stacked otherwise.
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 6) { dayTitle(day); dayDetail(day) }
+                                    VStack(alignment: .leading, spacing: 1) { dayTitle(day); dayDetail(day) }
                                 }
                             }
                         }
@@ -248,6 +243,21 @@ struct PlanPreviewContent: View {
         case .peak: Theme.ink
         case .recovery: Theme.ink.opacity(0.18)
         case .taper: Theme.ink.opacity(0.45)
+        }
+    }
+
+    private func dayTitle(_ day: PlanPreview.Day) -> some View {
+        Text(day.title)
+            .font(.rounded(Theme.FontSize.caption, weight: day.isLong || day.isQuality ? .bold : .semibold))
+            .foregroundStyle(Theme.ink)
+    }
+
+    @ViewBuilder
+    private func dayDetail(_ day: PlanPreview.Day) -> some View {
+        if let detail = day.detail {
+            Text(detail)
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
+                .foregroundStyle(Theme.inkSecondary)
         }
     }
 }

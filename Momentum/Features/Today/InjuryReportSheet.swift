@@ -116,7 +116,7 @@ struct InjuryReportSheet: View {
             }
             .padding(Theme.Space.md)
             .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-            Text("Injuries happen to every runner — this protects your season, not just your week. Tell us when you're feeling better and we'll ease you back in.")
+            Text("Injuries happen to every runner. This protects your season, not just your week. Tell us when you're feeling better and we'll ease you back in.")
                 .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -9,6 +9,14 @@ import SwiftData
 ///
 /// Free to read, Pro to apply: the gate lives on the proposal's Apply, and the proposal sheet
 /// hosts the paywall itself (a cover raised from the root would tear these sheets down).
+/// A Manage-plan apply and its undo: held by the Plan tab so it outlives the sheet.
+struct ManageReceipt: Equatable {
+    var receipt: CoachActions.Receipt
+    var undo: String?
+    var signature: Int
+    static func == (a: ManageReceipt, b: ManageReceipt) -> Bool { a.signature == b.signature && a.undo == b.undo }
+}
+
 struct ManagePlanView: View {
     let profile: UserProfile
     let distanceUnit: DistanceUnit
@@ -42,24 +50,21 @@ struct ManagePlanView: View {
     @State private var pendingRequest: PlanAdjustmentService.Request?
     @State private var picker: Picker?
     @State private var showInjury = false
-    @State private var applied: Applied?
+    /// The last applied change and its undo, held by the Plan tab so it survives Done and a
+    /// reopen (the chat's undo lives on its message; this one lived and died with the sheet).
+    @Binding var applied: ManageReceipt?
     @State private var failure: String?
     /// Row availability, computed off the body: the load rules walk recent workouts.
     @State private var unavailable: [Row: String] = [:]
+    /// The plan's signature, refreshed with availability rather than hashed in every body pass.
+    @State private var currentSignature: Int = 0
 
     private enum Picker: String, Identifiable {
         case days, sessionLength, move, pause, equipment
         var id: String { rawValue }
     }
 
-    private enum Row: Hashable { case easePlan, bump, easePaces, easeThisWeek, pause }
-
-    private struct Applied: Equatable {
-        var receipt: CoachActions.Receipt
-        var undo: String?
-        var signature: Int
-        static func == (a: Applied, b: Applied) -> Bool { a.signature == b.signature && a.undo == b.undo }
-    }
+    private enum Row: Hashable { case easePlan, bump, easePaces, easeThisWeek, pause, move, unwell, equipment }
 
     private var plan: TrainingPlan? { profile.plan }
     private var today: Date { Date() }
@@ -100,8 +105,8 @@ struct ManagePlanView: View {
                 PlanProposalSheet(request: r, profile: profile, workouts: workouts, distanceUnit: distanceUnit) { result in
                     switch result {
                     case .applied(let receipt, let undo):
-                        applied = Applied(receipt: receipt, undo: undo,
-                                          signature: PlanAdjustmentService.signature(of: profile.plan))
+                        applied = ManageReceipt(receipt: receipt, undo: undo,
+                                                signature: PlanAdjustmentService.signature(of: profile.plan))
                         onPlanChanged()
                         refreshAvailability()
                     case .declined:
@@ -159,7 +164,7 @@ struct ManagePlanView: View {
         section("My schedule") {
             row("calendar", "Training days", "\(profile.daysPerWeek) days a week\(preferredLine)") { picker = .days }
             row("clock", "Time per session", "About \(profile.sessionMinutes) minutes") { picker = .sessionLength }
-            row("arrow.left.arrow.right", "Move a session", "Pick a session and its new day") { picker = .move }
+            row("arrow.left.arrow.right", "Move a session", unavailable[.move] ?? "Pick a session and its new day") { picker = .move }
             row("airplane", "I'm away some days", "Mark the days; the week moves around them", last: true) { onAwayDays() }
         }
     }
@@ -179,7 +184,7 @@ struct ManagePlanView: View {
                 request = .init(intent: .easePaces, title: "Ease my paces", request: "The paces feel too hard")
             }
             row("dumbbell", "Strength & equipment",
-                "\(profile.disciplines.contains(Discipline.strength.rawValue) ? "Strength on · " : "")\(equipmentLabel(profile.equipment))") { picker = .equipment }
+                unavailable[.equipment] ?? "\(profile.disciplines.contains(Discipline.strength.rawValue) ? "Strength on · " : "")\(equipmentLabel(profile.equipment))") { picker = .equipment }
             row("books.vertical", "Swap in a library session", "Guided sessions priced to your paces", last: true) { onOpenLibrary() }
         }
     }
@@ -200,7 +205,7 @@ struct ManagePlanView: View {
             } else {
                 row("pause.circle", "Pause and come back", unavailable[.pause] ?? "Travel, life. Everything shifts later; race day stays") { picker = .pause }
             }
-            row("thermometer.variable", "I'm not feeling well", "Pause three days, nothing is lost") {
+            row("thermometer.variable", "I'm not feeling well", unavailable[.unwell] ?? "Pause three days, nothing is lost") {
                 request = .init(intent: .pausePlan(days: 3), title: "I'm not feeling well", request: "I'm unwell and need a few days")
             }
             row("bandage", "Something hurts", "Train around it, with a gated way back", last: true) { showInjury = true }
@@ -232,9 +237,9 @@ struct ManagePlanView: View {
     private var missedLine: String {
         guard let plan else { return "" }
         let cal = Calendar.current
-        let missed = plan.sessions.filter {
-            $0.status == .missed || ($0.status == .moved && cal.startOfDay(for: $0.date) < cal.startOfDay(for: today))
-        }.count
+        // Every session the reconciler touched: rolled forward (moved) or left as missed.
+        let missed = plan.sessions.filter { $0.status == .missed || $0.status == .moved }.count
+        _ = cal
         if missed == 0 { return "Missed sessions roll forward on their own. Lighten the week if you need a gentler way back" }
         return "\(missed) rolled forward already. Lighten the week for a gentler way back"
     }
@@ -271,17 +276,32 @@ struct ManagePlanView: View {
     private func refreshAvailability() {
         var next: [Row: String] = [:]
         let checks: [(Row, CoachIntent)] = [(.easePlan, .easeWeek), (.bump, .bumpLoad), (.easePaces, .easePaces),
-                                            (.easeThisWeek, .easeThisWeek), (.pause, .pausePlan(days: 3))]
+                                            (.easeThisWeek, .easeThisWeek), (.pause, .pausePlan(days: 3)),
+                                            (.unwell, .pausePlan(days: 3)), (.equipment, .changeEquipment(profile.equipment))]
         for (row, intent) in checks {
             if PlanAdjustmentService.blocked(intent, profile: profile, workouts: workouts, today: today) != nil {
-                next[row] = row == .bump ? "Not earned yet, or used this week" : "Not available right now; tap to see why"
+                next[row] = switch row {
+                case .bump: "Not earned yet, or used this week"
+                case .unwell: "Already paused; resume first"
+                case .equipment: "No strength days on this plan"
+                default: "Not available right now; tap to see why"
+                }
             }
         }
+        // The move picker would open on an empty list: say so on the row instead.
+        if let plan, !plan.sessions.contains(where: { s in
+            s.status != .completed && s.completedWorkout == nil
+                && s.date >= Calendar.current.startOfDay(for: today)
+                && s.date < (Calendar.current.date(byAdding: .day, value: 14, to: Calendar.current.startOfDay(for: today)) ?? today)
+        }) {
+            next[.move] = "Nothing open in the next two weeks"
+        }
         unavailable = next
+        currentSignature = PlanAdjustmentService.signature(of: profile.plan)
     }
 
-    private func receiptCard(_ applied: Applied) -> some View {
-        let canUndo = applied.undo != nil && PlanAdjustmentService.signature(of: profile.plan) == applied.signature
+    private func receiptCard(_ applied: ManageReceipt) -> some View {
+        let canUndo = applied.undo != nil && currentSignature == applied.signature
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(spacing: Theme.Space.sm) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -312,7 +332,7 @@ struct ManagePlanView: View {
         .accessibilityIdentifier("manage-receipt")
     }
 
-    private func undo(_ applied: Applied) {
+    private func undo(_ applied: ManageReceipt) {
         guard let json = applied.undo else { return }
         if PlanAdjustmentService.undo(json, profile: profile, workouts: workouts,
                                       notifications: services.notifications, in: context) {
@@ -440,8 +460,8 @@ struct PlanProposalSheet: View {
                             .raised(Capsule(), tone: .ink)
                     }
                     .buttonStyle(RaisedPressStyle())
-                    .disabled(!(proposal?.isAvailable ?? false))
-                    .opacity((proposal?.isAvailable ?? false) ? 1 : 0.45)
+                    .disabled(!(proposal?.isAvailable ?? false) || declined != nil)
+                    .opacity((proposal?.isAvailable ?? false) && declined == nil ? 1 : 0.45)
                     .accessibilityIdentifier("proposal-apply")
                 }
                 .padding(.horizontal, Theme.Space.lg).padding(.vertical, Theme.Space.sm)
@@ -453,7 +473,13 @@ struct PlanProposalSheet: View {
                     Text("proposal").font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
                 }
             }
-            .task { compute() }
+            // Let the sheet land first: the proposal can run the full generator (a rebuild
+            // preview), and "Working out what changes" should be a frame, not a freeze.
+            .task { await Task.yield(); compute() }
+            // Bought from the sheet: the change they were applying applies, no second tap.
+            .onChange(of: paywall.isPro) { _, pro in
+                if pro, proposal?.isAvailable == true, declined == nil { apply() }
+            }
         }
         .nestedPaywallHost()
         .presentationDetents([.large])
@@ -578,26 +604,42 @@ private struct PickerFrame<Content: View>: View {
     }
 }
 
+/// Equal cells in one row while they fit, wrapped cells at larger type (the wrap-never-scroll rule).
 private func choiceRow(_ values: [Int], current: Int, label: @escaping (Int) -> String,
                        spoken: @escaping (Int) -> String, _ set: @escaping (Int) -> Void) -> some View {
-    HStack(spacing: Theme.Space.sm) {
-        ForEach(values, id: \.self) { v in
-            let on = current == v
-            Button { Haptics.selection(); set(v) } label: {
-                Text(label(v))
-                    .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                    .frame(maxWidth: .infinity).frame(minHeight: 50)
-                    .foregroundStyle(on ? Theme.background : Theme.ink)
-                    .background {
-                        RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                        if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-                    }
+    ViewThatFits(in: .horizontal) {
+        HStack(spacing: Theme.Space.sm) {
+            ForEach(values, id: \.self) { v in
+                choiceCell(v, on: current == v, label: label, spoken: spoken, set: set)
+                    .frame(maxWidth: .infinity)
+                    .fixedSize(horizontal: true, vertical: false)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(spoken(v))
-            .accessibilityAddTraits(on ? .isSelected : [])
+        }
+        FlowLayout(spacing: Theme.Space.sm) {
+            ForEach(values, id: \.self) { v in
+                choiceCell(v, on: current == v, label: label, spoken: spoken, set: set)
+            }
         }
     }
+}
+
+private func choiceCell(_ v: Int, on: Bool, label: @escaping (Int) -> String,
+                        spoken: @escaping (Int) -> String, set: @escaping (Int) -> Void) -> some View {
+    Button { Haptics.selection(); set(v) } label: {
+        Text(label(v))
+            .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity).frame(minHeight: 50)
+            .foregroundStyle(on ? Theme.background : Theme.ink)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(spoken(v))
+    .accessibilityAddTraits(on ? .isSelected : [])
 }
 
 private struct DaysPickerSheet: View {
@@ -640,8 +682,9 @@ private struct DaysPickerSheet: View {
                         Text(String(symbols[weekday - 1].prefix(2)).uppercased())
                             .font(.rounded(Theme.FontSize.label, weight: .bold))
                             .foregroundStyle(on ? Theme.background : Theme.ink)
-                            .frame(maxWidth: .infinity).frame(minHeight: 40)
+                            .frame(maxWidth: .infinity).frame(minHeight: 44)
                             .background { if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) } }
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(symbols[weekday - 1])
@@ -745,6 +788,10 @@ private struct MoveSessionSheet: View {
         return (0..<14).compactMap { cal.date(byAdding: .day, value: $0, to: today) }
     }
 
+    @ReducedMotionPreference private var reduceMotion
+    /// Days that hold a race or a tune-up: never a drop target.
+    private var fixedDays: [Date] { (plan?.sessions ?? []).filter { PlanCoaching.isFixedDate($0) }.map(\.date) }
+
     var body: some View {
         PickerFrame(title: "Move a session", confirm: "See the change",
                     enabled: chosen != nil && day != nil,
@@ -758,7 +805,7 @@ private struct MoveSessionSheet: View {
                     SelectionCard(title: PlanCoaching.brief(for: s, distanceUnit: distanceUnit),
                                   subtitle: s.date.formatted(.dateTime.weekday(.wide).day().month(.abbreviated)),
                                   isSelected: chosen?.id == s.id) {
-                        withAnimation(Motion.standard) {
+                        withAnimation(reduceMotion ? nil : Motion.standard) {
                             chosen = s
                             day = nil   // a day chosen for another session is not this one's
                         }
@@ -769,16 +816,19 @@ private struct MoveSessionSheet: View {
                     FlowLayout(spacing: Theme.Space.sm) {
                         ForEach(days, id: \.self) { d in
                             let same = Calendar.current.isDate(d, inSameDayAs: chosen.date)
+                            // Race day and a tune-up hold their own date: nothing moves onto them.
+                            let fixed = fixedDays.contains { Calendar.current.isDate($0, inSameDayAs: d) }
                             let on = day.map { Calendar.current.isDate($0, inSameDayAs: d) } ?? false
                             Button { Haptics.selection(); day = d } label: {
                                 Text(d.formatted(.dateTime.weekday(.abbreviated).day()))
                                     .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
-                                    .foregroundStyle(on ? Theme.background : (same ? Theme.inkTertiary : Theme.ink))
-                                    .padding(.horizontal, 12).padding(.vertical, 9)
+                                    .foregroundStyle(on ? Theme.background : (same || fixed ? Theme.inkTertiary : Theme.ink))
+                                    .padding(.horizontal, 12).frame(minHeight: 44)
                                     .background { if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) } }
+                                    .contentShape(Capsule())
                             }
                             .buttonStyle(.plain)
-                            .disabled(same)
+                            .disabled(same || fixed)
                             .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).day().month(.wide)))
                             .accessibilityAddTraits(on ? .isSelected : [])
                         }

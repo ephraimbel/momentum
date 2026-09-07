@@ -28,6 +28,20 @@ struct YourPlansView: View {
     @State private var overlapDecision: OverlapDecision?
     @State private var deleting: PlanShelfRecord?
     @State private var failure: String?
+    /// What the sheet on its way out asked for; runs from that sheet's `onDismiss`, never in the
+    /// same tick as the dismissal (two presentations in one transaction can leave a flag stuck).
+    @State private var pending: Pending?
+
+    private enum Pending {
+        case manage
+        case compose(PlanShelfRecord?)
+        case startNow(PlanShelfRecord)
+        case schedule(PlanShelfRecord)
+        case scheduleDay(PlanShelfRecord, Date)
+        case startAgain(PlanShelfRecord)
+        case replace(OverlapDecision)
+        case startAfter(OverlapDecision)
+    }
 
     private struct ReviewTarget: Identifiable {
         enum Kind { case current, shelved(PlanShelfRecord) }
@@ -114,7 +128,7 @@ struct YourPlansView: View {
                     Button("Done") { dismiss() }.fontWeight(.semibold)
                 }
             }
-            .sheet(item: $reviewing) { target in
+            .sheet(item: $reviewing, onDismiss: runPending) { target in
                 switch target.kind {
                 case .current:
                     if let plan = profile.plan {
@@ -134,19 +148,20 @@ struct YourPlansView: View {
                     }
                 }
             }
-            .sheet(item: $scheduling) { record in
+            .sheet(item: $scheduling, onDismiss: runPending) { record in
                 PlanScheduleSheet(initial: record.scheduledStart, currentEnd: currentSpan?.end,
                                   latest: record.blueprint.flatMap { $0.isRace ? $0.raceDate : nil }) { day in
-                    schedule(record, on: day)
+                    // The sheet dismisses itself; the overlap sheet (if any) opens after it has gone.
+                    pending = .scheduleDay(record, day)
                 }
             }
-            .sheet(item: $overlapDecision) { decision in
+            .sheet(item: $overlapDecision, onDismiss: runPending) { decision in
                 PlanOverlapSheet(planName: decision.record.name,
                                  currentName: profile.plan.map { $0.name.isEmpty ? PlanBlueprint(profile: profile).displayName : $0.name } ?? "Your current plan",
                                  overlap: decision.overlap,
                                  startDay: decision.startDay,
-                                 onReplace: { resolveReplace(decision) },
-                                 onStartAfter: { resolveStartAfter(decision) })
+                                 onReplace: { pending = .replace(decision); overlapDecision = nil },
+                                 onStartAfter: { pending = .startAfter(decision); overlapDecision = nil })
             }
             .confirmationDialog(deleting?.status.isPrevious == true ? "Remove this plan?" : "Delete this draft?",
                                 isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -260,8 +275,16 @@ struct YourPlansView: View {
             }
         }
         let start = record.status == .upcoming ? record.scheduledStart : record.startedAt
-        let end = record.status == .upcoming
-            ? (start.flatMap { s in preview.map { Calendar.current.date(byAdding: .day, value: max(0, $0.weeks * 7 - 1), to: s) ?? s } })
+        // An upcoming plan's preview was rebuilt for its scheduled day (and ends on race day when
+        // there is one); the week arithmetic is only the fallback for a preview built elsewhere.
+        let end: Date? = record.status == .upcoming
+            ? start.flatMap { s in
+                preview.map { p in
+                    Calendar.current.isDate(p.startDate, inSameDayAs: s)
+                        ? p.endDate
+                        : (Calendar.current.date(byAdding: .day, value: max(0, p.weeks * 7 - 1), to: s) ?? s)
+                }
+            }
             : record.endedAt
         var meta: [String] = []
         if let preview { meta.append(preview.durationLine) }
@@ -326,16 +349,34 @@ struct YourPlansView: View {
     private func reviewActions(_ kind: ReviewTarget.Kind) -> some View {
         switch kind {
         case .current:
-            pill("Manage plan") { reviewing = nil; onManageCurrent() }
+            pill("Manage plan") { pending = .manage; reviewing = nil }
         case .shelved(let record):
             switch record.status {
             case .draft, .upcoming:
-                pill("Start now") { reviewing = nil; startNow(record) }
-                outline(record.status == .draft ? "Schedule" : "Change start date") { reviewing = nil; scheduling = record }
-                outline("Edit") { reviewing = nil; onCompose(record) }
+                pill("Start now") { pending = .startNow(record); reviewing = nil }
+                outline(record.status == .draft ? "Schedule" : "Change start date") { pending = .schedule(record); reviewing = nil }
+                outline("Edit") { pending = .compose(record); reviewing = nil }
             case .completed, .incomplete:
-                pill("Start again as a draft") { reviewing = nil; startAgain(record) }
+                pill("Start again as a draft") { pending = .startAgain(record); reviewing = nil }
             }
+        }
+    }
+
+    /// The outgoing sheet has gone: do what it asked.
+    private func runPending() {
+        guard let next = pending else { return }
+        pending = nil
+        switch next {
+        case .manage: onManageCurrent()
+        case .compose(let record): onCompose(record)
+        case .startNow(let record): startNow(record)
+        case .schedule(let record): scheduling = record
+        case .scheduleDay(let record, let day): schedule(record, on: day)
+        case .startAgain(let record): startAgain(record)
+        case .replace(let decision):
+            if decision.startsNow { activate(decision.record) } else { commitSchedule(decision.record, on: decision.startDay) }
+        case .startAfter(let decision):
+            commitSchedule(decision.record, on: decision.overlap.nextFreeStart)
         }
     }
 
@@ -393,18 +434,6 @@ struct YourPlansView: View {
         }
     }
 
-    /// The athlete chose to cut the current plan: start now replaces it today; a scheduled day
-    /// keeps the record upcoming and the cut happens when that day comes.
-    private func resolveReplace(_ decision: OverlapDecision) {
-        overlapDecision = nil
-        if decision.startsNow { activate(decision.record) } else { commitSchedule(decision.record, on: decision.startDay) }
-    }
-
-    private func resolveStartAfter(_ decision: OverlapDecision) {
-        overlapDecision = nil
-        commitSchedule(decision.record, on: decision.overlap.nextFreeStart)
-    }
-
     private func activate(_ record: PlanShelfRecord) {
         guard let blueprint = record.blueprint else { failure = "This plan could not be read."; return }
         do {
@@ -456,6 +485,23 @@ struct PlanShelfCard<MenuContent: View>: View {
     let primaryAction: (String, () -> Void)
     @ViewBuilder let menu: () -> MenuContent
 
+    private var statusChip: some View {
+        Text(statusLine)
+            .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
+            .foregroundStyle(Theme.ink)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().stroke(Theme.hairline))
+    }
+
+    @ViewBuilder
+    private var datesText: some View {
+        if let datesLine {
+            Text(datesLine)
+                .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
+                .foregroundStyle(Theme.inkSecondary)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.sm) {
             HStack(alignment: .top, spacing: Theme.Space.sm) {
@@ -476,17 +522,10 @@ struct PlanShelfCard<MenuContent: View>: View {
                 .accessibilityLabel("\(title) options")
             }
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: Theme.Space.sm) {
-                    Text(statusLine)
-                        .font(.rounded(Theme.FontSize.label, weight: .bold)).monospacedDigit()
-                        .foregroundStyle(Theme.ink)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Capsule().stroke(Theme.hairline))
-                    if let datesLine {
-                        Text(datesLine)
-                            .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit()
-                            .foregroundStyle(Theme.inkSecondary)
-                    }
+                // Side by side while they fit; stacked at larger type, never truncated.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Theme.Space.sm) { statusChip; datesText }
+                    VStack(alignment: .leading, spacing: 4) { statusChip; datesText }
                 }
                 if let metaLine {
                     Text(metaLine)
@@ -507,11 +546,11 @@ struct PlanShelfCard<MenuContent: View>: View {
             Button(action: primaryAction.1) {
                 Text(primaryAction.0)
                     .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .padding(.horizontal, 14).frame(minHeight: 44)
                     .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .padding(.top, 2)
         }
         .padding(Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -541,20 +580,22 @@ struct PlanScheduleSheet: View {
         self.onPick = onPick
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+        self.earliest = tomorrow
         let afterCurrent = currentEnd.flatMap { cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: $0)) }
         var pick = initial.map { max($0, tomorrow) } ?? afterCurrent.map { max($0, tomorrow) } ?? tomorrow
         if let latest, cal.startOfDay(for: latest) >= tomorrow { pick = min(pick, cal.startOfDay(for: latest)) }
         _day = State(initialValue: pick)
     }
 
-    private var earliest: Date {
-        let cal = Calendar.current
-        return cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
-    }
+    /// Fixed when the sheet opens, so a sheet left up over midnight keeps one consistent range
+    /// (the service re-checks the day on confirm either way).
+    private let earliest: Date
 
+    /// Up to race day when there is one (a race tomorrow leaves exactly one day), two years
+    /// otherwise. Never a day after the race: the service refuses it, so the picker does too.
     private var range: ClosedRange<Date> {
         let cal = Calendar.current
-        if let latest, cal.startOfDay(for: latest) > earliest { return earliest...cal.startOfDay(for: latest) }
+        if let latest { return earliest...max(earliest, cal.startOfDay(for: latest)) }
         return earliest...(cal.date(byAdding: .year, value: 2, to: earliest) ?? earliest)
     }
 
@@ -661,6 +702,7 @@ struct PlanOverlapSheet: View {
         let span = overlap.daysCut < 7
             ? (overlap.daysCut == 1 ? "last day" : "last \(overlap.daysCut) days")
             : (overlap.weeksCut == 1 ? "last week" : "last \(overlap.weeksCut) weeks")
+        guard overlap.sessionsCut > 0 else { return "Starting \(planName) \(dayWord) cuts its \(span)." }
         let sessions = overlap.sessionsCut == 1 ? "1 session" : "\(overlap.sessionsCut) sessions"
         return "Starting \(planName) \(dayWord) cuts its \(span), \(sessions) still to do."
     }

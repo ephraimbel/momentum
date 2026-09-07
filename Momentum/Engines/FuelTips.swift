@@ -21,24 +21,24 @@ enum FuelTips {
 
         // Race eve — the classic load is steady all day, not one heroic dinner.
         if r.raceEve, r.status != .fueled {
-            return "Race eve — bank carbs steadily through the day, not in one late dinner."
+            return "Race eve. Bank carbs steadily through the day, not in one late dinner."
         }
         // Morning of a session day: what you eat now is what shows up at the start.
         // (Not before 05:00 — "breakfast" advice at 3 a.m. reads like a bug, not a coach.)
         if hour >= 5, hour < 11, r.drivingIsToday, r.status != .fueled, let s = r.drivingSession {
-            return "Carbs eaten early do the most for \(s) — breakfast is part of the workout."
+            return "Carbs eaten early do the most for \(s). Breakfast is part of the workout."
         }
         // Long-sweat day, sodium far behind by the afternoon.
         if hour >= 12, r.sodiumFloorMg > FuelReadiness.sodiumBaselineMg, r.sodiumMg < r.sodiumFloorMg / 2 {
-            return "Sweaty day — ≈\(r.sodiumFloorMg - r.sodiumMg) mg below the sodium floor. Salt your food."
+            return "Sweaty day. ≈\(r.sodiumFloorMg - r.sodiumMg) mg below the sodium floor. Salt your food."
         }
         // Evening protein gap → a recovery-forward dinner closes it.
         if hour >= 17, r.proteinG < r.proteinFloorG * 3 / 4 {
-            return "≈\(r.proteinFloorG - r.proteinG) g of protein to go — a protein-forward dinner closes it."
+            return "≈\(r.proteinFloorG - r.proteinG) g of protein to go. A protein-forward dinner closes it."
         }
         // Late and still behind on carbs — dinner counts, no drama.
         if hour >= 19, r.status == .behind, r.carbsFloorG > r.carbsG {
-            return "≈\(r.carbsFloorG - r.carbsG) g of carbs still to bank — dinner counts."
+            return "≈\(r.carbsFloorG - r.carbsG) g of carbs still to bank. Dinner counts."
         }
         return nil
     }

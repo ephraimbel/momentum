@@ -289,7 +289,7 @@ enum FuelReadiness {
         case .leaner:
             if bigDay {
                 kcalBase = maintenance
-                goalNote = "Deficit paused — big session ahead. Fuel the work first."
+                goalNote = "Deficit paused. Big session ahead; fuel the work first."
             } else {
                 kcalBase = max(maintenance - Double(leanerDeficitKcal), basal * leanerBMRGuard)
             }
@@ -384,19 +384,19 @@ enum FuelReadiness {
         // Protein-first (muscle goals): the session isn't the story, protecting muscle is.
         if primary == .protein {
             switch status {
-            case .empty: return "Log your first meal — aiming ≈\(floor) g of protein to protect muscle."
-            case .behind: return "≈\(value) g of protein so far — building toward ≈\(floor) g."
-            case .onTrack: return "On track — ≈\(value) g of \(floor) g protein."
-            case .fueled: return "Protein locked — ≈\(value) g banked."
+            case .empty: return "Log your first meal. Aiming ≈\(floor) g of protein to protect muscle."
+            case .behind: return "≈\(value) g of protein so far, building toward ≈\(floor) g."
+            case .onTrack: return "On track. ≈\(value) g of \(floor) g protein."
+            case .fueled: return "Protein locked. ≈\(value) g banked."
             }
         }
         // Carb-first (plan fueling): keyed to the session the carbs power.
         let target = driving.map { "ready for \($0)" } ?? "for an easy day"
         switch status {
-        case .empty: return "Log your first meal — aiming ≈\(floor) g of carbs \(target)."
-        case .behind: return "≈\(value) g of carbs so far — building toward ≈\(floor) g \(target)."
-        case .onTrack: return "On track — ≈\(value) g of \(floor) g \(target)."
-        case .fueled: return "Fueled — ≈\(value) g of carbs banked \(target)."
+        case .empty: return "Log your first meal. Aiming ≈\(floor) g of carbs \(target)."
+        case .behind: return "≈\(value) g of carbs so far, building toward ≈\(floor) g \(target)."
+        case .onTrack: return "On track. ≈\(value) g of \(floor) g \(target)."
+        case .fueled: return "Fueled. ≈\(value) g of carbs banked \(target)."
         }
     }
 

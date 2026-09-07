@@ -225,6 +225,14 @@ enum CoachUndo {
             context.delete(old)
         }
         if let planState = snap.plan {
+            // The plan comes back under its own id, so any shelf record that recorded it as
+            // finished (a renewal, a switch) now describes a plan that is current again. Remove
+            // it, or Your plans would list the same plan as both current and previous.
+            if let restoredID = planState.id {
+                let ghosts = (try? context.fetch(FetchDescriptor<PlanShelfRecord>(
+                    predicate: #Predicate { $0.sourcePlanID == restoredID }))) ?? []
+                ghosts.forEach(context.delete)
+            }
             let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
             let exercises = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
             let workoutsByID = Dictionary(uniqueKeysWithValues: workouts.map { ($0.id, $0) })

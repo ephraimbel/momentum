@@ -35,7 +35,7 @@ final class FuelPhotoLaneUITests: XCTestCase {
         XCTAssertTrue(photoRow.waitForExistence(timeout: 15), "The photographed meal row did not land.")
         let numbers = app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "≈", "g carbs ·"))
-        let fallback = app.staticTexts["Couldn't estimate — tap to set the numbers"]
+        let fallback = app.staticTexts["Couldn't estimate yet. Tap to set the numbers"]
         let resolved = NSPredicate { _, _ in fallback.exists || numbers.count > 0 }
         XCTAssertEqual(XCTWaiter().wait(for: [XCTNSPredicateExpectation(predicate: resolved, object: nil)], timeout: 30),
                        .completed, "The photo estimate never resolved to numbers or the fallback.")

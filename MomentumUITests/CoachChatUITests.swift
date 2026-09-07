@@ -20,7 +20,7 @@ final class CoachChatUITests: XCTestCase {
         XCTAssertTrue(receipt.waitForExistence(timeout: 6), "the applied receipt should replace the proposal")
         // …and the coach narrates what actually happened (the engine's receipt, de-dashed).
         let narration = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS %@", "I trimmed your upcoming sessions")).firstMatch
+            NSPredicate(format: "label CONTAINS %@", "Every remaining session is about 15% lighter")).firstMatch
         XCTAssertTrue(narration.waitForExistence(timeout: 4), "the coach should narrate the receipt")
 
         // The receipt carries Undo — tapping it restores the plan and the card says so.

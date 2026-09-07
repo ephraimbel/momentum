@@ -155,7 +155,8 @@ enum PlanAdjustmentService {
             let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) ?? todayStart
             return span(open.filter { $0.runType != .race && !isInjuryMarked($0) && $0.date < horizon })
         case .easePaces:
-            return span(open.filter { $0.discipline != .strength && $0.targetPaceSPerKm != nil && $0.runType != .race })
+            // Exactly `easeQualityPaces`'s selection: every open session with a pace, race day too.
+            return span(open.filter { $0.discipline != .strength && $0.targetPaceSPerKm != nil })
         case .injuryReport(_, let severity):
             let until = calendar.date(byAdding: .day, value: severity.windowDays, to: todayStart) ?? todayStart
             return span(open.filter { $0.date <= until })
@@ -240,15 +241,25 @@ enum PlanAdjustmentService {
                 return "\(day) \(before) \(km(s.targetDistanceM ?? 0)) → \(after) \(km(landed))"
             }
         case .pausePlan(let days):
-            let next = openSessions(plan, from: today, calendar: calendar)
+            let movable = openSessions(plan, from: today, calendar: calendar)
                 .filter { !PlanCoaching.isFixedDate($0) }
                 .sorted { $0.date < $1.date }
-                .prefix(2)
-            return next.compactMap { s in
+            var lines: [String] = movable.prefix(2).compactMap { s in
                 guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { return nil }
                 let title = s.discipline == .strength ? (s.strengthLabel ?? "Strength") : (s.runType?.planTitle ?? "Run")
                 return "\(title): \(s.date.formatted(.dateTime.weekday(.abbreviated).day())) → \(moved.formatted(.dateTime.weekday(.abbreviated).day()))"
             }
+            // The engine leaves a session where it is rather than push it past race day; say so.
+            if let race = plan.raceDate {
+                let raceDay = calendar.startOfDay(for: race)
+                let stranded = movable.filter {
+                    calendar.date(byAdding: .day, value: days, to: $0.date).map { calendar.startOfDay(for: $0) > raceDay } ?? false
+                }.count
+                if stranded > 0 {
+                    lines.append("\(stranded) session\(stranded == 1 ? "" : "s") would land after race day, so \(stranded == 1 ? "it stays" : "they stay") where \(stranded == 1 ? "it is" : "they are")")
+                }
+            }
+            return lines
         case .moveSession(let id, let to):
             // The day it lands on may already hold a session: say so, since a move stacks rather
             // than swaps (the board's drag onto a session is the swap).
@@ -370,6 +381,9 @@ enum PlanAdjustmentService {
             guard affected(intent, plan: plan, today: today, calendar: calendar) != nil else {
                 return "There is nothing open in the next seven days to lighten."
             }
+            if PlanCoaching.weekAlreadyEased(plan, from: today, calendar: calendar) {
+                return "This week is already lighter (eased once, or a rebuild week after time away). One ease a week keeps the drop honest; move a session or pause if you need more room."
+            }
         case .bumpLoad:
             guard affected(intent, plan: plan, today: today, calendar: calendar) != nil else { return nothingOpen }
             guard CoachActions.canAdaptLoad(plan, today: today, calendar: calendar) else {
@@ -393,6 +407,10 @@ enum PlanAdjustmentService {
             guard affected(intent, plan: plan, today: today, calendar: calendar) != nil else { return nothingOpen }
         case .resumePlan:
             guard paused else { return "The plan is not paused." }
+        case .changeEquipment:
+            guard profile.disciplines.contains(Discipline.strength.rawValue) else {
+                return "There are no strength days on this plan, so equipment changes nothing here. Turn strength on in Plan settings first."
+            }
         case .moveSession(let id, _), .skipSession(let id):
             guard let s = plan.sessions.first(where: { $0.id == id }), s.status != .completed else {
                 return "That session is no longer open on your plan."

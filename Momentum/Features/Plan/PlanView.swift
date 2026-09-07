@@ -49,6 +49,12 @@ struct PlanView: View {
     /// Your plans (2026-09-07): current, upcoming, drafts, previous. Hosted on its own background
     /// presenter below, off this view's already-long presentation chain.
     @State private var showYourPlans = false
+    /// A sheet's request for what opens after it has gone (see `shelfPresenters`).
+    @State private var shelfFollowUp: ShelfFollowUp?
+    /// Manage plan's last receipt, kept here so Done and a reopen keep its Undo.
+    @State private var manageReceipt: ManageReceipt?
+    /// The `--plan-*` presentation hooks fire once, not on every return to the tab.
+    @State private var debugHooksFired = false
     /// Manage plan (2026-09-07): every adjustment by intent, each as a proposal with Apply / Undo.
     @State private var showManage = false
     /// The plan builder, opened from Your plans on a fresh blueprint or an existing draft.
@@ -145,7 +151,12 @@ struct PlanView: View {
               let start = cal.dateInterval(of: .weekOfYear, for: session.date)?.start else { return }
         guard start <= currentWeekStart || paywall.isEntitled(to: .fullPlan) else { return }
         weekStart = start
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { editing = EditingSession(session: session) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            // The same appear may have activated an upcoming plan and cascade-deleted this
+            // session; a sheet on a deleted model traps.
+            guard !session.isDeleted, session.modelContext != nil else { return }
+            editing = EditingSession(session: session)
+        }
     }
     private var distanceUnit: DistanceUnit {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
@@ -352,37 +363,41 @@ struct PlanView: View {
                 }
             }
             #if DEBUG
+            // Latched: `onAppear` re-fires on every return to the tab and every sheet dismissal,
+            // and an unlatched hook would re-present forever (the Fuel hooks latch the same way).
+            let debugHooks = !debugHooksFired
+            debugHooksFired = true
             // --plan-your-plans: open the shelf (screenshot verification).
-            if ProcessInfo.processInfo.arguments.contains("--plan-your-plans") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-your-plans") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showYourPlans = true }
             }
             // --plan-manage: open Manage plan (screenshot verification).
-            if ProcessInfo.processInfo.arguments.contains("--plan-manage") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-manage") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showManage = true }
             }
             // --plan-builder: open the plan builder on a fresh blueprint.
-            if ProcessInfo.processInfo.arguments.contains("--plan-builder") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-builder") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { composing = PlanComposeTarget(record: nil) }
             }
             // --plan-settings: open the plan-settings sheet (screenshot verification; sim can't tap).
-            if ProcessInfo.processInfo.arguments.contains("--plan-settings") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-settings") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showSettings = true }
             }
             // --plan-new: open the start-a-new-plan flow directly.
-            if ProcessInfo.processInfo.arguments.contains("--plan-new") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-new") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showNewPlan = true }
             }
             // --plan-add: open the plan-a-session sheet directly (screenshot verification).
-            if ProcessInfo.processInfo.arguments.contains("--plan-add") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-add") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { presentAdd(for: Date()) }
             }
             // --plan-away: open the "I'm away" week editor directly (screenshot verification).
-            if ProcessInfo.processInfo.arguments.contains("--plan-away") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-away") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showAwayDays = true }
             }
             // --plan-library: open the workout library directly (screenshot verification — the
             // catalog is browsed several levels in, and sim taps through two sheets are unreliable).
-            if ProcessInfo.processInfo.arguments.contains("--plan-library") {
+            if debugHooks, ProcessInfo.processInfo.arguments.contains("--plan-library") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showLibrary = true }
             }
             // --plan-self-coached: take over the seeded plan (screenshot verification of the mode).
@@ -440,6 +455,10 @@ struct PlanView: View {
         }
         rebuildDerived()
         Haptics.success()
+        // Reminders, the widget and the wrist describe sessions that no longer exist.
+        if let profile = profiles.first {
+            PlanAdjustmentService.propagate(profile: profile, workouts: workouts, notifications: services.notifications)
+        }
     }
 
     /// The brand-new athlete who never wants prescriptions: an empty self-coached container, ready
@@ -877,11 +896,36 @@ struct PlanView: View {
     }
 
     /// The three shelf-related sheets on their own presenters (see the body's `.background`).
+    /// A sheet that opens another sheet never flips both flags in one tick: it records what
+    /// should follow and dismisses, and the follow-up runs from `onDismiss` once the outgoing
+    /// presentation has actually gone. Two presentations changing in the same transaction is
+    /// exactly the case UIKit refuses (and does not retry), which left a flag set and the sheet
+    /// unable to reopen.
     private var shelfPresenters: some View {
         ZStack {
-            Color.clear.sheet(isPresented: $showYourPlans, onDismiss: { rebuildDerived() }) { yourPlansSheet }
-            Color.clear.sheet(isPresented: $showManage, onDismiss: { rebuildDerived() }) { manageSheet }
-            Color.clear.sheet(item: $composing, onDismiss: { rebuildDerived() }) { target in builderSheet(target) }
+            Color.clear.sheet(isPresented: $showYourPlans, onDismiss: shelfSheetDismissed) { yourPlansSheet }
+            Color.clear.sheet(isPresented: $showManage, onDismiss: shelfSheetDismissed) { manageSheet }
+            Color.clear.sheet(item: $composing, onDismiss: shelfSheetDismissed) { target in builderSheet(target) }
+        }
+    }
+
+    /// What a shelf sheet asked for on its way out.
+    private enum ShelfFollowUp {
+        case yourPlans, manage, settings, awayDays, library
+        case compose(PlanComposeTarget)
+    }
+
+    private func shelfSheetDismissed() {
+        rebuildDerived()
+        guard let next = shelfFollowUp else { return }
+        shelfFollowUp = nil
+        switch next {
+        case .yourPlans: showYourPlans = true
+        case .manage: showManage = true
+        case .settings: showSettings = true
+        case .awayDays: showAwayDays = true
+        case .library: showLibrary = true
+        case .compose(let target): composing = target
         }
     }
 
@@ -889,10 +933,10 @@ struct PlanView: View {
     private var yourPlansSheet: some View {
         if let p = profiles.first {
             YourPlansView(profile: p, distanceUnit: distanceUnit, workouts: workouts,
-                          onManageCurrent: { showYourPlans = false; showManage = true },
+                          onManageCurrent: { shelfFollowUp = .manage; showYourPlans = false },
                           onCompose: { record in
+                              shelfFollowUp = .compose(PlanComposeTarget(record: record, fromShelf: true))
                               showYourPlans = false
-                              composing = PlanComposeTarget(record: record, fromShelf: true)
                           },
                           onPlanChanged: { planChangedFromShelf() })
         }
@@ -902,11 +946,12 @@ struct PlanView: View {
     private var manageSheet: some View {
         if let p = profiles.first {
             ManagePlanView(profile: p, distanceUnit: distanceUnit,
-                           onOpenSettings: { showManage = false; showSettings = true },
-                           onOpenYourPlans: { showManage = false; showYourPlans = true },
-                           onAwayDays: { showManage = false; showAwayDays = true },
-                           onOpenLibrary: { showManage = false; showLibrary = true },
-                           onPlanChanged: { planChangedFromShelf() })
+                           onOpenSettings: { shelfFollowUp = .settings; showManage = false },
+                           onOpenYourPlans: { shelfFollowUp = .yourPlans; showManage = false },
+                           onAwayDays: { shelfFollowUp = .awayDays; showManage = false },
+                           onOpenLibrary: { shelfFollowUp = .library; showManage = false },
+                           onPlanChanged: { planChangedFromShelf() },
+                           applied: $manageReceipt)
         }
     }
 
@@ -914,13 +959,13 @@ struct PlanView: View {
     private func builderSheet(_ target: PlanComposeTarget) -> some View {
         if let p = profiles.first {
             PlanBuilderFlow(profile: p, draft: target.record, distanceUnit: distanceUnit) { outcome in
-                composing = nil
                 if outcome == .activated {
                     planChangedFromShelf()
                 } else if outcome != .cancelled || target.fromShelf {
                     // Back to the shelf the athlete came from, including after a Cancel.
-                    showYourPlans = true
+                    shelfFollowUp = .yourPlans
                 }
+                composing = nil
             }
         }
     }
@@ -1633,10 +1678,11 @@ struct PlanView: View {
         }
         PlanService.renewBlock(for: profile, in: context)
         Haptics.success()
-        withAnimation(Motion.standard) {
+        withAnimation(reduceMotion ? nil : Motion.standard) {
             weekStart = currentWeekStart
             rebuildDerived()
         }
+        PlanAdjustmentService.propagate(profile: profile, workouts: workouts, notifications: services.notifications)
     }
 
     // MARK: The week board — the whole week as one organized object
@@ -2124,10 +2170,18 @@ struct PlanView: View {
 }
 
 
-/// `.sheet(item:)` needs an Identifiable; a nil record is a fresh plan.
+/// `.sheet(item:)` needs an Identifiable; a nil record is a fresh plan. The id is captured at
+/// init: activation deletes the record in the same save, and the sheet's dismissal diff must
+/// never read a deleted model.
 struct PlanComposeTarget: Identifiable {
     let record: PlanShelfRecord?
     /// Opened from Your plans: a Cancel returns there rather than to the board.
     var fromShelf = false
-    var id: String { record?.id.uuidString ?? "new" }
+    let id: String
+
+    init(record: PlanShelfRecord?, fromShelf: Bool = false) {
+        self.record = record
+        self.fromShelf = fromShelf
+        self.id = record?.id.uuidString ?? "new"
+    }
 }

@@ -96,12 +96,14 @@ final class PlanFlowsUITests: XCTestCase {
         }
         app.launch()
 
-        // The 5-day seed puts three easy runs at the top of the week and leaves Wednesday a rest
-        // day that explains itself. That rest row is the drop target.
-        let restRow = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH 'Rest — two days out'")).firstMatch
+        // The 5-day seed leaves rest days that explain themselves ("Rest. Fresh for tomorrow's
+        // speed work."). The first such row is the drop target; its exact sentence follows the
+        // neighbours the generator placed, so the match is on the rest, not the reason.
+        let restRows = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Rest.'"))
+        let restRow = restRows.firstMatch
         XCTAssertTrue(restRow.waitForExistence(timeout: 25),
-                      "The board should show Wednesday as an explained rest day.")
+                      "The board should show an explained rest day.")
+        let restBefore = restRows.count
 
         // Tuesday's easy run: the third of the three identical easy runs, top to bottom.
         let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS '5 mi'"))
@@ -128,8 +130,9 @@ final class PlanFlowsUITests: XCTestCase {
             NSPredicate(format: "label BEGINSWITH 'Moved to'")).firstMatch.waitForExistence(timeout: 10),
                       "Dropping a session on a day should confirm where it landed.")
         // ...and that day is no longer a rest day, which is the move actually happening rather than
-        // a toast fired over an unchanged board.
-        XCTAssertFalse(restRow.exists,
+        // a toast fired over an unchanged board: one fewer rest row than before the drop.
+        let fewer = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in restRows.count < restBefore }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [fewer], timeout: 8), .completed,
                        "The day the session was dropped on must stop reading as a rest day.")
     }
 

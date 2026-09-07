@@ -93,7 +93,10 @@ struct FuelView: View {
     @State private var cameraDenial: AVAuthorizationStatus?
     /// A photo being decoded and stripped off the main thread: the camera glyph spins and the
     /// door stays shut until it lands, so a second tap can't queue a second plate.
-    @State private var preparingPhoto = false
+    @State private var photoJobs = 0
+    private var preparingPhoto: Bool { photoJobs > 0 }
+    /// Legacy water rows move to hydration once per launch, not once per tab visit.
+    @State private var waterMoved = false
     /// The photo lane's own failure line, apart from the save alert: a photo that could not be
     /// read is not a meal that could not be saved.
     @State private var photoError: String?
@@ -148,8 +151,14 @@ struct FuelView: View {
     /// time is unknown, so it lands at noon (the journal files it under midday; the detail
     /// sheet's clock moves it), never at whatever hour the athlete happens to be backfilling.
     private var loggedAt: Date {
-        guard !isToday else { return Date() }
-        return Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDay) ?? selectedDay
+        // A page resting on today logs now even if midnight slipped past between two ticks.
+        guard !isToday, !followsToday else { return Date() }
+        // Noon, plus the wall clock's position inside the hour: several backfills on one day keep
+        // their logging order (the journal sorts by this stamp alone) and all still read as midday.
+        let cal = Calendar.current
+        let noon = cal.date(bySettingHour: 12, minute: 0, second: 0, of: selectedDay) ?? selectedDay
+        let withinHour = Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 3600)
+        return noon.addingTimeInterval(withinHour)
     }
     private func shiftDay(by delta: Int) {
         let cal = Calendar.current
@@ -326,12 +335,12 @@ struct FuelView: View {
             .onChange(of: composing) { _, focused in
                 guard focused else { return }
                 Task { @MainActor in
-                    for delay in [0.06, 0.32] {
-                        try? await Task.sleep(for: .seconds(delay))
-                        guard composing else { return }
-                        withAnimation(reduceMotion ? nil : Motion.standard) {
-                            proxy.scrollTo(Self.composerAnchor, anchor: Self.composerKeyboardAnchor)
-                        }
+                    // One pass, after the keyboard's safe area has landed (an earlier pass would
+                    // scroll against the full height and then visibly correct itself).
+                    try? await Task.sleep(for: .seconds(0.3))
+                    guard composing else { return }
+                    withAnimation(reduceMotion ? nil : Motion.standard) {
+                        proxy.scrollTo(Self.composerAnchor, anchor: Self.composerKeyboardAnchor)
                     }
                 }
             }
@@ -377,13 +386,24 @@ struct FuelView: View {
             // made on the Plan tab reaches the carb target (the signature hashes plan IDENTITY, not
             // its session list — see `cacheSignature`).
             .onAppear {
-                do { try HydrationStore.moveWater(in: context) }
-                catch { saveError = "Older water entries could not be moved to hydration. Please try again." }
+                // Once per launch: a predicate fetch and a save on every tab visit is waste, and a
+                // failure would raise the same alert every visit.
+                if !waterMoved {
+                    waterMoved = true
+                    do { try HydrationStore.moveWater(in: context) }
+                    catch { saveError = "Older water entries could not be moved to hydration. Please try again." }
+                }
+                // Returning to the tab hours later: the tick task was cancelled while away, so
+                // the memo would serve the pass from when the athlete left (a refuel banner an
+                // hour after its window closed). The tick moves first, as on foreground.
+                minuteTick &+= 1
+                reanchorDay()
                 refreshDerived()
             }
             // Any data change — a meal logged or deleted, an estimate landing, the adjuster saved,
-            // a workout finishing, the day rolling over, the minute ticking.
-            .onChange(of: cacheSignature) { refreshDerived() }
+            // a workout finishing, the day rolling over, the minute ticking. The rollover is the
+            // one that needs the anchor to move too (midnight between two ticks while typing).
+            .onChange(of: cacheSignature) { reanchorDay(); refreshDerived() }
             // The clock tick. `.task` is cancelled on disappear, so an off-tab Fuel page costs
             // nothing; `&+=` so a very long session can't trap on overflow.
             .task {
@@ -404,7 +424,9 @@ struct FuelView: View {
                 reanchorDay()
                 refreshDerived()
             }
-            .onDisappear { if voice.isRecording { voice.stop() } }
+            // `stopIfRecording` also covers the window between the tap and the permission
+            // prompts, when `isRecording` is still false and a plain stop would leave the mic hot.
+            .onDisappear { voice.stopIfRecording() }
             // The label lane: full screen because it's a camera, not a form. The scanned meal
             // inserts through `logScanned` — label numbers, source "manual", no estimator.
             .fullScreenCover(isPresented: $showScanner) {
@@ -721,7 +743,7 @@ struct FuelView: View {
                     Image(systemName: "chevron.forward")
                         .font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                Capsule().fill(Theme.surface)
+                Capsule().fill(Theme.hairline)   // the surface is the card in dark mode; the track would vanish
                     .overlay(alignment: .leading) {
                         Capsule()
                             .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))
@@ -775,16 +797,25 @@ struct FuelView: View {
         .buttonStyle(.plain)
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityLabel("Fueling readout")
-        .accessibilityValue(
-            (r.status == .fueled ? "about \(r.primaryValueG) grams of \(r.primaryLabel) banked, floor met"
-                                 : "about \(r.primaryValueG) of \(r.primaryFloorG) grams of \(r.primaryLabel)")
-            + (r.primary == .carbs ? (r.drivingSession.map { ", keyed to \($0)" } ?? "") : ""))
+        .accessibilityValue(readoutStripValue(r, tip: tip))
         .accessibilityHint("Shows the full fueling detail")
         .sheet(isPresented: $showingReadout) {
             // The week strip judges the trailing seven days from TODAY; on a past day it would
             // describe a window the page isn't showing, so it stays home.
             FuelReadoutSheet(readout: readout, week: isToday ? cachedWeek : nil, dayLabel: dayLabel, isToday: isToday)
         }
+    }
+
+    /// The strip's spoken value: the judgment, the session it is keyed to, what is in flight,
+    /// and the tip (a Button's label hides its children from VoiceOver).
+    private func readoutStripValue(_ r: FuelReadiness.DayReadout, tip: String?) -> String {
+        var value = r.status == .fueled
+            ? "about \(r.primaryValueG) grams of \(r.primaryLabel) banked, floor met"
+            : "about \(r.primaryValueG) of \(r.primaryFloorG) grams of \(r.primaryLabel)"
+        if r.primary == .carbs, let driving = r.drivingSession { value += ", keyed to \(driving)" }
+        if !estimateTasks.isEmpty { value += ", \(estimateTasks.count) estimating" }
+        if let tip { value += ". Tip: \(tip)" }
+        return value
     }
 
     /// The toolbar's day-score gauge: a 22-pt ring drawn to score/100 in the band's ink with the
@@ -811,6 +842,7 @@ struct FuelView: View {
             }
         }
         .frame(width: 22, height: 22)
+        .minimumScaleFactor(0.5)   // the numeral scales with type; the ring in the toolbar cannot
         .animation(reduceMotion ? nil : Motion.content, value: cachedDayVerdict?.score)
     }
 
@@ -937,6 +969,7 @@ struct FuelView: View {
                     .background(Circle().fill(canLog ? Theme.ink : Theme.inkTertiary))
                     .scaleEffect(canLog || reduceMotion ? 1 : 0.96)
                     .animation(Motion.selection, value: canLog)
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!canLog)
@@ -984,6 +1017,7 @@ struct FuelView: View {
             }
             .frame(width: 34, height: 34)
             .animation(Motion.standard, value: voice.isRecording)
+            .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate meal")
@@ -1008,8 +1042,8 @@ struct FuelView: View {
                         .foregroundStyle(Theme.inkSecondary)
                 }
             }
-            .frame(width: 34, height: 34)
-            .contentShape(Circle())
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .disabled(preparingPhoto)
         .accessibilityLabel(preparingPhoto ? "Adding a photo" : "Photograph a meal")
@@ -1023,7 +1057,7 @@ struct FuelView: View {
             Image(systemName: "barcode.viewfinder")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(Theme.inkSecondary)
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Scan a barcode")
@@ -1067,7 +1101,12 @@ struct FuelView: View {
                     // Cleared BEFORE the await: the picker's selection is a one-shot trigger, and
                     // a second pick landing mid-load must not be dropped as "unchanged".
                     photoPick = nil
+                    // Busy from the pick itself: an iCloud original can take seconds to arrive,
+                    // and the door must stay shut for all of it (a second pick would make a
+                    // second meal and share the caption).
+                    photoJobs += 1
                     Task { @MainActor in
+                        defer { photoJobs -= 1 }
                         let raw = try? await item.loadTransferable(type: Data.self)
                         await addPhoto { raw.flatMap(MealPhoto.prepare(data:)) }
                     }
@@ -1123,8 +1162,8 @@ struct FuelView: View {
     /// `prepare` runs on a detached task and only returns bytes, so nothing here touches
     /// SwiftData until it is back on the main actor.
     private func addPhoto(_ prepare: @escaping @Sendable () -> Data?) async {
-        preparingPhoto = true
-        defer { preparingPhoto = false }
+        photoJobs += 1
+        defer { photoJobs -= 1 }
         let prepared = await Task.detached(priority: .userInitiated) { prepare() }.value
         if let prepared { logPhoto(prepared) }
         else { photoError = "That photo could not be read. Try another one." }
@@ -1268,7 +1307,7 @@ struct FuelView: View {
     /// before sending) billed nothing and must not spend the budget. Counting those was how an
     /// hour offline used to strand a meal for good: three tab visits at 30,000 feet exhausted the
     /// cap on calls that were never made, and landing never brought the estimate back.
-    private func estimate(_ meal: Meal, sessionLabel: String?) {
+    private func estimate(_ meal: Meal, sessionLabel: String?, resetAttempts: Bool = false) {
         let id = meal.id
         // One bill per meal across ALL paths: if the Siri intent is mid-estimate on this meal
         // (its in-flight state lives in EstimateGate, not our task map), a second concurrent
@@ -1277,7 +1316,12 @@ struct FuelView: View {
         estimateTasks[id]?.cancel()
         let gateToken = EstimateGate.take(id)
         do {
-            try MealNutritionStore.update(meal, in: context) { meal.estimateAttempts += 1 }
+            // "Estimate again" zeroes the cap inside the same write as the attempt, past the gate,
+            // so a refused call never leaves a dirty reset riding on the next unrelated save.
+            try MealNutritionStore.update(meal, in: context) {
+                if resetAttempts { meal.estimateAttempts = 0 }
+                meal.estimateAttempts += 1
+            }
         } catch {
             EstimateGate.end(id, token: gateToken)
             saveError = "Your meal is saved, but its estimate could not start. Please try again."
@@ -1428,7 +1472,7 @@ struct FuelView: View {
             Button { shiftDay(by: -1) } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 13, weight: .bold)).foregroundStyle(canGoBack ? Theme.ink : Theme.inkTertiary)
-                    .frame(width: 36, height: 36).contentShape(Circle())
+                    .frame(width: 44, height: 44).contentShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(!canGoBack)
@@ -1436,12 +1480,22 @@ struct FuelView: View {
             .accessibilityIdentifier("fuel-day-prev")
             // On today the name is a heading; on a past day it is the way home.
             if isToday {
-                Text(dayLabel)
-                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                    .contentTransition(.opacity)
-                    .frame(maxWidth: .infinity)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier("fuel-day-label")
+                // The caption line is reserved (invisible) so the strip keeps one height on the
+                // first step back instead of pushing the whole page down by a line.
+                VStack(spacing: 1) {
+                    Text(dayLabel)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                        .contentTransition(.opacity)
+                    Text("Tap for today")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .opacity(0)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(dayLabel)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("fuel-day-label")
             } else {
                 Button {
                     Haptics.selection()
@@ -1460,12 +1514,13 @@ struct FuelView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(dayLabel). Tap for today")
+                .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("fuel-day-label")
             }
             Button { shiftDay(by: 1) } label: {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 13, weight: .bold)).foregroundStyle(isToday ? Theme.inkTertiary : Theme.ink)
-                    .frame(width: 36, height: 36).contentShape(Circle())
+                    .frame(width: 44, height: 44).contentShape(Circle())
             }
             .buttonStyle(.plain)
             .disabled(isToday)
@@ -1519,6 +1574,7 @@ struct FuelView: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Energy")
+        .accessibilityHint(energyQualifiers(r))
         .accessibilityValue(r.mealCount == 0 ? "nothing logged, floor \(r.kcalFloor) kilocalories"
                             : "about \(r.kcal) of \(r.kcalFloor) kilocalories")
     }
@@ -1827,6 +1883,34 @@ struct FuelView: View {
         .accessibilityLabel("\(part.label.capitalized)\(part.kcal > 0 ? ", about \(part.kcal) kilocalories" : "")")
     }
 
+    /// Everything the row shows, for VoiceOver: the score, the numbers or the state line, the
+    /// clock, the note.
+    private func mealRowValue(_ meal: Meal, isEstimating: Bool, score: HealthScore.Verdict?) -> String {
+        var parts: [String] = []
+        if let score { parts.append("health score \(score.score), \(score.band.word)") }
+        if isEstimating {
+            parts.append("estimating")
+        } else if let kcal = meal.kcal {
+            parts.append("about \(kcal) kilocalories, \(meal.carbsG ?? 0) grams of carbs, \(meal.proteinG ?? 0) grams of protein, \(meal.fatG ?? 0) grams of fat")
+        } else if let line = meal.rejectionNote {
+            parts.append(line)
+        } else {
+            parts.append("no numbers yet, tap to set them")
+        }
+        parts.append(meal.eatenAt.formatted(date: .omitted, time: .shortened))
+        if meal.rejectionNote == nil, let note = meal.note, !note.isEmpty { parts.append(note) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// The headline's small print, for VoiceOver (the label and value carry the numbers).
+    private func energyQualifiers(_ r: FuelReadiness.DayReadout) -> String {
+        var parts: [String] = []
+        let known = dayMeals.filter { $0.kcal != nil }.count
+        if known < dayMeals.count { parts.append("Energy recorded for \(known) of \(dayMeals.count) entries") }
+        if let note = r.goalNote { parts.append(note) }
+        return parts.joined(separator: ". ")
+    }
+
     private func mealRow(_ meal: Meal, cacheValid: Bool) -> some View {
         // The gate covers Siri-path estimates too — without it, a meal Siri was actively
         // estimating rendered as "Couldn't estimate" and was editable mid-flight (opening the
@@ -1886,7 +1970,7 @@ struct FuelView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .transition(.opacity)
                         } else {
-                            Text("Couldn't estimate — tap to set the numbers")
+                            Text("Couldn't estimate yet. Tap to set the numbers")
                                 .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.Fuel.protein)
                                 .transition(.opacity)
                         }
@@ -1906,9 +1990,9 @@ struct FuelView: View {
         }
         .buttonStyle(.plain)
         // The row button's label overrides its children for VoiceOver, which would swallow the
-        // score chip — speak it as the row's value instead.
-        .accessibilityValue((cacheValid ? cachedScores[meal.id] : nil)
-            .map { "health score \($0.score), \($0.band.word)" } ?? "")
+        // numbers, the time, the note and the score chip: speak them as the row's value.
+        .accessibilityValue(mealRowValue(meal, isEstimating: isEstimating,
+                                         score: cacheValid ? cachedScores[meal.id] : nil))
         .contextMenu {
             // The cap is ours, not the athlete's — asking for it by hand always earns a fresh run.
             // `isEstimable` is the same gate the automatic path uses, minus the cap: without the
@@ -1925,8 +2009,7 @@ struct FuelView: View {
             if !isEstimating, meal.isEstimable {
                 Button {
                     guard paywall.isEntitled(to: .fuel) else { paywall.present(for: .fuel); return }
-                    meal.estimateAttempts = 0
-                    estimate(meal, sessionLabel: readout.drivingSession)
+                    estimate(meal, sessionLabel: readout.drivingSession, resetAttempts: true)
                 } label: { Label("Estimate again", systemImage: "sparkles") }
             }
             // "Again": the second helping / the repeat coffee — a fresh now-stamped copy through
@@ -2006,6 +2089,17 @@ private struct FuelReadoutSheet: View {
         .presentationDragIndicator(.visible)
     }
 
+    /// The record of a finished day, in the past tense the dashboard's strip already uses.
+    private func pastHeadline(_ r: FuelReadiness.DayReadout) -> String {
+        let label = r.primaryLabel
+        switch r.status {
+        case .empty: return "Nothing logged that day. The floor was ≈\(r.primaryFloorG) g of \(label)."
+        case .fueled: return "Fueled. ≈\(r.primaryValueG) g of \(label) banked, past the ≈\(r.primaryFloorG) g floor."
+        case .onTrack: return "Near the floor. ≈\(r.primaryValueG) of ≈\(r.primaryFloorG) g of \(label)."
+        case .behind: return "A light day. ≈\(r.primaryValueG) of ≈\(r.primaryFloorG) g of \(label)."
+        }
+    }
+
     // MARK: Hero — the verdict, its context, and the leading macro's bar
 
     /// The engine's plain-words headline, the FOR line naming what the target serves (promoted
@@ -2018,10 +2112,11 @@ private struct FuelReadoutSheet: View {
             ? "of \(r.carbsFloorG)–\(r.carbsHighG) g carbs"
             : "of \(r.proteinFloorG)+ g protein"
         return VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text(r.headline)
+            // A past day is a record: no "now", no "tomorrow's", no open refuel window.
+            Text(isToday ? r.headline : pastHeadline(r))
                 .font(.display(22, weight: .bold)).foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            if let driving = r.drivingSession {
+            if isToday, let driving = r.drivingSession {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text("FOR")
                         .font(.rounded(10, weight: .bold)).tracking(1.2)
@@ -2038,7 +2133,7 @@ private struct FuelReadoutSheet: View {
                     Text(primaryCaption)
                         .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkTertiary)
                 }
-                Capsule().fill(Theme.surface)
+                Capsule().fill(Theme.hairline)   // the surface is the card in dark mode; the track would vanish
                     .overlay(alignment: .leading) {
                         Capsule()
                             .fill(r.status == .fueled ? AnyShapeStyle(IridescentMaterial()) : AnyShapeStyle(primaryTint))

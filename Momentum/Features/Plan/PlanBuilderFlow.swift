@@ -87,6 +87,10 @@ struct PlanBuilderFlow: View {
     @State private var overlap: PendingOverlap?
     @State private var failure: String?
     @State private var confirmingDiscard = false
+    /// The record a fresh plan's first Schedule created, so a failed attempt retries on it.
+    @State private var created: PlanShelfRecord?
+    /// Podium (or any floor) emptied the chosen days: the note says so once.
+    @State private var daysClearedByIntensity = false
 
     private struct PendingOverlap: Identifiable {
         let overlap: PlanLifecycle.Overlap
@@ -155,11 +159,14 @@ struct PlanBuilderFlow: View {
                 ToolbarItem(placement: .principal) {
                     Text(draft == nil ? "new plan" : "edit plan")
                         .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                        .accessibilityAddTraits(.isHeader)
                 }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
-                        if step == .goal || draft != nil { previewTask?.cancel(); onFinish(.cancelled) }
-                        else { confirmingDiscard = true }
+                        // Nothing chosen yet, or a draft opened and left as it was: just leave.
+                        // Anything else is an edit worth a word before it is thrown away.
+                        if hasUnsavedEdits { confirmingDiscard = true }
+                        else { previewTask?.cancel(); onFinish(.cancelled) }
                     }
                 }
             }
@@ -210,19 +217,23 @@ struct PlanBuilderFlow: View {
                 }
                 #endif
             }
-            .onChange(of: step) { _, new in if new == .preview { schedulePreview(delay: 0) } }
+            // A beat after the step transition, so the generator never runs under the animation.
+            .onChange(of: step) { _, new in if new == .preview { schedulePreview(delay: 0.3) } }
             .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
             .onDisappear { previewTask?.cancel() }
         }
         .nestedPaywallHost()
         .presentationDetents([.large])
-        .interactiveDismissDisabled(step != .goal)
+        // A swipe never bypasses the Cancel button's question or the shelf handoff behind it.
+        .interactiveDismissDisabled(step != .goal || draft != nil)
         .confirmationDialog("Leave without saving?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
-            Button("Save as draft") { saveDraft() }
+            Button(draft == nil ? "Save as draft" : "Save changes") { saveDraft() }
             Button("Discard", role: .destructive) { previewTask?.cancel(); onFinish(.cancelled) }
             Button("Keep editing", role: .cancel) {}
         } message: {
-            Text("Nothing has been written yet. A draft keeps everything you chose.")
+            Text(draft == nil
+                 ? "Nothing has been written yet. A draft keeps everything you chose."
+                 : "The plan keeps its last saved version unless you save these changes.")
         }
     }
 
@@ -321,7 +332,7 @@ struct PlanBuilderFlow: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("builder-schedule")
                 Button { saveDraft() } label: {
-                    Text(draft == nil ? "Save as draft" : "Save draft")
+                    Text(draft == nil ? "Save as draft" : (draft?.status == .upcoming ? "Save changes" : "Save draft"))
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
                         .frame(maxWidth: .infinity).frame(minHeight: 44)
                         .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
@@ -534,7 +545,8 @@ struct PlanBuilderFlow: View {
                 .padding(Theme.Space.md)
                 .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 .onChange(of: hasGoalTime) { _, on in
-                    if on, blueprint.goalFinishTimeS == nil { seedGoalTime() }
+                    // Seed only a blank wheel: a time the athlete already set survives a toggle.
+                    if on, goalHours == 0, goalMinutes == 0 { seedGoalTime() }
                     syncTarget()
                 }
                 if hasGoalTime {
@@ -703,12 +715,14 @@ struct PlanBuilderFlow: View {
                     Text(v == 0 ? "Not running" : "\(Int((v / metersPerUnit).rounded())) \(unitLabel)")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
                         .foregroundStyle(on ? Theme.background : Theme.ink)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .padding(.horizontal, 14).frame(minHeight: 44)
                         .background {
                             if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
                         }
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
     }
@@ -788,10 +802,11 @@ struct PlanBuilderFlow: View {
                     Text(String(symbols[weekday - 1].prefix(2)).uppercased())
                         .font(.rounded(Theme.FontSize.label, weight: .bold))
                         .foregroundStyle(on ? Theme.background : Theme.ink)
-                        .frame(maxWidth: .infinity).frame(minHeight: 40)
+                        .frame(maxWidth: .infinity).frame(minHeight: 44)
                         .background {
                             if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
                         }
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(symbols[weekday - 1])
@@ -811,11 +826,19 @@ struct PlanBuilderFlow: View {
                                       subtitle: level.subtitle, isSelected: blueprint.intensity == level,
                                       iridescent: level == .podium) {
                             blueprint.intensity = level
-                            if blueprint.daysPerWeek < level.floorDays { blueprint.daysPerWeek = level.floorDays }
+                            if blueprint.daysPerWeek < level.floorDays {
+                                blueprint.daysPerWeek = level.floorDays
+                                // Fewer chosen days than the week now holds would be ignored by
+                                // the scheduler; clear them here and say so, never silently.
+                                if !blueprint.preferredDays.isEmpty, blueprint.preferredDays.count < level.floorDays {
+                                    blueprint.preferredDays = []
+                                    daysClearedByIntensity = true
+                                }
+                            }
                         }
                     }
                     if blueprint.intensity == .podium {
-                        Text("Podium trains \(PlanIntensity.podium.floorDays) or more days a week, so your week is set to \(blueprint.daysPerWeek). Every recovery guardrail still applies.")
+                        Text("Podium trains \(PlanIntensity.podium.floorDays) or more days a week, so your week is set to \(blueprint.daysPerWeek).\(daysClearedByIntensity ? " Your chosen days were fewer than that, so the coach picks the days." : "") Every recovery guardrail still applies.")
                             .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -929,7 +952,10 @@ struct PlanBuilderFlow: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 if let preview {
                     let f = Date.FormatStyle().day().month(.abbreviated)
-                    let when = Calendar.current.isDateInToday(preview.startDate) ? "Starting today" : "Starting tomorrow"
+                    let cal = Calendar.current
+                    let when = cal.isDateInToday(preview.startDate) ? "Starting today"
+                        : cal.isDateInTomorrow(preview.startDate) ? "Starting tomorrow"
+                        : "Starting \(preview.startDate.formatted(.dateTime.weekday(.wide)))"
                     Text("\(when): \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
                 }
@@ -966,7 +992,7 @@ struct PlanBuilderFlow: View {
         previewTask = Task { @MainActor in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             guard !Task.isCancelled, token == previewToken else { return }
-            let start = PlanLifecycle.activationStart(now: Date())
+            let start = previewStart
             let built = PlanLifecycleService.preview(for: snapshot, profile: profile, startDate: start, in: context)
             guard !Task.isCancelled, token == previewToken else { return }
             withAnimation(reduceMotion ? nil : Motion.crossfade) {
@@ -983,18 +1009,46 @@ struct PlanBuilderFlow: View {
         return plan.name.isEmpty ? PlanBlueprint(profile: profile).displayName : plan.name
     }
 
+    /// The day the preview is built for: an upcoming plan's scheduled day while that day is
+    /// still ahead, otherwise the day activation would really start (tomorrow from 21:00).
+    private var previewStart: Date {
+        if let draft, draft.status == .upcoming, let day = draft.scheduledStart,
+           PlanLifecycle.canSchedule(day, today: Date()) {
+            return day
+        }
+        return PlanLifecycle.activationStart(now: Date())
+    }
+
+    /// Whether Cancel should ask first: a fresh plan past its first choice, or a draft that no
+    /// longer matches what was saved.
+    private var hasUnsavedEdits: Bool {
+        if let draft { return draft.blueprint != blueprint }
+        return step != .goal
+    }
+
     private func saveDraft() {
         do {
             if let draft {
                 try PlanLifecycleService.update(draft, blueprint: blueprint, preview: settledPreview, in: context)
-                if draft.status == .upcoming, let day = draft.scheduledStart, !PlanLifecycle.canSchedule(day, today: Date()) {
-                    try PlanLifecycleService.moveToDrafts(draft, in: context)
+                if draft.status == .upcoming, let day = draft.scheduledStart {
+                    if PlanLifecycle.canSchedule(day, today: Date()) {
+                        // Keep its day, and rebuild the cached preview FOR that day: the builder's
+                        // own preview was built for it, but the service is the one place that
+                        // knows the race-day clamp.
+                        try PlanLifecycleService.schedule(draft, start: day, for: profile, in: context)
+                    } else {
+                        try PlanLifecycleService.moveToDrafts(draft, in: context)
+                    }
                 }
+            } else if let created {
+                try PlanLifecycleService.update(created, blueprint: blueprint, preview: settledPreview, in: context)
             } else {
-                try PlanLifecycleService.saveDraft(blueprint, preview: settledPreview, for: profile, in: context)
+                created = try PlanLifecycleService.saveDraft(blueprint, preview: settledPreview, for: profile, in: context)
             }
             Haptics.success()
             onFinish(.savedDraft)
+        } catch PlanLifecycleService.Failure.startAfterRaceDay {
+            failure = "The race now falls before the scheduled start. Pick a later race date, or move the start."
         } catch { failure = "The draft could not be saved. Please try again." }
     }
 
@@ -1012,8 +1066,14 @@ struct PlanBuilderFlow: View {
             if let draft {
                 try PlanLifecycleService.update(draft, blueprint: blueprint, preview: settledPreview, in: context)
                 record = draft
+            } else if let created {
+                // A fresh plan whose first schedule attempt failed already has its record: reuse
+                // it, never a second draft per retry.
+                try PlanLifecycleService.update(created, blueprint: blueprint, preview: settledPreview, in: context)
+                record = created
             } else {
                 record = try PlanLifecycleService.saveDraft(blueprint, preview: settledPreview, for: profile, in: context)
+                created = record
             }
             try PlanLifecycleService.schedule(record, start: day, for: profile, in: context)
             Haptics.success()
@@ -1061,26 +1121,43 @@ struct PlanBuilderFlow: View {
 
     // MARK: - Building blocks
 
+    /// Equal cells in one row while they fit; wrapped cells at larger type or with more values,
+    /// so "120 mi" never clips (the owner's wrap-never-scroll rule).
     private func segmented(_ values: [Int], current: Int, label: @escaping (Int) -> String,
                            spoken: @escaping (Int) -> String, _ set: @escaping (Int) -> Void) -> some View {
-        HStack(spacing: Theme.Space.sm) {
-            ForEach(values, id: \.self) { v in
-                let on = current == v
-                Button { Haptics.selection(); set(v) } label: {
-                    Text(label(v))
-                        .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                        .frame(maxWidth: .infinity).frame(minHeight: 50)
-                        .foregroundStyle(on ? Theme.background : Theme.ink)
-                        .background {
-                            RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                            if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
-                        }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: Theme.Space.sm) {
+                ForEach(values, id: \.self) { v in
+                    segmentCell(v, on: current == v, label: label, spoken: spoken, set: set)
+                        .frame(maxWidth: .infinity)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(spoken(v))
-                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+            FlowLayout(spacing: Theme.Space.sm) {
+                ForEach(values, id: \.self) { v in
+                    segmentCell(v, on: current == v, label: label, spoken: spoken, set: set)
+                }
             }
         }
+    }
+
+    private func segmentCell(_ v: Int, on: Bool, label: @escaping (Int) -> String,
+                             spoken: @escaping (Int) -> String, set: @escaping (Int) -> Void) -> some View {
+        Button { Haptics.selection(); set(v) } label: {
+            Text(label(v))
+                .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity).frame(minHeight: 50)
+                .foregroundStyle(on ? Theme.background : Theme.ink)
+                .background {
+                    RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                    if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(spoken(v))
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {

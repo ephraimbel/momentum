@@ -684,7 +684,20 @@ enum PlanCoaching {
                              calendar: Calendar = .current) -> Bool {
         guard let plan else { return false }
         guard let last = plan.lastPaceEasedAt else { return true }
-        return (calendar.dateComponents([.day], from: last, to: today).day ?? .max) >= 7
+        return (calendar.dateComponents([.day], from: calendar.startOfDay(for: last),
+                                        to: calendar.startOfDay(for: today)).day ?? .max) >= 7
+    }
+
+    /// Whether the next seven days are already a lighter week: eased once by the athlete's own
+    /// word, or the rebuild week after time away. Either is as light as a week should get, so a
+    /// second ease is declined rather than stacked (0.85 × 0.85 is not "a little lighter").
+    static func weekAlreadyEased(_ plan: TrainingPlan, from today: Date, calendar: Calendar = .current) -> Bool {
+        let start = calendar.startOfDay(for: today)
+        guard let horizon = calendar.date(byAdding: .day, value: 7, to: start) else { return false }
+        return plan.sessions.contains { s in
+            s.status != .completed && s.date >= start && s.date < horizon
+                && (s.rationale?.hasPrefix("Eased for a busy week") == true || s.rationale?.hasPrefix("Rebuild week") == true)
+        }
     }
 
     /// The consent-required inverse of `recalibratePaces`, offered by the session pace review when a
@@ -943,11 +956,15 @@ enum PlanCoaching {
         var shifted = 0
         // Race day never moves, and a tune-up sits on its own calendar date: a pause shifts the
         // training around them, never the start lines (every line of copy promises exactly that).
+        let raceDay = plan.raceDate.map { calendar.startOfDay(for: $0) }
         for s in plan.sessions
             where s.status != .completed && s.completedWorkout == nil
                   && !isFixedDate(s)
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { continue }
+            // A session cannot train for a race after the race: one that would land past race
+            // day stays where it is (and rolls to missed on its own if the athlete is away).
+            if let raceDay, calendar.startOfDay(for: moved) > raceDay { continue }
             s.date = moved
             shifted += 1
         }

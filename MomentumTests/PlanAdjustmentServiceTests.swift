@@ -111,7 +111,7 @@ struct PlanAdjustmentServiceTests {
             p, profile: profile, workouts: [], notifications: spy, today: today, in: ctx) else {
             Issue.record("ease must apply on a fresh plan"); return
         }
-        #expect(receipt.headline == "Week eased")
+        #expect(receipt.headline == "Rest of the plan eased")
         #expect(spy.scheduled == 1)
         #expect(profile.plan?.lastAdaptedAt != nil)
         let eased = try #require(profile.plan).sessions.sorted { $0.date < $1.date }.map { $0.targetDistanceM ?? 0 }

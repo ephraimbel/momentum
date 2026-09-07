@@ -905,6 +905,13 @@ struct PlanSettingsSheet: View {
         context.autosaveEnabled = false
         defer { context.autosaveEnabled = previousAutosave }
         do {
+            // A NEW plan replaces the current one: if the athlete trained on it, it belongs in
+            // Previous exactly as it would from Your plans (same rule, same transaction).
+            if mode == .create, let current = profile.plan,
+               PlanLifecycle.isWorthShelving(sessionStatuses: current.sessions.map(\.status),
+                                             blockStart: current.blockStart, now: Date()) {
+                PlanLifecycleService.retire(current, of: profile, endedAt: Date(), now: Date(), in: context)
+            }
             profile.goal = goal
             profile.daysPerWeek = days
             profile.sessionMinutes = minutes

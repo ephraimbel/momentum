@@ -38,7 +38,7 @@ final class FuelFlowUITests: XCTestCase {
         // the deployed function is reachable, or to the honest set-it-yourself fallback when not.
         let row = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "big pasta dinner")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 8), "Logged meal row didn't appear.")
-        let fallback = app.staticTexts["Couldn't estimate — tap to set the numbers"]
+        let fallback = app.staticTexts["Couldn't estimate yet. Tap to set the numbers"]
         // The ROW's numbers line ("≈54 g carbs · 620 kcal · …") — the "g carbs ·" separator is what
         // distinguishes it from the readout strip's "≈0 of 350 g carbs" line. Matching anything
         // looser resolves this wait instantly and taps the row while it's still estimating

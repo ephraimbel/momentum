@@ -505,6 +505,7 @@ enum PlanService {
         // together with the goal fields, so a retry never shelves the same race twice.
         PlanLifecycleService.retire(plan, of: profile, endedAt: raceDate, now: today, status: .completed,
                                     in: context, calendar: calendar)
+        CoachUndo.makeSoleUndoPoint(in: context)
 
         // 2 + 3) Roll into the next block, recovery lead-in first. If the season holds another
         // race (2026-09-03, owner call), it becomes the goal and the block builds toward it after
@@ -565,6 +566,8 @@ enum PlanService {
             PlanLifecycleService.retire(plan, of: profile, endedAt: startDate, now: startDate, status: .completed,
                                         in: context, calendar: calendar)
         }
+        // The closing block is history now; an older chat undo must not bring it back as current.
+        CoachUndo.makeSoleUndoPoint(in: context)
         // Reassess: what did they actually run over the last 4 weeks? That achieved volume seeds the
         // next block so progression is earned, never assumed. Only overwrite when there's real signal
         // — otherwise keep their declared/prior figure so a quiet month doesn't zero the plan out.

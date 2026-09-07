@@ -25,7 +25,9 @@ enum CoachActions {
     /// adaptToEffort / proposeAdjustment, so coach-chat changes can never stack on an auto-ease).
     static func canAdaptLoad(_ plan: TrainingPlan?, today: Date, calendar: Calendar = .current) -> Bool {
         guard let last = plan?.lastAdaptedAt else { return true }
-        return (calendar.dateComponents([.day], from: last, to: today).day ?? .max) >= 7
+        // Calendar days, not 24-hour spans: "available again from Monday" must mean Monday.
+        return (calendar.dateComponents([.day], from: calendar.startOfDay(for: last),
+                                        to: calendar.startOfDay(for: today)).day ?? .max) >= 7
     }
 
     /// Feasibility snapshot for a proposed (or current) race setup — the honesty check shown BEFORE
@@ -54,7 +56,8 @@ enum CoachActions {
 
     static func preview(_ intent: CoachIntent, profile: UserProfile, today: Date = Date(),
                         calendar: Calendar = .current) -> [String] {
-        let unit = DistanceUnit.auto
+        // The athlete's own unit, so a proposal's lines and the request they quote agree.
+        let unit = DistanceUnit(rawValue: profile.distanceUnit)?.resolved() ?? .metric
         switch intent {
         case .navigate:
             return []
@@ -220,7 +223,7 @@ enum CoachActions {
         case .changeDays(let days, let preferred):
             if let days { profile.daysPerWeek = days }
             if let preferred { profile.preferredDays = preferred }
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             let what = days.map { "\($0) days a week" } ?? "your preferred days"
             return notify(Receipt(
                 headline: "Schedule updated",
@@ -229,7 +232,7 @@ enum CoachActions {
 
         case .changeSessionLength(let minutes):
             profile.sessionMinutes = minutes
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             return notify(Receipt(
                 headline: "Session length updated",
                 detail: "Sessions now target about \(minutes) minutes. Upcoming weeks are rebuilt to fit."),
@@ -237,7 +240,7 @@ enum CoachActions {
 
         case .changeEquipment(let equipment):
             profile.equipment = equipment
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             return notify(Receipt(
                 headline: "Equipment updated",
                 detail: "Strength work now assumes \(label(equipment).lowercased()). Upcoming sessions are rebuilt around it."),
@@ -251,14 +254,14 @@ enum CoachActions {
             PlanCoaching.reschedule(s, to: to, in: context, calendar: calendar)
             return notify(Receipt(
                 headline: "Session moved",
-                detail: "Moved \(PlanCoaching.brief(for: s, distanceUnit: .auto)) from \(from) to \(day(to)). The rest of your week stands."),
+                detail: "Moved \(PlanCoaching.brief(for: s, distanceUnit: PlanCoaching.displayUnit(in: context))) from \(from) to \(day(to)). The rest of your week stands."),
                 today: today, in: context)
 
         case .skipSession(let id):
             guard let s = session(id, of: profile), s.status != .completed else {
                 return .declined(reason: "That session isn't on your plan anymore. Nothing to clear.")
             }
-            let what = PlanCoaching.brief(for: s, distanceUnit: .auto), when = day(s.date)
+            let what = PlanCoaching.brief(for: s, distanceUnit: PlanCoaching.displayUnit(in: context)), when = day(s.date)
             // Drop it from the relationship first — a deleted model can linger in the to-many array
             // until refetch, which would let a stale card "clear" the same session twice.
             profile.plan?.sessions.removeAll { $0.id == s.id }
@@ -278,8 +281,8 @@ enum CoachActions {
                 return .declined(reason: "There's nothing upcoming to ease. Your slate is clear.")
             }
             return notify(Receipt(
-                headline: "Week eased",
-                detail: "I trimmed your upcoming sessions about 15% and softened the hard work to easy. Absorb this block; we ramp again when you're fresh."),
+                headline: "Rest of the plan eased",
+                detail: "Every remaining session is about 15% lighter, hard and long runs run easy, and strength drops a set. Absorb this block; we ramp again when you're fresh."),
                 today: today, in: context)
 
         case .easeThisWeek:
@@ -289,6 +292,10 @@ enum CoachActions {
             }
             // The athlete's own word about their week: it bypasses the weekly gate (like an injury
             // report) and `PlanCoaching.easeWeek` arms it, so an auto-ease cannot stack on top.
+            // Nor can a second tap: a week already eased, or a rebuild week, is light enough.
+            guard !PlanCoaching.weekAlreadyEased(plan, from: today, calendar: calendar) else {
+                return .declined(reason: "This week is already lighter. One ease a week keeps the drop honest; move a session or pause if you need more room.")
+            }
             guard PlanCoaching.easeWeek(plan, from: today, in: context, calendar: calendar) > 0 else {
                 return .declined(reason: "There is nothing open in the next seven days to lighten.")
             }
@@ -377,7 +384,7 @@ enum CoachActions {
             // Race plan → rebuild from today, still pointed at the race (races don't run in blocks).
             // Capture the date first: rebuild cascade-deletes the old plan out from under `plan`.
             let raceDay = plan.raceDate ?? today
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             return notify(Receipt(
                 headline: "Plan rebuilt",
                 detail: "Rebuilt from today, still pointed at your race on \(day(raceDay)). Completed work and your calibrated paces are kept."),
@@ -432,10 +439,15 @@ enum CoachActions {
         return f.lowercased() + s.dropFirst()
     }
 
-    private static func rebuild(_ profile: UserProfile, in context: ModelContext) {
-        PlanService.rebuild(for: profile, in: context)
+    /// A rebuild that did not happen (the service rolled back) is never reported as done.
+    @discardableResult
+    private static func rebuild(_ profile: UserProfile, in context: ModelContext) -> Bool {
+        guard PlanService.rebuild(for: profile, in: context) != nil else { return false }
         try? context.save()
+        return true
     }
+
+    private static let rebuildFailed = "I could not rebuild the plan just now. Nothing changed; try again in a moment."
 
     private static func notify(_ receipt: Receipt, today: Date, in context: ModelContext) -> Outcome {
         AppNotification.post(kind: .coaching, title: receipt.headline, body: receipt.detail,

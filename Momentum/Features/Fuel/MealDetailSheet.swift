@@ -212,7 +212,7 @@ struct MealDetailSheet: View {
                 Divider()
             }
             HStack {
-                TextField("Add an item — banana, 2 eggs…", text: $addItemText)
+                TextField("Add an item: banana, 2 eggs…", text: $addItemText)
                     .font(.rounded(Theme.FontSize.caption)).focused($focused, equals: .addItem).submitLabel(.done)
                     .onSubmit(addItem).onChange(of: addItemText) { addItemMiss = false }
                 Button(action: addItem) { Image(systemName: "plus.circle").frame(width: 44, height: 44) }

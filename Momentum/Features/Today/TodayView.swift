@@ -381,6 +381,9 @@ struct TodayView: View {
         }
         // A finished/deleted workout invalidates the caches and re-runs the coaching pass promptly.
         .onChange(of: workouts.count) { lastBootstrap = nil; bootstrapIfNeeded() }
+        // A plan switched from the shelf (or renewed) is a new set of sessions: reminders and the
+        // coaching pass must not wait out the throttle on the old plan's ids.
+        .onChange(of: profiles.first?.plan?.id) { lastBootstrap = nil; bootstrapIfNeeded() }
         // Any signature change (new plan, session added/removed, workout landed, day rollover)
         // re-snapshots the deck's plan row.
         .onChange(of: currentPendingToken) { refreshPendingToday() }

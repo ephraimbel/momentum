@@ -253,6 +253,9 @@ enum PlanLifecycleService {
             _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
             let scheduled = record?.scheduledStart
             if let record { context.delete(record) }
+            // A chat undo captured against the replaced plan would resurrect it beside its own
+            // shelf record; a switch is a new world, so every older undo point retires here.
+            CoachUndo.makeSoleUndoPoint(in: context)
             try context.save()
             return Activation(plan: plan, retired: retired, scheduledStart: scheduled, start: start)
         } catch {
