@@ -89,7 +89,9 @@ enum CoachActions {
             return ["Clears \(PlanCoaching.brief(for: s, distanceUnit: unit)) on \(day(s.date))",
                     "Your streak holds. Rest days count"]
         case .easeWeek:
-            return ["Upcoming sessions ease ~15%", "Hard sessions soften to easy"]
+            return ["Every remaining session eases ~15%", "Hard runs and long runs become easy runs"]
+        case .easeThisWeek:
+            return ["The next seven days ease ~15%", "Hard sessions soften to easy; the long run keeps its place"]
         case .bumpLoad:
             return ["Upcoming sessions nudge up ~10%", "Your completed load says you've earned it"]
         case .easePaces:
@@ -280,6 +282,21 @@ enum CoachActions {
                 detail: "I trimmed your upcoming sessions about 15% and softened the hard work to easy. Absorb this block; we ramp again when you're fresh."),
                 today: today, in: context)
 
+        case .easeThisWeek:
+            guard let plan = profile.plan else { return .declined(reason: noPlan) }
+            guard !plan.isSelfCoached else {
+                return .declined(reason: "You are coaching this plan yourself, so the week stays as you wrote it.")
+            }
+            // The athlete's own word about their week: it bypasses the weekly gate (like an injury
+            // report) and `PlanCoaching.easeWeek` arms it, so an auto-ease cannot stack on top.
+            guard PlanCoaching.easeWeek(plan, from: today, in: context, calendar: calendar) > 0 else {
+                return .declined(reason: "There is nothing open in the next seven days to lighten.")
+            }
+            return notify(Receipt(
+                headline: "This week eased",
+                detail: "The next seven days came down about 15% and hard work softened to easy. Your long run keeps its place. Next week picks back up as planned."),
+                today: today, in: context)
+
         case .bumpLoad:
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
             guard canAdaptLoad(plan, today: today, calendar: calendar) else {
@@ -317,6 +334,10 @@ enum CoachActions {
 
         case .pausePlan(let days):
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
+            // A pause whose window has passed is over, whatever the stamp says.
+            if let until = plan.pausedUntil, calendar.startOfDay(for: until) <= calendar.startOfDay(for: today) {
+                plan.pausedUntil = nil
+            }
             guard plan.pausedUntil == nil else {
                 return .declined(reason: "Your plan is already paused. Tell me when you're back and I'll pick it up.")
             }

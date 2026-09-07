@@ -8,6 +8,9 @@ import SwiftData
 struct YourPlansView: View {
     let profile: UserProfile
     let distanceUnit: DistanceUnit
+    /// The board's own workout query, for the downstream mirror after an activation. Passed in so
+    /// opening the shelf never materialises the workout table a second time.
+    let workouts: [Workout]
     /// Open the current plan's adjuster (the caller owns that sheet).
     var onManageCurrent: () -> Void
     /// Open the plan builder on a blueprint (nil = a fresh plan; a record = editing that draft).
@@ -18,9 +21,7 @@ struct YourPlansView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
-    @Environment(PaywallController.self) private var paywall
     @Query private var records: [PlanShelfRecord]
-    @Query(sort: \Workout.startedAt, order: .reverse) private var workouts: [Workout]
 
     @State private var reviewing: ReviewTarget?
     @State private var scheduling: PlanShelfRecord?
@@ -44,15 +45,18 @@ struct YourPlansView: View {
     private struct OverlapDecision: Identifiable {
         let record: PlanShelfRecord
         let overlap: PlanLifecycle.Overlap
-        /// nil = start now; a date = schedule for that day.
-        let proposedStart: Date?
+        /// The day the plan would start: activation's real start for Start now (tomorrow in the
+        /// evening), or the scheduled day.
+        let startDay: Date
+        let startsNow: Bool
         var id: UUID { record.id }
     }
 
-    init(profile: UserProfile, distanceUnit: DistanceUnit, onManageCurrent: @escaping () -> Void,
+    init(profile: UserProfile, distanceUnit: DistanceUnit, workouts: [Workout], onManageCurrent: @escaping () -> Void,
          onCompose: @escaping (PlanShelfRecord?) -> Void, onPlanChanged: @escaping () -> Void) {
         self.profile = profile
         self.distanceUnit = distanceUnit
+        self.workouts = workouts
         self.onManageCurrent = onManageCurrent
         self.onCompose = onCompose
         self.onPlanChanged = onPlanChanged
@@ -131,7 +135,8 @@ struct YourPlansView: View {
                 }
             }
             .sheet(item: $scheduling) { record in
-                PlanScheduleSheet(initial: record.scheduledStart, currentEnd: currentSpan?.end) { day in
+                PlanScheduleSheet(initial: record.scheduledStart, currentEnd: currentSpan?.end,
+                                  latest: record.blueprint.flatMap { $0.isRace ? $0.raceDate : nil }) { day in
                     schedule(record, on: day)
                 }
             }
@@ -139,13 +144,14 @@ struct YourPlansView: View {
                 PlanOverlapSheet(planName: decision.record.name,
                                  currentName: profile.plan.map { $0.name.isEmpty ? PlanBlueprint(profile: profile).displayName : $0.name } ?? "Your current plan",
                                  overlap: decision.overlap,
-                                 proposedStart: decision.proposedStart,
+                                 startDay: decision.startDay,
                                  onReplace: { resolveReplace(decision) },
                                  onStartAfter: { resolveStartAfter(decision) })
             }
-            .confirmationDialog("Delete this draft?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            .confirmationDialog(deleting?.status.isPrevious == true ? "Remove this plan?" : "Delete this draft?",
+                                isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { record in
-                Button("Delete \(record.name)", role: .destructive) { delete(record) }
+                Button(record.status.isPrevious ? "Remove \(record.name)" : "Delete \(record.name)", role: .destructive) { delete(record) }
                 Button("Keep it", role: .cancel) { deleting = nil }
             } message: { record in
                 Text(record.status.isPrevious
@@ -156,6 +162,7 @@ struct YourPlansView: View {
                 Button("OK", role: .cancel) { failure = nil }
             } message: { Text(failure ?? "Please try again.") }
         }
+        .nestedPaywallHost()
     }
 
     // MARK: - Sections
@@ -208,7 +215,7 @@ struct YourPlansView: View {
 
     private func currentPreview(_ plan: TrainingPlan) -> PlanPreview {
         PlanPreview.build(snapshot: CoachUndo.planState(of: plan), blueprint: currentBlueprint(plan),
-                          distanceUnit: distanceUnit)
+                          distanceUnit: distanceUnit, anchor: PlanLifecycleService.span(of: plan).start)
     }
 
     private func currentCard(_ plan: TrainingPlan) -> some View {
@@ -232,6 +239,7 @@ struct YourPlansView: View {
                 Button { onManageCurrent() } label: { Label("Manage plan", systemImage: "slider.horizontal.3") }
             })
         .onTapGesture { reviewing = ReviewTarget(kind: .current) }
+        .accessibilityAction(named: "Preview") { reviewing = ReviewTarget(kind: .current) }
         .accessibilityIdentifier("plans-current")
     }
 
@@ -269,11 +277,17 @@ struct YourPlansView: View {
             primaryAction: primaryAction(for: record),
             menu: { menuItems(for: record) })
         .onTapGesture { reviewing = ReviewTarget(kind: .shelved(record)) }
+        .accessibilityAction(named: "Preview") { reviewing = ReviewTarget(kind: .shelved(record)) }
         .accessibilityIdentifier("plans-\(record.status.rawValue)")
     }
 
     private func datesLine(start: Date, end: Date?) -> String {
-        let f = Date.FormatStyle().day().month(.abbreviated)
+        let cal = Calendar.current
+        let crossesYear = end.map { !cal.isDate(start, equalTo: $0, toGranularity: .year) } ?? false
+        let longAgo = (end ?? start) < (cal.date(byAdding: .month, value: -6, to: Date()) ?? Date())
+        let f: Date.FormatStyle = crossesYear || longAgo
+            ? Date.FormatStyle().day().month(.abbreviated).year()
+            : Date.FormatStyle().day().month(.abbreviated)
         guard let end else { return start.formatted(f) }
         return "\(start.formatted(f)) to \(end.formatted(f))"
     }
@@ -345,16 +359,14 @@ struct YourPlansView: View {
 
     // MARK: - Actions
 
-    /// Starting is a Pro action like the rest of the coach's plan work; drafts and previews are free.
-    private func entitled() -> Bool {
-        guard paywall.isEntitled(to: .fullPlan) else { paywall.present(for: .fullPlan); return false }
-        return true
-    }
-
+    /// Starting a plan is free, like "Start a new plan" on the masthead: the free tier's boundary
+    /// is the board's locked future weeks, not the act of choosing a plan. Measured against the
+    /// day activation really starts (tomorrow from 21:00), so the overlap never names a cut that
+    /// will not happen.
     private func startNow(_ record: PlanShelfRecord) {
-        guard entitled() else { return }
-        if let overlap = PlanLifecycle.overlap(current: currentSpan, proposedStart: Date()) {
-            overlapDecision = OverlapDecision(record: record, overlap: overlap, proposedStart: nil)
+        let start = PlanLifecycle.activationStart(now: Date())
+        if let overlap = PlanLifecycle.overlap(current: currentSpan, proposedStart: start) {
+            overlapDecision = OverlapDecision(record: record, overlap: overlap, startDay: start, startsNow: true)
             return
         }
         activate(record)
@@ -362,7 +374,7 @@ struct YourPlansView: View {
 
     private func schedule(_ record: PlanShelfRecord, on day: Date) {
         if let overlap = PlanLifecycle.overlap(current: currentSpan, proposedStart: day) {
-            overlapDecision = OverlapDecision(record: record, overlap: overlap, proposedStart: day)
+            overlapDecision = OverlapDecision(record: record, overlap: overlap, startDay: day, startsNow: false)
             return
         }
         commitSchedule(record, on: day)
@@ -370,10 +382,12 @@ struct YourPlansView: View {
 
     private func commitSchedule(_ record: PlanShelfRecord, on day: Date) {
         do {
-            try PlanLifecycleService.schedule(record, start: day, in: context)
+            try PlanLifecycleService.schedule(record, start: day, for: profile, in: context)
             Haptics.success()
         } catch PlanLifecycleService.Failure.scheduleMustBeInTheFuture {
             failure = "Pick a day after today. To start today, use Start now."
+        } catch PlanLifecycleService.Failure.startAfterRaceDay {
+            failure = "That day is after the plan's race. Pick an earlier start, or edit the race date first."
         } catch {
             failure = "The schedule could not be saved. Please try again."
         }
@@ -383,8 +397,7 @@ struct YourPlansView: View {
     /// keeps the record upcoming and the cut happens when that day comes.
     private func resolveReplace(_ decision: OverlapDecision) {
         overlapDecision = nil
-        if let day = decision.proposedStart { commitSchedule(decision.record, on: day) }
-        else { activate(decision.record) }
+        if decision.startsNow { activate(decision.record) } else { commitSchedule(decision.record, on: decision.startDay) }
     }
 
     private func resolveStartAfter(_ decision: OverlapDecision) {
@@ -458,7 +471,7 @@ struct PlanShelfCard<MenuContent: View>: View {
                 Menu { menu() } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36).contentShape(Rectangle())
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
                 }
                 .accessibilityLabel("\(title) options")
             }
@@ -505,7 +518,6 @@ struct PlanShelfCard<MenuContent: View>: View {
         .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(title). \(goalLine). \(statusLine).")
     }
 }
 
@@ -516,23 +528,34 @@ struct PlanScheduleSheet: View {
     var initial: Date?
     /// The current plan's last day, offered as the natural "after it ends" default.
     var currentEnd: Date?
+    /// A race plan cannot start after its race: the picker stops there.
+    var latest: Date?
     var onPick: (Date) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var day: Date
 
-    init(initial: Date?, currentEnd: Date?, onPick: @escaping (Date) -> Void) {
+    init(initial: Date?, currentEnd: Date?, latest: Date? = nil, onPick: @escaping (Date) -> Void) {
         self.initial = initial
         self.currentEnd = currentEnd
+        self.latest = latest
         self.onPick = onPick
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
         let afterCurrent = currentEnd.flatMap { cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: $0)) }
-        _day = State(initialValue: initial ?? afterCurrent.map { max($0, tomorrow) } ?? tomorrow)
+        var pick = initial.map { max($0, tomorrow) } ?? afterCurrent.map { max($0, tomorrow) } ?? tomorrow
+        if let latest, cal.startOfDay(for: latest) >= tomorrow { pick = min(pick, cal.startOfDay(for: latest)) }
+        _day = State(initialValue: pick)
     }
 
     private var earliest: Date {
         let cal = Calendar.current
         return cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+    }
+
+    private var range: ClosedRange<Date> {
+        let cal = Calendar.current
+        if let latest, cal.startOfDay(for: latest) > earliest { return earliest...cal.startOfDay(for: latest) }
+        return earliest...(cal.date(byAdding: .year, value: 2, to: earliest) ?? earliest)
     }
 
     var body: some View {
@@ -541,7 +564,7 @@ struct PlanScheduleSheet: View {
                 Text("The plan starts on this day and the week is built around it. Drafts never start on their own.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-                DatePicker("Start", selection: $day, in: earliest..., displayedComponents: .date)
+                DatePicker("Start", selection: $day, in: range, displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .tint(Theme.ink)
                     .accessibilityIdentifier("plans-schedule-day")
@@ -580,14 +603,17 @@ struct PlanOverlapSheet: View {
     let planName: String
     let currentName: String
     let overlap: PlanLifecycle.Overlap
-    /// nil = starting now.
-    let proposedStart: Date?
+    /// The day the new plan would start.
+    let startDay: Date
     var onReplace: () -> Void
     var onStartAfter: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     private var dayWord: String {
-        proposedStart.map { $0.formatted(.dateTime.weekday(.wide).day().month(.abbreviated)) } ?? "today"
+        let cal = Calendar.current
+        if cal.isDateInToday(startDay) { return "today" }
+        if cal.isDateInTomorrow(startDay) { return "tomorrow" }
+        return startDay.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
     }
 
     var body: some View {
@@ -625,16 +651,18 @@ struct PlanOverlapSheet: View {
             .navigationTitle("Two plans overlap")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Keep as draft") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
         }
         .presentationDetents([.large])
     }
 
     private var cutLine: String {
-        let weeks = overlap.weeksCut == 1 ? "1 week" : "\(overlap.weeksCut) weeks"
+        let span = overlap.daysCut < 7
+            ? (overlap.daysCut == 1 ? "last day" : "last \(overlap.daysCut) days")
+            : (overlap.weeksCut == 1 ? "last week" : "last \(overlap.weeksCut) weeks")
         let sessions = overlap.sessionsCut == 1 ? "1 session" : "\(overlap.sessionsCut) sessions"
-        return "Starting \(planName) \(dayWord) cuts its last \(weeks), \(sessions) still to do."
+        return "Starting \(planName) \(dayWord) cuts its \(span), \(sessions) still to do."
     }
 
     private func choice(_ title: String, detail: String, filled: Bool, action: @escaping () -> Void) -> some View {

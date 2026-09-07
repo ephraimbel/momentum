@@ -47,6 +47,31 @@ enum CoachUndo {
             var weekPhases: [String]
             var sessions: [SessionState]
             var blockIndex: Int? = nil   // additive: rolling-block counter (absent in old snapshots)
+            // Additive (2026-09-07): the plan's identity and the latches a restore used to drop.
+            // Restoring under the SAME id keeps every scalar-keyed sidecar (athlete state, season
+            // pointer, metadata, intents) valid; a minted id orphaned them all.
+            var id: UUID? = nil
+            var isSelfCoached: Bool? = nil
+            var blockStart: Date? = nil
+            var goalRacePaceSPerKm: Double? = nil
+            var lastPaceEasedAt: Date? = nil
+            var lastRecalibratedAt: Date? = nil
+            var pendingP5kSPerKm: Double? = nil
+            var pendingP5kAt: Date? = nil
+            var athleteState: AthleteState? = nil
+        }
+
+        /// The `PlanAthleteStateRecord` a plan was built with, so a restored plan keeps its
+        /// threshold and personal curve instead of falling back to population numbers.
+        struct AthleteState: Codable, Equatable {
+            var thresholdSPerKm: Double?
+            var thresholdMethod: String?
+            var thresholdConfidence: String?
+            var thresholdObservedAt: Date?
+            var riegelExponent: Double?
+            var durabilitySignal: String?
+            var computedAt: Date
+            var lastThresholdRecalibratedAt: Date?
         }
 
         struct SessionState: Codable, Equatable {
@@ -63,6 +88,7 @@ enum CoachUndo {
             var rationale: String?
             var completedWorkoutID: UUID?
             var strength: [ExerciseState]
+            var strengthLabel: String? = nil   // additive (2026-09-07): the split's day title
         }
 
         struct ExerciseState: Codable, Equatable {
@@ -108,6 +134,7 @@ enum CoachUndo {
     /// The plan half of a snapshot on its own (2026-09-07): the shelf keeps a retired plan in this
     /// exact shape, so a previous plan reads back through the same decoder undo already trusts.
     static func planState(of plan: TrainingPlan) -> Snapshot.PlanState {
+        let athlete = plan.modelContext.flatMap { PlanAthleteStateRecord.fetch(planID: plan.id, in: $0) }
         var state = Snapshot.PlanState(
                 name: plan.name,
                 goal: plan.goal.rawValue,
@@ -138,10 +165,34 @@ enum CoachUndo {
                                 targetRepLow: pe.targetRepLow, targetRepHigh: pe.targetRepHigh,
                                 targetRPE: pe.targetRPE, targetPctRM: pe.targetPctRM,
                                 progression: pe.progression)
-                        })
+                        },
+                        strengthLabel: s.strengthLabel)
                 })
         state.blockIndex = plan.blockIndex
+        state.id = plan.id
+        state.isSelfCoached = plan.isSelfCoached
+        state.blockStart = plan.blockStart
+        state.goalRacePaceSPerKm = plan.goalRacePaceSPerKm
+        state.lastPaceEasedAt = plan.lastPaceEasedAt
+        state.lastRecalibratedAt = plan.lastRecalibratedAt
+        state.pendingP5kSPerKm = plan.pendingP5kSPerKm
+        state.pendingP5kAt = plan.pendingP5kAt
+        if let athlete {
+            state.athleteState = Snapshot.AthleteState(
+                thresholdSPerKm: athlete.thresholdSPerKm, thresholdMethod: athlete.thresholdMethod,
+                thresholdConfidence: athlete.thresholdConfidence, thresholdObservedAt: athlete.thresholdObservedAt,
+                riegelExponent: athlete.riegelExponent, durabilitySignal: athlete.durabilitySignal,
+                computedAt: athlete.computedAt, lastThresholdRecalibratedAt: athlete.lastThresholdRecalibratedAt)
+        }
         return state
+    }
+
+    /// Only the single most recent applied change is undoable, app-wide: a newer change (from the
+    /// chat or from Manage plan) invalidates every older snapshot, because they describe a world
+    /// that no longer exists. Nulls every chat card's undo; the caller keeps its own if it wants one.
+    static func makeSoleUndoPoint(in context: ModelContext) {
+        let all = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
+        for m in all where m.undoJSON != nil { m.undoJSON = nil }
     }
 
     // MARK: - Restore
@@ -180,6 +231,7 @@ enum CoachUndo {
             let exercisesByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
 
             let plan = TrainingPlan()
+            if let id = planState.id { plan.id = id }   // the same identity keeps every sidecar valid
             plan.name = planState.name
             plan.goal = Goal(rawValue: planState.goal) ?? .generalFitness
             plan.disciplines = planState.disciplines
@@ -190,6 +242,13 @@ enum CoachUndo {
             plan.pausedUntil = planState.pausedUntil
             plan.weekPhases = planState.weekPhases
             plan.blockIndex = planState.blockIndex ?? 0   // absent in pre-rolling-block snapshots
+            plan.isSelfCoached = planState.isSelfCoached ?? false
+            plan.blockStart = planState.blockStart
+            plan.goalRacePaceSPerKm = planState.goalRacePaceSPerKm
+            plan.lastPaceEasedAt = planState.lastPaceEasedAt
+            plan.lastRecalibratedAt = planState.lastRecalibratedAt
+            plan.pendingP5kSPerKm = planState.pendingP5kSPerKm
+            plan.pendingP5kAt = planState.pendingP5kAt
             context.insert(plan)
 
             var sessions: [PlannedSession] = []
@@ -206,6 +265,7 @@ enum CoachUndo {
                 session.intervals = s.intervals
                 session.status = SessionStatus(rawValue: s.status) ?? .planned
                 session.rationale = s.rationale
+                session.strengthLabel = s.strengthLabel
                 context.insert(session)
                 for e in s.strength {
                     let pe = PlannedExercise()
@@ -229,6 +289,23 @@ enum CoachUndo {
             }
             plan.sessions = sessions
             profile.plan = plan
+            // The athlete state the plan was built with, back under the restored id. A rebuild
+            // removed the old record when it replaced the plan; without this the restored plan's
+            // paces would re-derive from population numbers.
+            if let a = planState.athleteState {
+                let record = PlanAthleteStateRecord.upsert(planID: plan.id, in: context)
+                record.thresholdSPerKm = a.thresholdSPerKm
+                record.thresholdMethod = a.thresholdMethod
+                record.thresholdConfidence = a.thresholdConfidence
+                record.thresholdObservedAt = a.thresholdObservedAt
+                record.riegelExponent = a.riegelExponent
+                record.durabilitySignal = a.durabilitySignal
+                record.computedAt = a.computedAt
+                record.lastThresholdRecalibratedAt = a.lastThresholdRecalibratedAt
+            }
+            // Season pointer, metadata and intents follow the restored plan the same way they follow
+            // a rebuild; the caller saves.
+            _ = try? RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
         }
         try? context.save()
         return true

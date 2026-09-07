@@ -20,7 +20,6 @@ struct PlanBuilderFlow: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
-    @Environment(PaywallController.self) private var paywall
     @ReducedMotionPreference private var reduceMotion
 
     /// The four doors the engine can honestly tell apart: a dated race, a distance to improve at
@@ -87,12 +86,14 @@ struct PlanBuilderFlow: View {
     @State private var scheduling = false
     @State private var overlap: PendingOverlap?
     @State private var failure: String?
+    @State private var confirmingDiscard = false
 
     private struct PendingOverlap: Identifiable {
         let overlap: PlanLifecycle.Overlap
-        /// nil = start now; a date = schedule for that day.
-        let proposedStart: Date?
-        var id: String { "\(overlap.currentEnd.timeIntervalSince1970)-\(proposedStart?.timeIntervalSince1970 ?? 0)" }
+        /// The day the plan would start: activation's real start for Start now, or the scheduled day.
+        let startDay: Date
+        let startsNow: Bool
+        var id: String { "\(overlap.currentEnd.timeIntervalSince1970)-\(startDay.timeIntervalSince1970)" }
     }
 
     init(profile: UserProfile, draft: PlanShelfRecord?, distanceUnit: DistanceUnit,
@@ -144,7 +145,6 @@ struct PlanBuilderFlow: View {
                         stepContent
                     }
                     .padding(Theme.Space.lg)
-                    .padding(.bottom, 120)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
@@ -157,21 +157,27 @@ struct PlanBuilderFlow: View {
                         .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { previewTask?.cancel(); onFinish(.cancelled) }
+                    Button("Cancel") {
+                        if step == .goal || draft != nil { previewTask?.cancel(); onFinish(.cancelled) }
+                        else { confirmingDiscard = true }
+                    }
                 }
             }
             .sheet(isPresented: $showRacePicker) {
                 RacePickerSheet { race, pickedDistance, date in
-                    withAnimation(Motion.standard) {
+                    withAnimation(reduceMotion ? nil : Motion.standard) {
                         blueprint.name = race.name
                         blueprint.raceDistanceM = pickedDistance.meters
                         raceDay = date
+                        if hasGoalTime { seedGoalTime() }
+                        syncTarget()
                     }
                 }
             }
             .sheet(isPresented: $scheduling) {
                 PlanScheduleSheet(initial: draft?.scheduledStart,
-                                  currentEnd: PlanLifecycleService.currentSpan(for: profile)?.end) { day in
+                                  currentEnd: PlanLifecycleService.currentSpan(for: profile)?.end,
+                                  latest: blueprint.isRace ? blueprint.raceDate : nil) { day in
                     schedule(on: day)
                 }
             }
@@ -179,9 +185,9 @@ struct PlanBuilderFlow: View {
                 PlanOverlapSheet(planName: blueprint.displayName,
                                  currentName: currentPlanName,
                                  overlap: pending.overlap,
-                                 proposedStart: pending.proposedStart,
+                                 startDay: pending.startDay,
                                  onReplace: {
-                                     if let day = pending.proposedStart { commitSchedule(on: day) } else { activate() }
+                                     if pending.startsNow { activate() } else { commitSchedule(on: pending.startDay) }
                                  },
                                  onStartAfter: { commitSchedule(on: pending.overlap.nextFreeStart) })
             }
@@ -208,8 +214,16 @@ struct PlanBuilderFlow: View {
             .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
             .onDisappear { previewTask?.cancel() }
         }
+        .nestedPaywallHost()
         .presentationDetents([.large])
         .interactiveDismissDisabled(step != .goal)
+        .confirmationDialog("Leave without saving?", isPresented: $confirmingDiscard, titleVisibility: .visible) {
+            Button("Save as draft") { saveDraft() }
+            Button("Discard", role: .destructive) { previewTask?.cancel(); onFinish(.cancelled) }
+            Button("Keep editing", role: .cancel) {}
+        } message: {
+            Text("Nothing has been written yet. A draft keeps everything you chose.")
+        }
     }
 
     private var stepStrip: some View {
@@ -259,7 +273,7 @@ struct PlanBuilderFlow: View {
                     Button { advance() } label: {
                         Text(step == .training ? "See the plan" : "Continue")
                             .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
-                            .frame(maxWidth: .infinity).frame(height: 52)
+                            .frame(maxWidth: .infinity).frame(minHeight: 52)
                             .raised(Capsule(), tone: .ink)
                     }
                     .buttonStyle(RaisedPressStyle())
@@ -289,7 +303,7 @@ struct PlanBuilderFlow: View {
                 Button { startNow() } label: {
                     Text("Start now")
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
-                        .frame(maxWidth: .infinity).frame(height: 52)
+                        .frame(maxWidth: .infinity).frame(minHeight: 52)
                         .raised(Capsule(), tone: .ink)
                 }
                 .buttonStyle(RaisedPressStyle())
@@ -301,7 +315,7 @@ struct PlanBuilderFlow: View {
                 Button { scheduling = true } label: {
                     Text("Schedule")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .frame(maxWidth: .infinity).frame(minHeight: 44)
                         .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
                 }
                 .buttonStyle(.plain)
@@ -309,7 +323,7 @@ struct PlanBuilderFlow: View {
                 Button { saveDraft() } label: {
                     Text(draft == nil ? "Save as draft" : "Save draft")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity).frame(height: 44)
+                        .frame(maxWidth: .infinity).frame(minHeight: 44)
                         .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
                 }
                 .buttonStyle(.plain)
@@ -327,8 +341,16 @@ struct PlanBuilderFlow: View {
             case .improve: blueprint.raceDistanceM != nil
             default: true
             }
+        case .week: !tooFewDaysChosen
         default: true
         }
+    }
+
+    /// The scheduler honours chosen days only when there are at least as many as the week has
+    /// sessions; fewer and it spreads the week itself. The step says so instead of storing a
+    /// choice the engine ignores.
+    private var tooFewDaysChosen: Bool {
+        !blueprint.preferredDays.isEmpty && blueprint.preferredDays.count < blueprint.daysPerWeek
     }
 
     private var raceDayIsValid: Bool {
@@ -357,7 +379,7 @@ struct PlanBuilderFlow: View {
             ForEach(Path.allCases) { door in
                 SelectionCard(title: door.title, subtitle: door.subtitle, systemImage: door.systemImage,
                               isSelected: path == door) {
-                    withAnimation(Motion.standard) { choose(door) }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { choose(door) }
                 }
                 .accessibilityIdentifier("builder-path-\(door.rawValue)")
             }
@@ -365,6 +387,7 @@ struct PlanBuilderFlow: View {
     }
 
     private func choose(_ door: Path) {
+        let changed = path != door
         path = door
         switch door {
         case .race:
@@ -375,8 +398,12 @@ struct PlanBuilderFlow: View {
         case .start:
             blueprint.goal = .stayConsistent
             blueprint.raceDistanceM = nil; blueprint.raceDate = nil; blueprint.goalFinishTimeS = nil
-            if blueprint.runningExperience == .experienced { blueprint.runningExperience = .some }
-            blueprint.intensity = .gentle
+            // Gentle defaults are the door's opening offer, applied once on the way in; a
+            // re-tap or a draft being edited keeps what the athlete chose since.
+            if changed {
+                if blueprint.runningExperience == .experienced { blueprint.runningExperience = .some }
+                blueprint.intensity = .gentle
+            }
         case .general:
             if blueprint.goal != .endurance { blueprint.goal = .generalFitness }
             blueprint.raceDistanceM = nil; blueprint.raceDate = nil; blueprint.goalFinishTimeS = nil
@@ -423,7 +450,6 @@ struct PlanBuilderFlow: View {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     DatePicker("Race day", selection: $raceDay, in: Date()..., displayedComponents: .date)
                         .datePickerStyle(.graphical)
-                        .tint(Theme.ink)
                         .padding(Theme.Space.sm)
                         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                         .onChange(of: raceDay) { _, _ in syncTarget() }
@@ -457,11 +483,11 @@ struct PlanBuilderFlow: View {
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 SelectionCard(title: "New to running", subtitle: "Three easy days a week. Time on feet before anything else.",
                               systemImage: "figure.walk", isSelected: blueprint.runningExperience == .new) {
-                    withAnimation(Motion.standard) { blueprint.runningExperience = .new; blueprint.daysPerWeek = min(blueprint.daysPerWeek, 3) }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = .new; blueprint.daysPerWeek = min(blueprint.daysPerWeek, 3) }
                 }
                 SelectionCard(title: "Coming back", subtitle: "You have run before. A gentle ramp back to a regular week.",
                               systemImage: "arrow.uturn.backward", isSelected: blueprint.runningExperience != .new) {
-                    withAnimation(Motion.standard) { blueprint.runningExperience = .some }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = .some }
                 }
                 Text("If you are returning from an injury, the plan trains around it and never rushes the way back. Anything that persists or worries you is a question for a professional.")
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
@@ -475,11 +501,11 @@ struct PlanBuilderFlow: View {
             VStack(spacing: Theme.Space.sm) {
                 SelectionCard(title: Goal.generalFitness.planLabel, subtitle: Goal.generalFitness.planSubtitle,
                               systemImage: Goal.generalFitness.planSystemImage, isSelected: blueprint.goal == .generalFitness) {
-                    withAnimation(Motion.standard) { blueprint.goal = .generalFitness }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.goal = .generalFitness }
                 }
                 SelectionCard(title: Goal.endurance.planLabel, subtitle: Goal.endurance.planSubtitle,
                               systemImage: Goal.endurance.planSystemImage, isSelected: blueprint.goal == .endurance) {
-                    withAnimation(Motion.standard) { blueprint.goal = .endurance }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.goal = .endurance }
                 }
             }
         }
@@ -488,7 +514,7 @@ struct PlanBuilderFlow: View {
     private var distanceCards: some View {
         ForEach(RaceDistance.allCases) { d in
             SelectionCard(title: d.label, isSelected: blueprint.raceDistanceM == d.meters) {
-                withAnimation(Motion.standard) {
+                withAnimation(reduceMotion ? nil : Motion.standard) {
                     blueprint.raceDistanceM = d.meters
                     if hasGoalTime { seedGoalTime() }
                     syncTarget()
@@ -501,11 +527,10 @@ struct PlanBuilderFlow: View {
     private var goalTimeSection: some View {
         section(path == .improve ? "A TIME TO CHASE · OPTIONAL" : "TARGET FINISH · OPTIONAL") {
             VStack(spacing: Theme.Space.sm) {
-                Toggle(isOn: $hasGoalTime.animation(Motion.standard)) {
+                Toggle(isOn: $hasGoalTime.animation(reduceMotion ? nil : Motion.standard)) {
                     Text(path == .improve ? "I have a time in mind" : "Target finish time")
                         .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                 }
-                .tint(Theme.ink)
                 .padding(Theme.Space.md)
                 .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                 .onChange(of: hasGoalTime) { _, on in
@@ -616,9 +641,9 @@ struct PlanBuilderFlow: View {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     if let evidence, evidence.usesLoggedRuns {
                         HStack(spacing: 0) {
-                            metric(evidence.weeklyM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—", "PER WEEK")
+                            metric(evidence.weeklyM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "Not set", "PER WEEK")
                             Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
-                            metric(evidence.longestM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "—", "LONGEST RUN")
+                            metric(evidence.longestM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? "Not set", "LONGEST RUN")
                             if let p5k = profile.plan?.p5kSPerKm, p5k > 0 {
                                 Rectangle().fill(Theme.hairline).frame(width: 1, height: 38)
                                 metric(PlanFeasibility.hms(p5k * 5), "5K FITNESS")
@@ -647,7 +672,7 @@ struct PlanBuilderFlow: View {
 
     private func experienceCard(_ level: ExperienceLevel, _ title: String, _ subtitle: String) -> some View {
         SelectionCard(title: title, subtitle: subtitle, isSelected: blueprint.runningExperience == level) {
-            withAnimation(Motion.standard) { blueprint.runningExperience = level }
+            withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = level }
         }
     }
 
@@ -696,6 +721,7 @@ struct PlanBuilderFlow: View {
                 .lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
     private func loadEvidence() async {
@@ -718,7 +744,8 @@ struct PlanBuilderFlow: View {
         VStack(alignment: .leading, spacing: Theme.Space.lg) {
             section("DAYS A WEEK") {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    segmented([2, 3, 4, 5, 6], current: blueprint.daysPerWeek, label: { "\($0)" }) { blueprint.daysPerWeek = $0 }
+                    segmented([2, 3, 4, 5, 6], current: blueprint.daysPerWeek, label: { "\($0)" },
+                              spoken: { "\($0) days a week" }) { blueprint.daysPerWeek = $0 }
                     Text(blueprint.daysPerWeek == recommendedDays
                          ? "The coach's pick for this goal."
                          : "The coach's pick for this goal is \(recommendedDays). Your call.")
@@ -728,15 +755,19 @@ struct PlanBuilderFlow: View {
             section("WHICH DAYS") {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     weekdayChips
-                    Text(blueprint.preferredDays.isEmpty
-                         ? "Leave them all off and the coach spreads the week. The long run lands on Sunday when it is in."
-                         : "The long run takes the last day you chose in the week; hard days never touch it.")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    Text(tooFewDaysChosen
+                         ? "Pick at least \(blueprint.daysPerWeek) days, or leave them all off and the coach spreads the week."
+                         : (blueprint.preferredDays.isEmpty
+                            ? "Leave them all off and the coach spreads the week. The long run lands on Sunday when it is in."
+                            : "The long run lands on Sunday when it is chosen, else Saturday, else the chosen day with the most rest after it. Hard days never sit beside it."))
+                        .font(.rounded(Theme.FontSize.label, weight: .medium))
+                        .foregroundStyle(tooFewDaysChosen ? Theme.ink : Theme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             section("TIME PER SESSION") {
-                segmented([30, 45, 60, 75, 90], current: blueprint.sessionMinutes, label: { "\($0)m" }) { blueprint.sessionMinutes = $0 }
+                segmented([30, 45, 60, 75, 90], current: blueprint.sessionMinutes, label: { "\($0)m" },
+                          spoken: { "\($0) minutes" }) { blueprint.sessionMinutes = $0 }
             }
         }
     }
@@ -749,7 +780,7 @@ struct PlanBuilderFlow: View {
                 let on = blueprint.preferredDays.contains(weekday)
                 Button {
                     Haptics.selection()
-                    withAnimation(Motion.selection) {
+                    withAnimation(reduceMotion ? nil : Motion.selection) {
                         if on { blueprint.preferredDays.removeAll { $0 == weekday } }
                         else { blueprint.preferredDays.append(weekday) }
                     }
@@ -757,7 +788,7 @@ struct PlanBuilderFlow: View {
                     Text(String(symbols[weekday - 1].prefix(2)).uppercased())
                         .font(.rounded(Theme.FontSize.label, weight: .bold))
                         .foregroundStyle(on ? Theme.background : Theme.ink)
-                        .frame(maxWidth: .infinity).frame(height: 40)
+                        .frame(maxWidth: .infinity).frame(minHeight: 40)
                         .background {
                             if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
                         }
@@ -783,6 +814,11 @@ struct PlanBuilderFlow: View {
                             if blueprint.daysPerWeek < level.floorDays { blueprint.daysPerWeek = level.floorDays }
                         }
                     }
+                    if blueprint.intensity == .podium {
+                        Text("Podium trains \(PlanIntensity.podium.floorDays) or more days a week, so your week is set to \(blueprint.daysPerWeek). Every recovery guardrail still applies.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if let note = blueprint.intensity.riskNote {
                         Text(note).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -804,7 +840,7 @@ struct PlanBuilderFlow: View {
             section("STRENGTH FOR RUNNERS") {
                 VStack(spacing: Theme.Space.sm) {
                     Toggle(isOn: Binding(get: { blueprint.lifts }, set: { on in
-                        withAnimation(Motion.standard) {
+                        withAnimation(reduceMotion ? nil : Motion.standard) {
                             blueprint.includesStrength = on
                             if !on, blueprint.goal == .getStronger || blueprint.goal == .buildMuscle { blueprint.goal = .generalFitness }
                         }
@@ -815,7 +851,6 @@ struct PlanBuilderFlow: View {
                                 .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         }
                     }
-                    .tint(Theme.ink)
                     .padding(Theme.Space.md)
                     .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
                     if blueprint.lifts {
@@ -849,7 +884,8 @@ struct PlanBuilderFlow: View {
             if !values.contains(v) { values.append(v); values.sort() }
         }
         let current = blueprint.targetWeeklyRunVolumeM.map { Int(($0 / metersPerUnit).rounded()) } ?? 0
-        return segmented(values, current: current, label: { $0 == 0 ? "Coach" : "\($0)" }) { v in
+        return segmented(values, current: current, label: { $0 == 0 ? "Coach" : "\($0) \(unitLabel)" },
+                         spoken: { $0 == 0 ? "The coach decides" : "\($0) \(unitLabel) a week" }) { v in
             blueprint.targetWeeklyRunVolumeM = v == 0 ? nil : Double(v) * metersPerUnit
         }
     }
@@ -863,7 +899,7 @@ struct PlanBuilderFlow: View {
             ForEach(opts, id: \.0) { o in
                 SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
                               isSelected: (blueprint.hybridPriority ?? .balanced) == o.0) {
-                    withAnimation(Motion.standard) { blueprint.hybridPriority = o.0 }
+                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.hybridPriority = o.0 }
                 }
             }
         }
@@ -893,7 +929,8 @@ struct PlanBuilderFlow: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                 if let preview {
                     let f = Date.FormatStyle().day().month(.abbreviated)
-                    Text("Starting today: \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
+                    let when = Calendar.current.isDateInToday(preview.startDate) ? "Starting today" : "Starting tomorrow"
+                    Text("\(when): \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
                 }
             }
@@ -949,12 +986,12 @@ struct PlanBuilderFlow: View {
     private func saveDraft() {
         do {
             if let draft {
-                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: settledPreview, in: context)
                 if draft.status == .upcoming, let day = draft.scheduledStart, !PlanLifecycle.canSchedule(day, today: Date()) {
                     try PlanLifecycleService.moveToDrafts(draft, in: context)
                 }
             } else {
-                try PlanLifecycleService.saveDraft(blueprint, preview: preview, for: profile, in: context)
+                try PlanLifecycleService.saveDraft(blueprint, preview: settledPreview, for: profile, in: context)
             }
             Haptics.success()
             onFinish(.savedDraft)
@@ -963,7 +1000,7 @@ struct PlanBuilderFlow: View {
 
     private func schedule(on day: Date) {
         if let overlap = PlanLifecycle.overlap(current: PlanLifecycleService.currentSpan(for: profile), proposedStart: day) {
-            self.overlap = PendingOverlap(overlap: overlap, proposedStart: day)
+            self.overlap = PendingOverlap(overlap: overlap, startDay: day, startsNow: false)
             return
         }
         commitSchedule(on: day)
@@ -973,35 +1010,44 @@ struct PlanBuilderFlow: View {
         do {
             let record: PlanShelfRecord
             if let draft {
-                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: settledPreview, in: context)
                 record = draft
             } else {
-                record = try PlanLifecycleService.saveDraft(blueprint, preview: preview, for: profile, in: context)
+                record = try PlanLifecycleService.saveDraft(blueprint, preview: settledPreview, for: profile, in: context)
             }
-            try PlanLifecycleService.schedule(record, start: day, in: context)
+            try PlanLifecycleService.schedule(record, start: day, for: profile, in: context)
             Haptics.success()
             onFinish(.scheduled)
         } catch PlanLifecycleService.Failure.scheduleMustBeInTheFuture {
             failure = "Pick a day after today. To start today, use Start now."
+        } catch PlanLifecycleService.Failure.startAfterRaceDay {
+            failure = "That day is after the race. Pick an earlier start, or move the race date."
         } catch { failure = "The schedule could not be saved. Please try again." }
     }
 
+    /// Starting a plan is free, like "Start a new plan" on the masthead: the free tier's boundary
+    /// is the board's locked future weeks. Overlap is measured from the day activation really
+    /// starts (tomorrow from 21:00), so the sheet never names a cut that will not happen.
     private func startNow() {
-        guard paywall.isEntitled(to: .fullPlan) else { paywall.present(for: .fullPlan); return }
-        if let overlap = PlanLifecycle.overlap(current: PlanLifecycleService.currentSpan(for: profile), proposedStart: Date()) {
-            self.overlap = PendingOverlap(overlap: overlap, proposedStart: nil)
+        let start = PlanLifecycle.activationStart(now: Date())
+        if let overlap = PlanLifecycle.overlap(current: PlanLifecycleService.currentSpan(for: profile), proposedStart: start) {
+            self.overlap = PendingOverlap(overlap: overlap, startDay: start, startsNow: true)
             return
         }
         activate()
     }
 
+    /// A preview still being built is not persisted (an older blueprint's numbers would be), and
+    /// the task is cancelled only once the start has succeeded, so a failed start leaves the page live.
+    private var settledPreview: PlanPreview? { previewing ? nil : preview }
+
     private func activate() {
-        previewTask?.cancel()
         do {
             if let draft {
-                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: preview, in: context)
+                try PlanLifecycleService.update(draft, blueprint: blueprint, preview: settledPreview, in: context)
             }
             let activation = try PlanLifecycleService.activate(blueprint, from: draft, for: profile, in: context)
+            previewTask?.cancel()
             PlanLifecycleService.propagate(activation, profile: profile, workouts: profile.workouts,
                                            notifications: services.notifications, in: context)
             Haptics.success()
@@ -1016,14 +1062,14 @@ struct PlanBuilderFlow: View {
     // MARK: - Building blocks
 
     private func segmented(_ values: [Int], current: Int, label: @escaping (Int) -> String,
-                           _ set: @escaping (Int) -> Void) -> some View {
+                           spoken: @escaping (Int) -> String, _ set: @escaping (Int) -> Void) -> some View {
         HStack(spacing: Theme.Space.sm) {
             ForEach(values, id: \.self) { v in
                 let on = current == v
                 Button { Haptics.selection(); set(v) } label: {
                     Text(label(v))
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).monospacedDigit()
-                        .frame(maxWidth: .infinity).frame(height: 50)
+                        .frame(maxWidth: .infinity).frame(minHeight: 50)
                         .foregroundStyle(on ? Theme.background : Theme.ink)
                         .background {
                             RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
@@ -1031,6 +1077,7 @@ struct PlanBuilderFlow: View {
                         }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(spoken(v))
                 .accessibilityAddTraits(on ? .isSelected : [])
             }
         }

@@ -27,6 +27,7 @@ extension PlanBlueprint {
         longestRunM = profile.longestRunM
         runningExperience = ExperienceLevel(rawValue: profile.experience[Discipline.running.rawValue] ?? "") ?? .some
         liftingExperience = ExperienceLevel(rawValue: profile.experience[Discipline.strength.rawValue] ?? "") ?? .some
+        isSelfCoached = profile.plan?.isSelfCoached ?? false
     }
 
     /// Write the plan-shaped fields to the profile. Body, injury history and the athlete model are
@@ -69,6 +70,8 @@ enum PlanLifecycleService {
         case unreadableBlueprint
         case raceDateInThePast
         case scheduleMustBeInTheFuture
+        /// A race plan cannot start after its own race day.
+        case startAfterRaceDay
         case notShelved
     }
 
@@ -100,17 +103,20 @@ enum PlanLifecycleService {
         profile.plan.map { span(of: $0, calendar: calendar) }
     }
 
-    /// The honest read for a blueprint, from the blueprint's own numbers.
+    /// The honest read for a blueprint, from the blueprint's own numbers. Weeks are counted the
+    /// way every other surface counts them (`PlanEngine.weeksToRace`, day-based), and a distance
+    /// with no date on it is a rolling plan, not a race with a zero-week runway.
+    /// `currentWeeklyM` is the fitness the generator will actually build from (logged runs first);
+    /// the preview passes it so the outlook and the plan beside it read the same number.
     static func feasibility(for blueprint: PlanBlueprint, profile: UserProfile, today: Date = Date(),
-                            calendar: Calendar = .current) -> PlanFeasibility {
-        let weeks = blueprint.raceDate.map {
-            max(0, calendar.dateComponents([.weekOfYear], from: today, to: $0).weekOfYear ?? 0)
-        } ?? 0
+                            currentWeeklyM: Double? = nil, calendar: Calendar = .current) -> PlanFeasibility {
+        let dated = blueprint.isRace && blueprint.raceDate != nil
+        let weeks = blueprint.raceDate.map { PlanEngine.weeksToRace(startDate: today, raceDate: $0, calendar: calendar) ?? 0 } ?? 0
         return PlanFeasibility.assess(
-            raceDistanceM: blueprint.isRace ? blueprint.raceDistanceM : nil,
-            goalFinishTimeS: blueprint.isRace ? blueprint.goalFinishTimeS : nil,
+            raceDistanceM: dated ? blueprint.raceDistanceM : nil,
+            goalFinishTimeS: dated ? blueprint.goalFinishTimeS : nil,
             currentP5kSPerKm: profile.plan?.p5kSPerKm,
-            currentWeeklyVolumeM: blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM ?? 0,
+            currentWeeklyVolumeM: currentWeeklyM ?? blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM ?? 0,
             weeksAvailable: weeks,
             experience: blueprint.runningExperience,
             injuryProne: !profile.injuryHistory.isEmpty,
@@ -126,9 +132,11 @@ enum PlanLifecycleService {
                         calendar: Calendar = .current) -> PlanPreview {
         let staged = PlanService.stagePreview(blueprint: blueprint, for: profile, startDate: startDate,
                                               in: context, calendar: calendar)
-        let outlook = feasibility(for: blueprint, profile: profile, today: today, calendar: calendar)
+        let outlook = feasibility(for: blueprint, profile: profile, today: today,
+                                  currentWeeklyM: staged.inputs.currentWeeklyVolumeM, calendar: calendar)
         return PlanPreview.build(generated: staged.generated, inputs: staged.inputs, startDate: startDate,
-                                 feasibility: outlook, calendar: calendar)
+                                 feasibility: outlook, crossTrainingPerWeek: staged.crossTrainingPerWeek,
+                                 calendar: calendar)
     }
 
     // MARK: Drafts
@@ -136,8 +144,9 @@ enum PlanLifecycleService {
     @discardableResult
     static func saveDraft(_ blueprint: PlanBlueprint, preview: PlanPreview?, for profile: UserProfile,
                           now: Date = Date(), in context: ModelContext) throws -> PlanShelfRecord {
-        let record = PlanShelfRecord(profileID: profile.id, status: .draft, name: blueprint.displayName,
-                                     createdAt: now, blueprintData: try JSONEncoder().encode(blueprint))
+        let clean = blueprint.sanitized()
+        let record = PlanShelfRecord(profileID: profile.id, status: .draft, name: clean.displayName,
+                                     createdAt: now, blueprintData: try JSONEncoder().encode(clean))
         record.previewData = try preview.map { try JSONEncoder().encode($0) }
         record.scheduledStart = nil
         context.insert(record)
@@ -147,22 +156,34 @@ enum PlanLifecycleService {
 
     static func update(_ record: PlanShelfRecord, blueprint: PlanBlueprint, preview: PlanPreview?,
                        now: Date = Date(), in context: ModelContext) throws {
-        record.blueprintData = try JSONEncoder().encode(blueprint)
+        let clean = blueprint.sanitized()
+        record.blueprintData = try JSONEncoder().encode(clean)
         record.previewData = try preview.map { try JSONEncoder().encode($0) }
-        record.name = blueprint.displayName
+        record.name = clean.displayName
         record.updatedAt = now
         try context.save()
     }
 
     /// Put a draft on the calendar. Overlap with the current plan is the caller's decision to
-    /// surface (`PlanLifecycle.overlap`); this only refuses a day that is not in the future.
-    static func schedule(_ record: PlanShelfRecord, start: Date, now: Date = Date(),
-                         in context: ModelContext, calendar: Calendar = .current) throws {
+    /// surface (`PlanLifecycle.overlap`); this refuses a day that is not in the future and a day
+    /// after the plan's own race. With a profile, the cached preview is rebuilt for the scheduled
+    /// day, so the card's duration and end date describe the plan that will actually start then.
+    static func schedule(_ record: PlanShelfRecord, start: Date, for profile: UserProfile? = nil,
+                         now: Date = Date(), in context: ModelContext, calendar: Calendar = .current) throws {
         guard PlanLifecycle.canSchedule(start, today: now, calendar: calendar) else {
             throw Failure.scheduleMustBeInTheFuture
         }
+        let day = calendar.startOfDay(for: start)
+        if let blueprint = record.blueprint, blueprint.isRace, let raceDate = blueprint.raceDate,
+           calendar.startOfDay(for: raceDate) < day {
+            throw Failure.startAfterRaceDay
+        }
+        if let profile, let blueprint = record.blueprint {
+            let built = preview(for: blueprint, profile: profile, startDate: day, today: now, in: context, calendar: calendar)
+            record.previewData = try JSONEncoder().encode(built)
+        }
         record.status = .upcoming
-        record.scheduledStart = calendar.startOfDay(for: start)
+        record.scheduledStart = day
         record.updatedAt = now
         try context.save()
     }
@@ -210,7 +231,9 @@ enum PlanLifecycleService {
         defer { context.autosaveEnabled = previousAutosave }
         do {
             var retired: PlanShelfRecord?
-            if let current = profile.plan, !current.sessions.isEmpty {
+            if let current = profile.plan,
+               PlanLifecycle.isWorthShelving(sessionStatuses: current.sessions.map(\.status),
+                                             blockStart: current.blockStart, now: now, calendar: calendar) {
                 retired = retire(current, of: profile, endedAt: now, now: now, in: context, calendar: calendar)
             }
             // Resolve the season while the current plan is still attached (the command reads it),
@@ -256,25 +279,32 @@ enum PlanLifecycleService {
             } == true
         }
         guard let blueprint = winner.blueprint else {
-            demote(winner, now: today, in: context)
+            demote(winner, now: today, in: context, save: true)
             return nil
         }
+        // The runners-up return to drafts INSIDE the activation's save: a demotion that failed on
+        // its own would leave a second due plan to replace the one just started on the next sweep.
+        // A rolled-back activation rolls the demotions back with it, which is the right outcome.
+        for other in others { demote(other, now: today, in: context, save: false) }
         do {
-            let activation = try activate(blueprint, from: winner, for: profile, now: today,
-                                          in: context, calendar: calendar)
-            for other in others { demote(other, now: today, in: context) }
-            return activation
+            return try activate(blueprint, from: winner, for: profile, now: today, in: context, calendar: calendar)
         } catch {
-            demote(winner, now: today, in: context)
+            demote(winner, now: today, in: context, save: true)
             return nil
         }
     }
 
-    private static func demote(_ record: PlanShelfRecord, now: Date, in context: ModelContext) {
+    /// Back to drafts, said out loud in the inbox: an upcoming plan that could not start (its race
+    /// day passed, or a second plan was due the same day) must never vanish silently.
+    private static func demote(_ record: PlanShelfRecord, now: Date, in context: ModelContext, save: Bool) {
         record.status = .draft
         record.scheduledStart = nil
         record.updatedAt = now
-        try? context.save()
+        AppNotification.post(kind: .coaching, title: "\(record.name) moved back to drafts",
+                             body: "It could not start on its scheduled day. Open Your plans to edit it or start it when you are ready.",
+                             on: now, in: context, dedupeToken: "plan-demoted-\(record.id.uuidString)", daily: false,
+                             route: .plan)
+        if save { try? context.save() }
     }
 
     // MARK: Retiring
@@ -298,16 +328,19 @@ enum PlanLifecycleService {
         let state = CoachUndo.planState(of: plan)
         // A rolling block is one chapter of an open-ended plan: number it, so "Build running
         // fitness · block 3" reads as the third six-week block rather than three identical plans.
+        blueprint.isSelfCoached = plan.isSelfCoached
+        let base = plan.isSelfCoached ? "Self-coached" : blueprint.displayName
         let title = plan.name.isEmpty
-            ? (plan.raceDate == nil ? "\(blueprint.displayName) · block \(plan.blockIndex + 1)" : blueprint.displayName)
+            ? (plan.raceDate == nil ? "\(base) · block \(plan.blockIndex + 1)" : base)
             : plan.name
         let record = PlanShelfRecord(profileID: profile.id, status: resolved, name: title, createdAt: now,
-                                     blueprintData: (try? JSONEncoder().encode(blueprint)) ?? Data())
+                                     blueprintData: (try? JSONEncoder().encode(blueprint.sanitized())) ?? Data())
         record.startedAt = planSpan.start
         record.endedAt = min(calendar.startOfDay(for: endedAt), planSpan.end.map { calendar.startOfDay(for: $0) } ?? endedAt)
         record.sourcePlanID = plan.id
         record.snapshotData = try? JSONEncoder().encode(state)
-        let preview = PlanPreview.build(snapshot: state, blueprint: blueprint, distanceUnit: unit, calendar: calendar)
+        let preview = PlanPreview.build(snapshot: state, blueprint: blueprint, distanceUnit: unit,
+                                        anchor: planSpan.start, calendar: calendar)
         record.previewData = try? JSONEncoder().encode(preview)
         context.insert(record)
         return record
@@ -315,13 +348,23 @@ enum PlanLifecycleService {
 
     // MARK: Downstream
 
-    /// Everything that mirrors the current plan: reminders, the widget, the wrist, the inbox.
+    /// Everything that mirrors the current plan: reminders, the widget, the wrist, the inbox. The
+    /// widget snapshot walks the whole workout history for its stats, so it runs a beat later off
+    /// the frame that switched the plan (Today's own throttled pass repeats it anyway).
     static func propagate(_ activation: Activation, profile: UserProfile, workouts: [Workout],
                           notifications: NotificationServing, in context: ModelContext,
                           calendar: Calendar = .current) {
         notifications.schedulePlannedReminders(activation.plan)
-        WidgetBridge.publish(profile: profile, workouts: workouts,
-                             stats: ProfileStats(workouts: workouts, plan: activation.plan, calendar: calendar))
+        let plan = activation.plan
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.5))
+            // The profile may be gone half a second later (an account wipe, a torn-down test
+            // container): a relationship read on it then traps inside SwiftData.
+            guard !profile.isDeleted, profile.modelContext != nil else { return }
+            guard !plan.isDeleted, plan.modelContext != nil else { return }
+            WidgetBridge.publish(profile: profile, workouts: workouts,
+                                 stats: ProfileStats(workouts: workouts, plan: plan, calendar: calendar))
+        }
         PhoneWatchSync.shared.scheduleRefresh()
         let name = activation.plan.name.isEmpty ? "Your new plan" : activation.plan.name
         var body = "\(name) starts \(calendar.isDateInToday(activation.start) ? "today" : "tomorrow")."

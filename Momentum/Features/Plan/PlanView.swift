@@ -242,7 +242,18 @@ struct PlanView: View {
             if recorderClosed, isVisible { rebuildDerived() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active, isVisible { rebuildDerived() }
+            guard phase == .active, isVisible else { return }
+            // Parked on Plan overnight: a race settles and a due plan starts here too, exactly as
+            // on appear (both are idempotent, one predicate fetch when nothing is due).
+            if let p = profiles.first {
+                PlanService.settleRaces(for: p, today: Date(), in: context)
+                if let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
+                    PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
+                                                   notifications: services.notifications, in: context)
+                    weekStart = currentWeekStart
+                }
+            }
+            rebuildDerived()
         }
     }
 
@@ -331,12 +342,14 @@ struct PlanView: View {
             }
             // An upcoming plan whose day has come starts here too (Today's bootstrap is the usual
             // door; an athlete who opens straight onto Plan should not see last week's plan).
-            if let p = profiles.first,
-               let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
-                PlanLifecycleService.propagate(activation, profile: p, workouts: p.workouts,
-                                               notifications: services.notifications, in: context)
-                weekStart = currentWeekStart
-                rebuildDerived()
+            if let p = profiles.first {
+                PlanService.settleRaces(for: p, today: Date(), in: context)
+                if let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
+                    PlanLifecycleService.propagate(activation, profile: p, workouts: p.workouts,
+                                                   notifications: services.notifications, in: context)
+                    weekStart = currentWeekStart
+                    rebuildDerived()
+                }
             }
             #if DEBUG
             // --plan-your-plans: open the shelf (screenshot verification).
@@ -875,11 +888,11 @@ struct PlanView: View {
     @ViewBuilder
     private var yourPlansSheet: some View {
         if let p = profiles.first {
-            YourPlansView(profile: p, distanceUnit: distanceUnit,
+            YourPlansView(profile: p, distanceUnit: distanceUnit, workouts: workouts,
                           onManageCurrent: { showYourPlans = false; showManage = true },
                           onCompose: { record in
                               showYourPlans = false
-                              composing = PlanComposeTarget(record: record)
+                              composing = PlanComposeTarget(record: record, fromShelf: true)
                           },
                           onPlanChanged: { planChangedFromShelf() })
         }
@@ -904,7 +917,8 @@ struct PlanView: View {
                 composing = nil
                 if outcome == .activated {
                     planChangedFromShelf()
-                } else if outcome != .cancelled {
+                } else if outcome != .cancelled || target.fromShelf {
+                    // Back to the shelf the athlete came from, including after a Cancel.
                     showYourPlans = true
                 }
             }
@@ -2113,5 +2127,7 @@ struct PlanView: View {
 /// `.sheet(item:)` needs an Identifiable; a nil record is a fresh plan.
 struct PlanComposeTarget: Identifiable {
     let record: PlanShelfRecord?
+    /// Opened from Your plans: a Cancel returns there rather than to the board.
+    var fromShelf = false
     var id: String { record?.id.uuidString ?? "new" }
 }

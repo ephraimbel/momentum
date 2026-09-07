@@ -260,8 +260,13 @@ enum PlanCoaching {
                                 calendar: Calendar = .current) {
         guard let plan else { return }
         // While paused, sessions were deliberately shifted out — rolling them "forward" again would
-        // undo the pause. Stand down until the window passes (resume clears it early).
-        if let paused = plan.pausedUntil, calendar.startOfDay(for: today) < calendar.startOfDay(for: paused) { return }
+        // undo the pause. Stand down until the window passes (resume clears it early). A window
+        // that has passed clears itself here, so "Pause" is never refused for a pause that ended
+        // weeks ago (2026-09-07).
+        if let paused = plan.pausedUntil {
+            if calendar.startOfDay(for: today) < calendar.startOfDay(for: paused) { return }
+            plan.pausedUntil = nil
+        }
         let todayStart = calendar.startOfDay(for: today)
         var occupied = Set(plan.sessions.map { calendar.startOfDay(for: $0.date) })
         var changed = false
@@ -936,8 +941,11 @@ enum PlanCoaching {
         let todayStart = calendar.startOfDay(for: today)
         guard let until = calendar.date(byAdding: .day, value: days, to: todayStart) else { return 0 }
         var shifted = 0
+        // Race day never moves, and a tune-up sits on its own calendar date: a pause shifts the
+        // training around them, never the start lines (every line of copy promises exactly that).
         for s in plan.sessions
             where s.status != .completed && s.completedWorkout == nil
+                  && !isFixedDate(s)
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { continue }
             s.date = moved
@@ -963,6 +971,7 @@ enum PlanCoaching {
         var moved = 0
         for s in plan.sessions
             where s.status != .completed && s.completedWorkout == nil
+                  && !isFixedDate(s)
                   && calendar.startOfDay(for: s.date) >= todayStart {
             guard let back = calendar.date(byAdding: .day, value: -remaining, to: s.date),
                   calendar.startOfDay(for: back) >= todayStart else { continue }
@@ -971,6 +980,12 @@ enum PlanCoaching {
         }
         try? context.save()
         return moved
+    }
+
+    /// A session tied to a calendar date the athlete did not choose to move: the goal race, or a
+    /// tune-up race on the season. Pauses and resumes shift the training around these.
+    static func isFixedDate(_ session: PlannedSession) -> Bool {
+        session.runType == .race || (session.intervals?.hasPrefix("Tune-up") ?? false)
     }
 
     /// Human pre-session brief (PRD §4.7), deterministic; the AI may rewrite it later.

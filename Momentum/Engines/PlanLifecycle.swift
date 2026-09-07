@@ -51,8 +51,53 @@ struct PlanBlueprint: Codable, Equatable, Sendable {
     var longestRunM: Double?
     var runningExperience: ExperienceLevel = .some
     var liftingExperience: ExperienceLevel = .some
+    /// Carried for the shelf's story only: a self-coached plan retires under its own name. A
+    /// blueprint activated from the builder is always a coached plan.
+    var isSelfCoached: Bool = false
 
     init() {}
+
+    /// Stored JSON must outlive the code that wrote it: every key decodes if present and falls
+    /// back to the default above, so a field added later never makes a shelved plan unreadable.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        goal = try c.decodeIfPresent(Goal.self, forKey: .goal) ?? .generalFitness
+        includesStrength = try c.decodeIfPresent(Bool.self, forKey: .includesStrength) ?? false
+        raceDistanceM = try c.decodeIfPresent(Double.self, forKey: .raceDistanceM)
+        raceDate = try c.decodeIfPresent(Date.self, forKey: .raceDate)
+        goalFinishTimeS = try c.decodeIfPresent(Double.self, forKey: .goalFinishTimeS)
+        daysPerWeek = try c.decodeIfPresent(Int.self, forKey: .daysPerWeek) ?? 3
+        preferredDays = try c.decodeIfPresent([Int].self, forKey: .preferredDays) ?? []
+        sessionMinutes = try c.decodeIfPresent(Int.self, forKey: .sessionMinutes) ?? 45
+        equipment = try c.decodeIfPresent(Equipment.self, forKey: .equipment) ?? .fullGym
+        intensity = try c.decodeIfPresent(PlanIntensity.self, forKey: .intensity) ?? .balanced
+        targetWeeklyRunVolumeM = try c.decodeIfPresent(Double.self, forKey: .targetWeeklyRunVolumeM)
+        hybridPriority = try c.decodeIfPresent(HybridPriority.self, forKey: .hybridPriority)
+        strengthSplit = try c.decodeIfPresent(StrengthSplitStyle.self, forKey: .strengthSplit) ?? .coach
+        muscleFocus = try c.decodeIfPresent([MuscleGroup].self, forKey: .muscleFocus) ?? []
+        weeklyRunVolumeM = try c.decodeIfPresent(Double.self, forKey: .weeklyRunVolumeM)
+        longestRunM = try c.decodeIfPresent(Double.self, forKey: .longestRunM)
+        runningExperience = try c.decodeIfPresent(ExperienceLevel.self, forKey: .runningExperience) ?? .some
+        liftingExperience = try c.decodeIfPresent(ExperienceLevel.self, forKey: .liftingExperience) ?? .some
+        isSelfCoached = try c.decodeIfPresent(Bool.self, forKey: .isSelfCoached) ?? false
+    }
+
+    /// `JSONEncoder` refuses a non-finite number outright; a NaN in one volume field would leave a
+    /// record with no blueprint at all. Drop the impossible values before anything is written.
+    func sanitized() -> PlanBlueprint {
+        var b = self
+        func clean(_ v: Double?) -> Double? { v.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } }
+        b.raceDistanceM = clean(b.raceDistanceM)
+        b.goalFinishTimeS = clean(b.goalFinishTimeS)
+        b.targetWeeklyRunVolumeM = clean(b.targetWeeklyRunVolumeM)
+        b.weeklyRunVolumeM = clean(b.weeklyRunVolumeM)
+        b.longestRunM = clean(b.longestRunM)
+        b.daysPerWeek = min(7, max(1, b.daysPerWeek))
+        b.sessionMinutes = min(240, max(10, b.sessionMinutes))
+        b.preferredDays = Array(Set(b.preferredDays.filter { (1...7).contains($0) })).sorted()
+        return b
+    }
 
     var isRace: Bool { goal == .raceDistance && (raceDistanceM ?? 0) > 0 }
 
@@ -140,6 +185,43 @@ struct PlanPreview: Codable, Equatable, Sendable {
     var plannedSessions: Int
     /// Previous plans only: how many of the planned sessions were completed.
     var completedSessions: Int?
+    /// Tracked add-on activities the athlete asked for (swim, row, yoga): the rebuild appends one
+    /// a week per activity on a day the structured plan left free, so they count against the
+    /// day budget without being prescribed by the engine.
+    var crossTrainingPerWeek: Int = 0
+
+    init(weeks: Int, startDate: Date, endDate: Date, runsPerWeek: Int, liftsPerWeek: Int, typicalWeek: [Day],
+         weeklyTimeS: Double, firstWeekM: Double, peakWeekM: Double, peakWeekNumber: Int, longestRunM: Double,
+         phases: [PhaseSpan], outlook: Outlook?, plannedSessions: Int, completedSessions: Int?,
+         crossTrainingPerWeek: Int = 0) {
+        self.weeks = weeks; self.startDate = startDate; self.endDate = endDate
+        self.runsPerWeek = runsPerWeek; self.liftsPerWeek = liftsPerWeek; self.typicalWeek = typicalWeek
+        self.weeklyTimeS = weeklyTimeS; self.firstWeekM = firstWeekM; self.peakWeekM = peakWeekM
+        self.peakWeekNumber = peakWeekNumber; self.longestRunM = longestRunM; self.phases = phases
+        self.outlook = outlook; self.plannedSessions = plannedSessions; self.completedSessions = completedSessions
+        self.crossTrainingPerWeek = crossTrainingPerWeek
+    }
+
+    /// Same durability rule as `PlanBlueprint`: a cached preview from an older build still decodes.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        weeks = try c.decodeIfPresent(Int.self, forKey: .weeks) ?? 1
+        startDate = try c.decodeIfPresent(Date.self, forKey: .startDate) ?? Date()
+        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate) ?? startDate
+        runsPerWeek = try c.decodeIfPresent(Int.self, forKey: .runsPerWeek) ?? 0
+        liftsPerWeek = try c.decodeIfPresent(Int.self, forKey: .liftsPerWeek) ?? 0
+        typicalWeek = try c.decodeIfPresent([Day].self, forKey: .typicalWeek) ?? []
+        weeklyTimeS = try c.decodeIfPresent(Double.self, forKey: .weeklyTimeS) ?? 0
+        firstWeekM = try c.decodeIfPresent(Double.self, forKey: .firstWeekM) ?? 0
+        peakWeekM = try c.decodeIfPresent(Double.self, forKey: .peakWeekM) ?? 0
+        peakWeekNumber = try c.decodeIfPresent(Int.self, forKey: .peakWeekNumber) ?? 1
+        longestRunM = try c.decodeIfPresent(Double.self, forKey: .longestRunM) ?? 0
+        phases = try c.decodeIfPresent([PhaseSpan].self, forKey: .phases) ?? []
+        outlook = try c.decodeIfPresent(Outlook.self, forKey: .outlook)
+        plannedSessions = try c.decodeIfPresent(Int.self, forKey: .plannedSessions) ?? 0
+        completedSessions = try c.decodeIfPresent(Int.self, forKey: .completedSessions)
+        crossTrainingPerWeek = try c.decodeIfPresent(Int.self, forKey: .crossTrainingPerWeek) ?? 0
+    }
 
     /// Weeks are the unit of a plan; days would over-promise on a week that has not been placed.
     var durationLine: String {
@@ -149,7 +231,8 @@ struct PlanPreview: Codable, Equatable, Sendable {
     // MARK: - From a generated plan
 
     static func build(generated: GeneratedPlan, inputs: PlanInputs, startDate: Date,
-                      feasibility: PlanFeasibility?, calendar: Calendar = .current) -> PlanPreview {
+                      feasibility: PlanFeasibility?, crossTrainingPerWeek: Int = 0,
+                      calendar: Calendar = .current) -> PlanPreview {
         let weeks = generated.weeks
         let anchorWeekday = inputs.anchorWeekday ?? calendar.component(.weekday, from: startDate)
         let start = calendar.startOfDay(for: startDate)
@@ -212,7 +295,8 @@ struct PlanPreview: Codable, Equatable, Sendable {
             weeklyTimeS: weeklyTimeS,
             firstWeekM: volumes.first ?? 0, peakWeekM: volumes.max() ?? 0, peakWeekNumber: peakIndex + 1,
             longestRunM: longest, phases: phases, outlook: outlook,
-            plannedSessions: weeks.reduce(0) { $0 + $1.sessions.count }, completedSessions: nil)
+            plannedSessions: weeks.reduce(0) { $0 + $1.sessions.count }, completedSessions: nil,
+            crossTrainingPerWeek: crossTrainingPerWeek)
     }
 
     /// The week the plan spends most of its time in: the first build week that is not a down week,
@@ -227,14 +311,17 @@ struct PlanPreview: Codable, Equatable, Sendable {
 
     /// The look-back preview for a previous plan, read off its final state. Sessions completed are
     /// counted from the ledger the plan kept; the Workout rows themselves are never consulted.
+    /// `anchor` is the block's day zero (`TrainingPlan.blockStart`): finished work carried across a
+    /// rebuild can sit EARLIER than the block, and counting weeks from it read a six-week block as
+    /// seven. Sessions before the anchor still count as done; they just belong to no week.
     static func build(snapshot: CoachUndo.Snapshot.PlanState, blueprint: PlanBlueprint,
-                      distanceUnit: DistanceUnit, calendar: Calendar = .current) -> PlanPreview {
+                      distanceUnit: DistanceUnit, anchor: Date? = nil, calendar: Calendar = .current) -> PlanPreview {
         let sessions = snapshot.sessions
         let dates = sessions.map(\.date)
-        let start = calendar.startOfDay(for: dates.min() ?? snapshot.createdAt)
-        let end = calendar.startOfDay(for: snapshot.raceDate ?? dates.max() ?? start)
+        let start = calendar.startOfDay(for: anchor ?? dates.min() ?? snapshot.createdAt)
+        let end = max(start, calendar.startOfDay(for: snapshot.raceDate ?? dates.max() ?? start))
         let weekCount = max(1, (calendar.dateComponents([.day], from: start, to: end).day ?? 0) / 7 + 1)
-        let byWeek = Dictionary(grouping: sessions) {
+        let byWeek = Dictionary(grouping: sessions.filter { calendar.startOfDay(for: $0.date) >= start }) {
             (calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: $0.date)).day ?? 0) / 7
         }
         func volume(_ week: [CoachUndo.Snapshot.SessionState]) -> Double {
@@ -280,6 +367,8 @@ enum PlanLifecycle {
     /// What starting another plan on a date would do to the current one.
     struct Overlap: Equatable, Sendable {
         var currentEnd: Date
+        /// Days of the current plan that would be cut, inclusive of both ends, at least one.
+        var daysCut: Int
         /// Whole weeks of the current plan that would be cut, at least one.
         var weeksCut: Int
         var sessionsCut: Int
@@ -300,7 +389,7 @@ enum PlanLifecycle {
         let sessionsCut = current.openSessionDates.filter { calendar.startOfDay(for: $0) >= start }.count
         let cutsRace = current.raceDate.map { calendar.startOfDay(for: $0) >= start } ?? false
         let nextFree = calendar.date(byAdding: .day, value: 1, to: endDay) ?? endDay
-        return Overlap(currentEnd: endDay, weeksCut: max(1, Int((Double(daysCut) / 7).rounded(.up))),
+        return Overlap(currentEnd: endDay, daysCut: max(1, daysCut), weeksCut: max(1, Int((Double(daysCut) / 7).rounded(.up))),
                        sessionsCut: sessionsCut, cutsGoalRace: cutsRace, raceDate: current.raceDate,
                        nextFreeStart: nextFree)
     }
@@ -334,6 +423,18 @@ enum PlanLifecycle {
     /// A schedule date must be tomorrow or later; today is "start now".
     static func canSchedule(_ date: Date, today: Date, calendar: Calendar = .current) -> Bool {
         calendar.startOfDay(for: date) > calendar.startOfDay(for: today)
+    }
+
+    /// A plan nobody trained on yet is not history. A block built moments ago (the recovery block
+    /// a finished race opens, or a plan replaced within the day it started) with nothing completed
+    /// would only clutter Previous; one completed session, or a day of life, earns the shelf.
+    static func isWorthShelving(sessionStatuses: [SessionStatus], blockStart: Date?, now: Date,
+                                calendar: Calendar = .current) -> Bool {
+        if sessionStatuses.contains(.completed) { return true }
+        guard let blockStart else { return !sessionStatuses.isEmpty }
+        let age = calendar.dateComponents([.day], from: calendar.startOfDay(for: blockStart),
+                                          to: calendar.startOfDay(for: now)).day ?? 0
+        return age >= 1 && !sessionStatuses.isEmpty
     }
 
     /// "Week 4 of 12" for the current plan card.

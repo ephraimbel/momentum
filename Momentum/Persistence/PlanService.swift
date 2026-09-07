@@ -482,11 +482,6 @@ enum PlanService {
         guard let dayAfter = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: raceDate)),
               calendar.startOfDay(for: today) >= calendar.startOfDay(for: dayAfter) else { return nil }
 
-        // 0) The finished season goes to the shelf as a completed plan (2026-09-07) while the
-        // profile still describes it. Insert only; the rebuild's save below commits it.
-        PlanLifecycleService.retire(plan, of: profile, endedAt: raceDate, now: today, status: .completed,
-                                    in: context, calendar: calendar)
-
         // 1) Recalibrate from the result, when the race was actually run and logged.
         let raceM = profile.raceDistanceM
         let raceWorkout = plan.sessions.first { $0.runType == .race }?.completedWorkout
@@ -503,6 +498,13 @@ enum PlanService {
                                      on: today, in: context, calendar: calendar)
             }
         }
+
+        // The finished season goes to the shelf as a completed plan (2026-09-07) while the profile
+        // still describes it. Insert only, AFTER the recalibration event (which saves) and before
+        // anything below: `rebuild`'s single save commits it, and a failed rebuild rolls it back
+        // together with the goal fields, so a retry never shelves the same race twice.
+        PlanLifecycleService.retire(plan, of: profile, endedAt: raceDate, now: today, status: .completed,
+                                    in: context, calendar: calendar)
 
         // 2 + 3) Roll into the next block, recovery lead-in first. If the season holds another
         // race (2026-09-03, owner call), it becomes the goal and the block builds toward it after
@@ -763,20 +765,35 @@ enum PlanService {
     /// job; this is synchronous engine work over already-fetched rows.
     static func stagePreview(blueprint: PlanBlueprint, for profile: UserProfile, startDate: Date,
                              in context: ModelContext, calendar: Calendar = .current)
-        -> (generated: GeneratedPlan, inputs: PlanInputs) {
+        -> (generated: GeneratedPlan, inputs: PlanInputs, crossTrainingPerWeek: Int) {
         var inputs = planInputs(from: profile, startDate: startDate, calendar: calendar, blueprint: blueprint)
         inputs.opensWithRun = !hasLoggedRun(on: startDate, in: context, calendar: calendar)
-        let current = observedFitness(for: profile, on: startDate, in: context)
-        // The blueprint's declared fitness is the athlete's own word about where they are now; the
-        // logged-run read wins only when it exists, exactly as a rebuild treats the profile.
-        inputs.currentWeeklyVolumeM = current.weeklyM ?? blueprint.weeklyRunVolumeM
-        inputs.longestRunM = current.longestM ?? blueprint.longestRunM
+        // The same fitness rule a rebuild applies AFTER the blueprint is written to the profile:
+        // logged Momentum runs first, the athlete's own declaration as the fresh-profile fallback
+        // and the guardrail. Reading the profile's old declaration here made the preview ramp from
+        // last quarter's number while the activated plan ramped from the one just typed.
+        let runs = (try? runEvidence(endingAt: startDate, in: context, calendar: calendar)) ?? []
+        let snapshot = PlanFitnessEvidence.snapshot(
+            runs: runs,
+            declaredWeeklyM: blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM,
+            declaredLongestM: blueprint.longestRunM ?? profile.longestRunM,
+            profileCreatedAt: profile.createdAt,
+            endingAt: startDate,
+            calendar: calendar)
+        inputs.currentWeeklyVolumeM = snapshot.weeklyM
+        inputs.longestRunM = snapshot.longestM
+        // Tracked add-ons (swim, row, yoga) take a day each out of the structured week at rebuild
+        // time (`stageRebuild`); the preview must give them up the same way or it promises a run
+        // the activated plan turns into a swim.
+        let extras = profile.crossTraining.compactMap(WorkoutType.init(rawValue:)).count
+        let disciplines = inputs.disciplines.count
+        inputs.daysPerWeek = max(1, min(inputs.daysPerWeek, max(disciplines, inputs.daysPerWeek - extras)))
         let seed = profile.plan.map { CalibrationSeed(estimatedP5kSPerKm: $0.p5kSPerKm) } ?? .none
         let state = athleteState(for: profile, calibration: seed, on: startDate, in: context, calendar: calendar)
         let seeded = AthleteStateEngine.seed(seed, with: state)
         let generated = PlanEngine.generate(profile: inputs, catalog: catalog(in: context),
                                             calibration: seeded, startDate: startDate, calendar: calendar)
-        return (generated, inputs)
+        return (generated, inputs, extras)
     }
 
     /// Whether a run was logged on `day`. The plan opens with a run on its first day unless the
@@ -843,6 +860,17 @@ enum PlanService {
 
         let anchor = calendar.startOfDay(for: startDate)
         trainingPlan.blockStart = anchor   // the block's own day zero — see `TrainingPlan.blockStart`
+        // The weekly adaptation budget, the pace-easing cooldown and an open pause are the
+        // athlete's, not the plan row's (2026-09-07): a rebuild for more days or new equipment
+        // used to mint a plan with every latch cleared, so an ease throttled a minute earlier was
+        // suddenly available again and a paused plan silently un-paused.
+        if let existing {
+            trainingPlan.lastAdaptedAt = existing.lastAdaptedAt
+            trainingPlan.lastPaceEasedAt = existing.lastPaceEasedAt
+            if let until = existing.pausedUntil, calendar.startOfDay(for: until) > calendar.startOfDay(for: startDate) {
+                trainingPlan.pausedUntil = until
+            }
+        }
         var sessions: [PlannedSession] = []
         for week in plan.weeks {
             for gen in week.sessions {

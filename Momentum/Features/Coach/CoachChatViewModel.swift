@@ -394,8 +394,7 @@ final class CoachChatViewModel {
     /// Only the single most recent applied change is undoable — a newer change invalidates every
     /// older snapshot (they describe a world that no longer exists).
     private func makeSoleUndoPoint(_ message: ChatMessage, snapshot: String?) {
-        let all = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
-        for m in all where m.undoJSON != nil { m.undoJSON = nil }
+        CoachUndo.makeSoleUndoPoint(in: context)
         message.undoJSON = snapshot
     }
 
@@ -526,7 +525,7 @@ final class CoachChatViewModel {
         return CoachIntentBridge.Snapshot(
             today: today,
             upcomingSessions: upcoming(in: plan, today: today).map { ($0.id, $0.date) },
-            isPaused: plan?.pausedUntil != nil)
+            isPaused: plan?.pausedUntil.map { $0 > Date() } ?? false)
     }
 
     /// Future, still-open sessions in the next 14 days (cap 20) — the only sessions the coach may
@@ -616,7 +615,7 @@ final class CoachChatViewModel {
             feasibility: profile.map { CoachActions.feasibility(for: $0, today: now) },
             lastAdaptedAt: plan?.lastAdaptedAt,
             canAdaptLoad: CoachActions.canAdaptLoad(plan, today: now),
-            isPaused: plan?.pausedUntil != nil,
+            isPaused: plan?.pausedUntil.map { $0 > Date() } ?? false,
             activeInjuryArea: profile?.activeInjuryArea,
             lastWorkout: lastWorkout(in: workouts),
             recovery: recovery,

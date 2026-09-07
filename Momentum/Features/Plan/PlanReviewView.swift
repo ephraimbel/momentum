@@ -138,6 +138,9 @@ struct PlanPreviewContent: View {
                 } else {
                     stat("Sessions", "\(preview.plannedSessions)")
                 }
+                if preview.crossTrainingPerWeek > 0 {
+                    stat("Cross-training a week", "\(preview.crossTrainingPerWeek)", note: "tracked, not prescribed")
+                }
             }
             if preview.firstWeekM > 0, preview.peakWeekM > preview.firstWeekM {
                 Text("From \(Formatters.distance(meters: preview.firstWeekM, unit: distanceUnit)) in week 1 to \(Formatters.distance(meters: preview.peakWeekM, unit: distanceUnit)) at the peak. Every number is a floor for the week, not a promise of how you will feel.")
@@ -176,7 +179,7 @@ struct PlanPreviewContent: View {
                         .frame(width: 36, alignment: .leading)
                     if let days = byDay[weekday], !days.isEmpty {
                         VStack(alignment: .leading, spacing: 2) {
-                            ForEach(days) { day in
+                            ForEach(Array(days.enumerated()), id: \.offset) { _, day in
                                 HStack(spacing: 6) {
                                     Text(day.title)
                                         .font(.rounded(Theme.FontSize.caption, weight: day.isLong || day.isQuality ? .bold : .semibold))
@@ -210,7 +213,8 @@ struct PlanPreviewContent: View {
             Text("PHASES").font(.rounded(10, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
             GeometryReader { geo in
                 HStack(spacing: 2) {
-                    ForEach(preview.phases) { span in
+                    // Positional ids: a plan of eight or more weeks repeats "recovery · 1 wk".
+                    ForEach(Array(preview.phases.enumerated()), id: \.offset) { _, span in
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
                             .fill(fill(for: span.phase))
                             .frame(width: max(3, geo.size.width * CGFloat(span.weeks) / CGFloat(total) - 2))
@@ -220,7 +224,7 @@ struct PlanPreviewContent: View {
             .frame(height: 8)
             .accessibilityHidden(true)
             FlowLayout(spacing: Theme.Space.sm) {
-                ForEach(preview.phases) { span in
+                ForEach(Array(preview.phases.enumerated()), id: \.offset) { _, span in
                     HStack(spacing: 5) {
                         Circle().fill(fill(for: span.phase)).frame(width: 7, height: 7)
                         Text("\(span.phase.label) · \(span.weeks == 1 ? "1 wk" : "\(span.weeks) wks")")

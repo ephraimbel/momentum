@@ -20,6 +20,9 @@ struct CoachCardPayload: Codable, Equatable, Sendable {
         case addTuneUp
         case moveSession, skipSession
         case easeWeek, bumpLoad, easePaces
+        /// The busy-week ease (2026-09-07): the next seven days only, quality softens, the long run
+        /// keeps its place. The athlete's own word, so it bypasses the weekly gate and arms it.
+        case easeThisWeek
         case changeEquipment, injuryReport, pausePlan, resumePlan
         /// A fresh block from today: rolling plans renew (reassess + next block), race plans rebuild
         /// toward their race. The chat's "start over / next block" move.
@@ -102,6 +105,7 @@ enum CoachIntent: Equatable, Sendable {
     case moveSession(id: UUID, to: Date)
     case skipSession(id: UUID)
     case easeWeek
+    case easeThisWeek
     case bumpLoad
     case easePaces
     case changeEquipment(Equipment)
@@ -213,6 +217,7 @@ enum CoachIntentBridge {
             return .skipSession(id: session.id)
 
         case .easeWeek: return .easeWeek
+        case .easeThisWeek: return .easeThisWeek
         case .bumpLoad: return .bumpLoad
         case .easePaces: return .easePaces
 

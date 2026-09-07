@@ -516,14 +516,17 @@ struct TodayView: View {
         // the plan rolls into a recovery-lead-in block — BEFORE reconcile could touch the old plan.
         // These two stay SYNCHRONOUS: `refreshPendingToday` runs right after this and must see the
         // reconciled plan, or the deck's row shows a session that has already been moved.
-        // An upcoming plan whose day has come starts first (2026-09-07): it replaces the current
-        // plan in one transaction and mirrors itself to reminders, the widget and the wrist.
+        // A finished race settles FIRST: its result recalibrates the athlete and closes the season
+        // before any upcoming plan can replace it. Then a plan whose day has come starts (2026-09-07),
+        // replacing the current one in one transaction and mirroring itself to reminders, the
+        // widget and the wrist. (A recovery block built seconds earlier with nothing completed is
+        // not worth shelving, so the switch leaves no empty "incomplete" plan behind.)
+        if let p = profiles.first { PlanService.settleRaces(for: p, today: Date(), in: context) }
         if let p = profiles.first,
            let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
             PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
                                            notifications: services.notifications, in: context)
         }
-        if let p = profiles.first { PlanService.settleRaces(for: p, today: Date(), in: context) }
         PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
         // Plans built before the coach notes existed still carry the fixed fallback sentences.
         // Rewrite those in place, once (a note is never generic again), so the coach reaches the

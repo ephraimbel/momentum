@@ -575,7 +575,7 @@ struct CoachCardView: View {
         case .changeDays, .changeSessionLength: "calendar"
         case .moveSession: "arrow.left.arrow.right"
         case .skipSession: "xmark.circle"
-        case .easeWeek, .easePaces: "arrow.down.right"
+        case .easeWeek, .easeThisWeek, .easePaces: "arrow.down.right"
         case .bumpLoad: "arrow.up.right"
         case .changeEquipment: "dumbbell.fill"
         case .injuryReport: "bandage.fill"
