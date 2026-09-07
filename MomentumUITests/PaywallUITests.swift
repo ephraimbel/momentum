@@ -28,29 +28,29 @@ final class PaywallUITests: XCTestCase {
                       "The annual trial's renewal terms are missing or ambiguous.")
         XCTAssertTrue(app.staticTexts["3 DAYS FREE"].exists,
                       "The annual card must foreground its active trial.")
-        XCTAssertFalse(app.staticTexts["SAVE 75%"].exists,
+        XCTAssertFalse(app.staticTexts["SAVE 55%"].exists,
                        "The savings badge must not compete with an active trial badge.")
-        // The Marquee (2026-08-27) + weekly pricing (2026-08-28): plans are Yearly/Weekly cards (a11y
-        // "Yearly plan, $1.54 per week, $79.99 billed yearly"), and the features are the marquee.
+        // The Marquee (2026-08-27) + monthly pricing (2026-09-07): plans are Yearly/Monthly cards (a11y
+        // "Yearly plan, $6.67 per month, $79.99 billed yearly"), and the features are the marquee.
         // One-screen contract: both cards, the feature marquee, and the CTA — no scrolling.
         let yearly = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label BEGINSWITH %@", "Yearly plan")).firstMatch
-        let weekly = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label BEGINSWITH %@", "Weekly plan")).firstMatch
+        let monthly = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Monthly plan")).firstMatch
         XCTAssertTrue(yearly.exists, "Yearly card not on the first screen.")
-        XCTAssertTrue(weekly.exists, "Weekly card not on the first screen.")
+        XCTAssertTrue(monthly.exists, "Monthly card not on the first screen.")
         XCTAssertTrue(app.descendants(matching: .any)["Everything in Pro"].firstMatch.exists,
                       "The feature marquee is missing.")
         try? app.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: "\(dumpDir)/verify_paywall_top.png"))
 
-        // Selecting weekly flips the CTA and the fine print to the weekly terms — the entry plan
-        // never inherits the yearly's badge or its per-week framing.
-        weekly.tap()
-        XCTAssertTrue(app.buttons["Continue · $5.99/week"].waitForExistence(timeout: 5),
-                      "CTA didn't follow the weekly selection.")
+        // Selecting monthly flips the CTA and the fine print to the monthly terms — the entry plan
+        // never inherits the yearly's badge or its per-month framing.
+        monthly.tap()
+        XCTAssertTrue(app.buttons["Continue · $14.99/month"].waitForExistence(timeout: 5),
+                      "CTA didn't follow the monthly selection.")
         XCTAssertFalse(app.buttons["Start my 3-day free trial"].exists,
-                       "The weekly plan must not inherit the annual plan's trial.")
-        XCTAssertTrue(app.staticTexts["$5.99/wk · cancel anytime"].waitForExistence(timeout: 5),
-                      "Fine print didn't follow the weekly selection.")
+                       "The monthly plan must not inherit the annual plan's trial.")
+        XCTAssertTrue(app.staticTexts["$14.99/mo · cancel anytime"].waitForExistence(timeout: 5),
+                      "Fine print didn't follow the monthly selection.")
     }
 }

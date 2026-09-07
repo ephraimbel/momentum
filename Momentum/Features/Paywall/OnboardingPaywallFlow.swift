@@ -245,10 +245,10 @@ struct OnboardingPaywallFlow: View {
             .buttonStyle(.plain)
             Group {
                 if paywall.pricingIsLive {
-                    let perWeek = offering.annual.perWeekText ?? ""
+                    let perMonth = offering.annual.perMonthText ?? ""
                     // Middot, not parentheses — every other price line in the paywall separates
                     // clauses with "·", and this footer shouldn't be the odd one out.
-                    Text("Just \(perWeek) · \(offering.annual.priceText) billed yearly")
+                    Text("Just \(perMonth) · \(offering.annual.priceText) billed yearly")
                 } else {
                     Text("Pricing unavailable · cancel anytime")
                 }

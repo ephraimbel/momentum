@@ -58,6 +58,7 @@ struct SettingsView: View {
 
     /// App Store subscription management — one tap here, then cancel in the system sheet (≤2 taps).
     private let manageURL = URL(string: "https://apps.apple.com/account/subscriptions")!
+    @State private var showSwitchSheet = false
 
     var body: some View {
         ScrollView {
@@ -241,7 +242,19 @@ struct SettingsView: View {
             }
             .padding(.vertical, 11)
             inset
-            actionRow("Manage subscription", icon: "creditcard") { openURL(manageURL) }
+            actionRow("Manage subscription", icon: "creditcard") {
+                // A yearly subscriber on their way to cancel sees the monthly first (2026-09-07);
+                // everyone else goes straight to Apple's page. Never a wall: the sheet carries
+                // the Manage link itself.
+                let ids = paywall.activeProductIDs
+                if paywall.isPro, ids.contains(paywall.offering.annual.id),
+                   !ids.contains(paywall.offering.monthly.id) {
+                    showSwitchSheet = true
+                } else {
+                    openURL(manageURL)
+                }
+            }
+            .sheet(isPresented: $showSwitchSheet) { SubscriptionSwitchSheet(manageURL: manageURL) }
             inset
             actionRow("Restore purchases", icon: "arrow.clockwise", busy: restoring) { restore() }
             restoreOutcome

@@ -17,8 +17,9 @@ The products live in ONE subscription group (`22239084 "momentum pro"`) and must
 
 | Product ID | Duration | Price | Intro offer | Sold? |
 |---|---|---|---|---|
-| `momentum_pro_weekly` | 1 week  | $5.99  | — | yes — the entry plan |
-| `momentum_pro_annual` | 1 year  | **$79.99** | **3 days free** | yes — $1.54/wk, badge "SAVE 75%"; eligible badge "3 DAYS FREE" |
+| `momentum_pro_monthly` | 1 month | **$14.99** | — | yes — the entry plan (2026-09-07; was sold at $9.99 until 2026-08-28, existing monthly subscribers keep that price) |
+| `momentum_pro_weekly` | 1 week  | $5.99  | — | **no** — retired from the offering 2026-09-07; stays on sale in ASC so existing weekly subscribers renew |
+| `momentum_pro_annual` | 1 year  | **$79.99** | **3 days free** | yes — $6.67/mo, badge "SAVE 55%"; eligible badge "3 DAYS FREE" |
 | `momentum_pro_monthly`| 1 month | $9.99  | — | **no** — retired from the offering 2026-08-28 |
 
 The monthly stays live but unsold: removing a product never cancels or re-prices an existing
@@ -49,14 +50,14 @@ still fires (on day 1) because `scheduleTrialReminder` only skips trials of 2 da
 **2026-09-05 (later) — annual SETTLED at $79.99 (owner call; the $99.99 change above never took effect).** The 175 pending
 $99.99 rows dated 2026-09-06 were DELETEd via `DELETE /v1/subscriptionPrices/{id}` and $79.99 (USA proceeds $56.00 first-year)
 plus its 174 equalizations scheduled for 2026-09-06 with `preserveCurrentPrice: true` — existing subscribers stay at what they
-pay today. In the app: **$1.54 / wk**, "$79.99 billed yearly", badge **SAVE 75%** (74.3% real).
+pay today. In the app: **$6.67 / mo**, "$79.99 billed yearly", badge **SAVE 55%** (55.5% real against 12 × $14.99).
 
 These IDs must match `PaywallOffering.standard` in `PaywallController.swift`.
 
 ## 2. RevenueCat dashboard
 - Create the project; add the App Store Connect app + shared secret.
 - Entitlement: **`pro`**. Attach both products to it.
-- Offering: **`default`** with a **weekly** and an **annual** package (`$rc_weekly` / `$rc_annual`). `loadOffering()` returns early unless BOTH resolve, so a missing package silently leaves the app on placeholder prices.
+- Offering: **`default`** with a **monthly** and an **annual** package (`$rc_monthly` / `$rc_annual`; the `$rc_weekly` package was dropped 2026-09-07). Until the dashboard lists `$rc_monthly`, `loadOffering()` fetches `momentum_pro_monthly` by id and purchases it as a bare store product — the entitlement mapping in RevenueCat is what grants Pro either way. `loadOffering()` returns early unless BOTH resolve, so a missing package silently leaves the app on placeholder prices.
 - Copy the **public SDK API key** (App-specific, `appl_…`).
 
 ## 3. Superwall dashboard

@@ -421,7 +421,7 @@ struct PaywallCheckout: View {
         VStack(spacing: Theme.Space.sm) {
             // The Cal AI-style trust line: when the selected plan starts with a free trial, say
             // out loud that today costs nothing. Suppressed with placeholder pricing (the trial
-            // length is a promise too) and for the trial-less weekly plan — but its SLOT is always
+            // length is a promise too) and for the trial-less monthly plan — but its SLOT is always
             // reserved (owner call 2026-08-20): removing the row shrank the checkout and nudged
             // every control above it when switching plans. Geometry holds; only opacity moves.
             Label("No payment due now", systemImage: "checkmark")
@@ -470,7 +470,7 @@ struct PaywallCheckout: View {
                         logAction("pricing_failed")
                         SentryMonitor.capture(.storePricingUnavailable,
                                               tags: ["placement": placement,
-                                                     "product": product.isAnnual ? "annual" : "weekly"])
+                                                     "product": product.isAnnual ? "annual" : "monthly"])
                         storeFailures += 1
                         purchaseError = "We couldn't load pricing from the App Store. Check your connection and try again."
                     }
@@ -483,7 +483,7 @@ struct PaywallCheckout: View {
                 case .purchased:
                     if paywall.claimPurchaseConversion(for: product.id) {
                         services.analytics.log(.paywallConvert(
-                            product: product.isAnnual ? "annual" : "weekly",
+                            product: product.isAnnual ? "annual" : "monthly",
                             placement: placement))
                     }
                     // The reminder page 2 of the onboarding flow promises. Scheduled only when a
@@ -492,7 +492,7 @@ struct PaywallCheckout: View {
                     if product.trialDays > 0 {
                         NotificationService.scheduleTrialReminder(
                             trialDays: product.trialDays,
-                            renewText: "\(product.priceText)/\(product.isAnnual ? "year" : "week")")
+                            renewText: "\(product.priceText)/\(product.isAnnual ? "year" : "month")")
                     }
                 case .cancelled:
                     logAction("purchase_cancelled")         // UI stays silent; analytics does not
@@ -502,7 +502,7 @@ struct PaywallCheckout: View {
                     // identify the failed stage. Static issue + bounded tags are enough to triage.
                     SentryMonitor.capture(.storePurchaseFailed,
                                           tags: ["placement": placement,
-                                                 "product": product.isAnnual ? "annual" : "weekly"])
+                                                 "product": product.isAnnual ? "annual" : "monthly"])
                     storeFailures += 1
                     purchaseError = message
                 }
@@ -565,11 +565,11 @@ struct PaywallCheckout: View {
         // length that came from a placeholder either.
         guard paywall.pricingIsLive else { return "Retry" }
         if let ctaLead, product.trialDays == 0 {
-            return "\(ctaLead) · \(product.priceText)\(product.isAnnual ? "/year" : "/week")"
+            return "\(ctaLead) · \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
         }
         return product.trialDays > 0
             ? "Start my \(product.trialDays)-day free trial"
-            : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/week")"
+            : "Continue · \(product.priceText)\(product.isAnnual ? "/year" : "/month")"
     }
 
     /// One tiny line: honest renewal terms + the required links, nothing taller.
@@ -599,7 +599,7 @@ struct PaywallCheckout: View {
         // The fine print is the one place a wrong number is actually a claim about what we'll
         // charge — never build it from placeholder pricing.
         guard paywall.pricingIsLive else { return "Pricing unavailable · cancel anytime" }
-        let per = product.isAnnual ? "yr" : "wk"
+        let per = product.isAnnual ? "yr" : "mo"
         if product.trialDays > 0 {
             return "\(product.trialDays) days free, then \(product.priceText)/\(per) · cancel anytime"
         }
@@ -617,7 +617,7 @@ struct PaywallCheckout: View {
         services.analytics.log(.paywallAction(
             action: action,
             placement: placement,
-            product: product.isAnnual ? "annual" : "weekly"))
+            product: product.isAnnual ? "annual" : "monthly"))
     }
 
     /// Entitlement landed. A host that keeps its cover on screen for a following beat handles it
