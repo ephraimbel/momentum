@@ -34,6 +34,9 @@ struct FuelEstimator {
         let items: [Item]
         let confidence: Double
         let note: String
+        /// "" for a meal; "not_food" or "unreadable" when the server looked and saw nothing to
+        /// estimate (photos, 2026-09-07). Optional so the deployed text-only function still decodes.
+        let reason: String?
     }
 
     /// What actually happened, so the caller can tell "the model couldn't read this meal" apart
@@ -41,6 +44,10 @@ struct FuelEstimator {
     /// forever; a request that was never issued bills nothing and must not spend the budget.
     enum Outcome: Sendable {
         case estimated(Estimate)
+        /// The function answered and honestly found no meal in what it was given: a photo of a
+        /// desk, a blurred plate. The attempt stands (a call was made), the journal stops asking on
+        /// its own, and the athlete gets a plain line instead of confident-looking zeros.
+        case rejected(reason: String)
         /// The function answered and we still have no usable numbers (non-200, undecodable body),
         /// **or** the request went out and died in flight (timeout, dropped mid-stream). Server
         /// work may well have been done, so this counts against the meal's attempts.
@@ -70,6 +77,8 @@ struct FuelEstimator {
 
     private let session: URLSession
     private let timeoutS: TimeInterval = 8   // text-only extraction; covers the server's Haiku fallback
+    /// A vision call reads the image first; give it room, but not forever.
+    private let photoTimeoutS: TimeInterval = 20
 
     /// The server capped today's estimates (429 — generous daily limit, abuse guard only). Remember
     /// until local midnight and skip the network: retries would be futile, and every meal still
@@ -89,18 +98,20 @@ struct FuelEstimator {
 
     /// Anything but `.estimated` leaves the meal pending — the log already succeeded and manual
     /// entry is always there. `context` gives the model the training frame ("tomorrow's long
-    /// session, 1h45m"). Text-only: the server reads `text` and `context` and nothing else (photos
-    /// left the app 2026-07-16 and the function never looked at the base64 blob we used to send).
-    func estimate(text: String, sessionLabel: String?, durationS: Double?) async -> Outcome {
+    /// session, 1h45m"). `imageJPEG` (2026-09-07) is the plate, already downsampled and stripped
+    /// of metadata by `MealPhoto`; it rides the request body as base64 and is never stored
+    /// server-side. Without it the request is byte-identical to the text-only contract.
+    func estimate(text: String, imageJPEG: Data? = nil, sessionLabel: String?, durationS: Double?) async -> Outcome {
         guard let endpoint, let bearer else { return .unavailable }
         if let until = Self.estimateLimitedUntil {
             if Date() < until { return .unavailable }
             Self.estimateLimitedUntil = nil
         }
-        struct Context: Encodable { let session: String?; let durationS: Double? }
-        struct Body: Encodable { let text: String; let context: Context }
-        let body = Body(text: text, context: Context(session: sessionLabel, durationS: durationS))
-        var req = URLRequest(url: endpoint, timeoutInterval: timeoutS)
+        // An image the app would not send is not sent: the server refuses it anyway, and a
+        // request that never leaves owes no attempt.
+        if let imageJPEG, !MealPhoto.isSendable(imageJPEG) { return .unavailable }
+        let body = Self.requestBody(text: text, imageJPEG: imageJPEG, sessionLabel: sessionLabel, durationS: durationS)
+        var req = URLRequest(url: endpoint, timeoutInterval: imageJPEG == nil ? timeoutS : photoTimeoutS)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let token = await SupabaseClientProvider.accessToken() ?? bearer
@@ -119,9 +130,43 @@ struct FuelEstimator {
             }
             guard http.statusCode == 200 else { return .declined }
             let estimate = try JSONDecoder().decode(Estimate.self, from: data)
-            return Self.isValid(estimate) ? .estimated(estimate) : .declined
+            return Self.outcome(for: estimate)
         } catch {
             return Self.neverReachedServer(error) ? .unavailable : .declined
+        }
+    }
+
+    /// The wire shape, pure, so the text-only and photo contracts can be pinned by tests.
+    struct RequestBody: Encodable, Equatable {
+        struct Context: Encodable, Equatable { let session: String?; let durationS: Double? }
+        struct Image: Encodable, Equatable { let mime: String; let base64: String }
+        let text: String
+        let context: Context
+        /// Omitted from the JSON when nil: a text-only request never carries the key.
+        let image: Image?
+    }
+
+    static func requestBody(text: String, imageJPEG: Data?, sessionLabel: String?, durationS: Double?) -> RequestBody {
+        RequestBody(text: text,
+                    context: .init(session: sessionLabel, durationS: durationS),
+                    image: imageJPEG.map { .init(mime: MealPhoto.mimeType, base64: $0.base64EncodedString()) })
+    }
+
+    /// A decoded answer becomes exactly one outcome: a rejection when the server said so, an
+    /// estimate when every number checks out, declined otherwise. An empty item list without a
+    /// reason is declined too — "nothing" is not a meal.
+    static func outcome(for estimate: Estimate) -> Outcome {
+        if let reason = estimate.reason, !reason.isEmpty, estimate.items.isEmpty {
+            return .rejected(reason: reason)
+        }
+        return isValid(estimate) ? .estimated(estimate) : .declined
+    }
+
+    /// The journal's line for a rejected photo, in the coach's voice, never a fabricated number.
+    static func rejectionLine(_ reason: String) -> String {
+        switch reason {
+        case "not_food": "That photo doesn't look like a meal. Add the foods by hand, or try another photo."
+        default: "That photo was too hard to read. Add the foods by hand, or try a clearer shot."
         }
     }
 

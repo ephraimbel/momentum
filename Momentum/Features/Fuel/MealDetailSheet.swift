@@ -29,7 +29,7 @@ struct MealDetailSheet: View {
         totalsMode ? entry.parsed().values : .sum(items.map(\.exactNutrition))
     }
     private var validationMessage: String? {
-        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Give this meal a name." }
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !meal.hasPhoto { return "Give this meal a name." }
         if totalsMode {
             if let error = entry.parsed().error { return error }
             if isNew && nutrition.values.isEmpty { return "Enter at least one nutrition amount. Leave unknown values blank." }
@@ -54,7 +54,12 @@ struct MealDetailSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
-                    TextField("Meal name", text: $name, axis: .vertical)
+                    if let photo = meal.photoData {
+                        MealPhotoView(data: photo, maxPoints: 400, cornerRadius: Theme.Radius.card)
+                            .frame(height: 190)
+                            .frame(maxWidth: .infinity)
+                    }
+                    TextField(meal.hasPhoto ? "Name this meal" : "Meal name", text: $name, axis: .vertical)
                         .font(.rounded(Theme.FontSize.body, weight: .semibold))
                         .accessibilityIdentifier("meal-name")
                         .focused($focused, equals: .name)

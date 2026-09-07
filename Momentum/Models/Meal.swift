@@ -140,9 +140,17 @@ extension Meal {
     /// ("Eggs ×2 · Toast with Butter · Coffee"), else the athlete's own words.
     var journalTitle: String {
         let items = self.items
-        guard !items.isEmpty else { return text }
+        guard !items.isEmpty else {
+            // A photo logged without words (2026-09-07) has no sentence to show until the items land.
+            let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return words.isEmpty && hasPhoto ? "Photo of a meal" : text
+        }
         return items.map { $0.qty == 1 ? $0.name : "\($0.name) ×\($0.qtyText)" }.joined(separator: " · ")
     }
+
+    /// Whether a plate photo was logged with this meal. Reads the external-storage blob's presence
+    /// only; the bytes are decoded by `ImageDownsampler` where a thumbnail is drawn.
+    var hasPhoto: Bool { photoData != nil }
 
     var items: [MealItem] {
         get { itemsData.flatMap { try? JSONDecoder().decode([MealItem].self, from: $0) } ?? [] }

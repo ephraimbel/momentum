@@ -170,9 +170,31 @@ rice crispy treat") deliberately miss the table and go to the estimator, whose p
 carries a PORTIONS ARE EXACT contract (fractions scale, size words scale, "40g protein shake"
 reads as nutrient content — deployed to `meal-estimate` 2026-07-24).
 
+## The photo lane (2026-09-07, owner brief; supersedes the 2026-07-16 "no photos" call)
+The composer's camera glyph opens two doors: **Take a photo** (the shared `CameraPicker`, only
+where a camera exists; a denied camera gets the Settings door and the library as the way round)
+and **Choose a photo** (`PhotosPicker`, out of process, no photo-library permission asked). The
+picked bytes go through `MealPhoto.prepare`: decoded and re-encoded through a fresh `CGImage`
+(no EXIF, no GPS, no maker notes survive), longest side capped at 1280 px, JPEG under 2.5 MB.
+The plate lands as a **durable draft at once** (`Meal.photoData`, the external-storage slot that
+had sat unused since V1; the composer's words, if any, as its caption) and the estimate runs
+against that ONE row — offline, the draft waits and the page's bounded retry sends the same photo
+later; a retry never inserts a second meal, and Delete cancels the in-flight task before the row
+goes. The request is the text contract plus one optional `image { mime, base64 }` key; the
+server validates type and size before it looks, passes the bytes to Gemini (`inline_data`) or
+Claude (`image` block) and never stores them. Every answer is validated server-side
+(`validate.ts`: ≤ 40 items, bounded finite numbers, unknown micros kept as null) and again by
+`FuelEstimator.isValid`. A photo of no food comes back as `reason: "not_food"` (or
+`"unreadable"`): the row shows "That photo doesn't look like a meal. Add the foods by hand, or
+try another photo.", the cap is spent so the journal stops asking on its own, and no number is
+ever invented. The row and the detail sheet draw the plate through `MealPhotoView`
+(`ImageDownsampler`'s cache, never full resolution in a list). Manual corrections outrank a late
+answer exactly as before (`apply` refuses a manual meal). Retention: the photo lives only in the
+meal's blob; deleting the meal deletes the photo; nothing is uploaded anywhere but the estimate
+request. Recipe: `--seed-fuel-photo` seeds a resolved and a rejected photo meal.
+
 ## The barcode lane (2026-07-24)
-The one estimate-free path: scan a wrapper, read the LABEL. Deliberately **not** photo-calorie
-guessing — we never estimate food from images. `BarcodeScanView` (full-screen camera,
+The one estimate-free path: scan a wrapper, read the LABEL. `BarcodeScanView` (full-screen camera,
 monochrome chrome, torch, honest denied/miss/offline states) → `OpenFoodFactsService` (v2 API,
 no key, nothing sent but the barcode) → the pure `BarcodeFood` engine decodes label JSON
 (per-serving wins over per-100 g; kJ→kcal and salt→sodium ladders for EU labels; micros stay

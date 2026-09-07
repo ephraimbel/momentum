@@ -238,6 +238,11 @@ struct FuelHistoryView: View {
             guard !EstimateGate.isEstimating(meal.id) else { return }
             editing = meal
         } label: {
+            HStack(alignment: .top, spacing: Theme.Space.sm) {
+            if let photo = meal.photoData {
+                MealPhotoView(data: photo, maxPoints: 44)
+                    .frame(width: 44, height: 44)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: Theme.Space.sm) {
                     Text(cachedTitles[meal.id] ?? meal.journalTitle)
@@ -264,6 +269,7 @@ struct FuelHistoryView: View {
                     Text(note).font(.rounded(Theme.FontSize.label, weight: .medium))
                         .foregroundStyle(Theme.inkTertiary).lineLimit(2)
                 }
+            }
             }
             .padding(Theme.Space.md)
             .contentShape(Rectangle())

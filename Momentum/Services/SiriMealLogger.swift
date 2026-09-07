@@ -121,6 +121,14 @@ enum SiriMealLogger {
         let outcome = await run(meal.text)
         guard !meal.isDeleted, meal.modelContext != nil else { return base }
         switch outcome {
+        case .rejected(let reason):
+            // Nothing to estimate in what was given (a Siri meal is text, so this is rare): the
+            // row says so and the cap is spent, the same as the journal's handling.
+            try? MealNutritionStore.update(meal, in: context) {
+                meal.note = FuelEstimator.rejectionLine(reason)
+                meal.estimateAttempts = 3
+                meal.confidence = 0
+            }
         case .estimated(let e):
             guard FuelEstimator.isValid(e) else { return receipt(for: meal, resolved: false) }
             do {
