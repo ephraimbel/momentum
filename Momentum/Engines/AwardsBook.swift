@@ -21,7 +21,8 @@ enum AwardsBook {
     static func syncSoon(delay: TimeInterval = 1.0) {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(delay))
-            sync(in: PersistenceController.shared.container.mainContext)
+            guard let context = PersistenceController.shared.availableContainer?.mainContext else { return }
+            sync(in: context)
         }
     }
 

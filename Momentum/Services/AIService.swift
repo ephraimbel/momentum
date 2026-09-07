@@ -60,10 +60,10 @@ final class AIService: AIServing {
 
     // MARK: - Athlete context (read from the local store)
 
-    private var mainContext: ModelContext { PersistenceController.shared.container.mainContext }
+    private var mainContext: ModelContext? { PersistenceController.shared.availableContainer?.mainContext }
 
     private func currentProfile() -> UserProfile? {
-        (try? mainContext.fetch(FetchDescriptor<UserProfile>()))?.first
+        (try? mainContext?.fetch(FetchDescriptor<UserProfile>()))?.first
     }
 
     private func athleteContext() -> AthleteContextDTO {
@@ -75,7 +75,7 @@ final class AIService: AIServing {
                                       text: $0.text, confidence: $0.confidence, pinned: $0.pinned)
         }
         // `profile.workouts` has no inverse so it never populates — read every workout from the store.
-        let workouts = (try? mainContext.fetch(FetchDescriptor<Workout>())) ?? []
+        let workouts = (try? mainContext?.fetch(FetchDescriptor<Workout>())) ?? []
         let recent = workouts.sorted { $0.startedAt > $1.startedAt }
             .prefix(2).compactMap(\.aiSummary)
         return AthleteContextDTO(facts: Self.compactFacts(m), notes: notes, recentNarratives: Array(recent))
@@ -146,11 +146,11 @@ final class AIService: AIServing {
                 note.source = state.source
                 note.pinned = state.pinned
                 note.isActive = state.isActive
-                mainContext.insert(note)
+                mainContext?.insert(note)
                 model.notes.append(note)
             }
         }
-        try? mainContext.save()
+        try? mainContext?.save()
     }
 
     // MARK: - Configuration (absent in the default build → template path)

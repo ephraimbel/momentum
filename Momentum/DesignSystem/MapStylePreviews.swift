@@ -51,7 +51,9 @@ final class MapStylePreviewPipeline {
     private let cache = NSCache<NSString, UIImage>()
     private var jobs: [MapStylePreviewRequest: Job] = [:]
     private var pending: [MapStylePreviewRequest] = []
-    private var running: Set<MapStylePreviewRequest> = []
+    // A cancelled loader still owns its slot until it unwinds. Key by job identity so an
+    // old cancellation cannot release a newly reopened request's slot for the same style.
+    private var running: Set<UUID> = []
 
     /// Useful for verifying that every completion/cancellation releases its subscriber.
     var subscriberCount: Int { jobs.values.reduce(0) { $0 + $1.waiters.count } }
@@ -93,10 +95,12 @@ final class MapStylePreviewPipeline {
         while running.count < limit, !pending.isEmpty {
             let request = pending.removeFirst()
             guard let job = jobs[request] else { continue }
-            running.insert(request)
             let id = job.id
+            running.insert(id)
             job.task = Task {
                 let image = await loader(request)
+                running.remove(id)
+                defer { drain() }
                 // A cancelled render can finish after a new request for the same key begins.
                 guard jobs[request]?.id == id else { return }
                 finish(request, image: image)
@@ -106,7 +110,6 @@ final class MapStylePreviewPipeline {
 
     private func finish(_ request: MapStylePreviewRequest, image: UIImage?) {
         guard let job = jobs.removeValue(forKey: request) else { return }
-        running.remove(request)
         if let image {
             let cost = (image.cgImage?.bytesPerRow ?? 0) * (image.cgImage?.height ?? 0)
             cache.setObject(image, forKey: request.key as NSString, cost: cost)
@@ -122,7 +125,6 @@ final class MapStylePreviewPipeline {
         guard job.waiters.isEmpty else { return }
         jobs[request] = nil
         pending.removeAll { $0 == request }
-        running.remove(request)
         job.task?.cancel()
         drain()
     }

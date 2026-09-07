@@ -49,6 +49,18 @@ Do not enable Replay, profiling, logs, request-body capture or user feedback att
 
 ## Verification
 
+Storage failures now report `swiftdata_store_unavailable` with a numeric `error_code` and an
+`open`, `backup`, `cleanup`, or `reopen` stage in `status`. A failed open/backup never falls back to
+an in-memory workout store: the app shows a retry screen until a durable container is available.
+Background refresh, Siri, notification actions and watch callbacks check container availability.
+Use DEBUG `--storage-unavailable --debug-pro --seed-demo` to verify the recovery screen without
+changing a real store. Remove `--storage-unavailable` to verify ordinary startup.
+
+Quarantine cleanup uses a `.recovery` journal beside the store. Do not open a fresh store until
+that journal has been processed and removed; it protects against interrupted SQLite/WAL cleanup.
+Backup paths are rebased to the current Application Support directory after container relocation.
+The preserved files are a recovery copy, not proof that a corrupt or incompatible store was repaired.
+
 1. Launch a Debug build with `--enable-sentry`; confirm a normal launch still works.
 2. Capture a temporary static test message or trigger Sentry's sample error, then remove the test.
 3. Test a crash without the debugger attached and relaunch so the cached crash uploads.

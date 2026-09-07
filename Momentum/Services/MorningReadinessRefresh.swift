@@ -50,9 +50,13 @@ enum MorningReadinessRefresh {
     private static func handle(_ task: BGAppRefreshTask, health: any HealthServing) {
         schedule()   // re-arm FIRST — the chain must survive a failed or expired run
         let work = Task { @MainActor in
-            defer { task.setTaskCompleted(success: true) }
+            var success = true
+            defer { task.setTaskCompleted(success: success) }
             guard NotificationPrefs.morningReadinessEnabled() else { return }
-            let context = PersistenceController.shared.container.mainContext
+            guard let context = PersistenceController.shared.availableContainer?.mainContext else {
+                success = false
+                return
+            }
             // Readiness looks back weeks, not a career — bound both fetches so a long-tenured
             // athlete's background wake doesn't walk the whole table against the BG task's
             // expiration budget (90d comfortably covers every chronic window the model reads;

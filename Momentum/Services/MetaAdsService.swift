@@ -37,7 +37,10 @@ enum MetaAdsService {
         if args.contains("--seed-demo") || args.contains("--debug-pro") || args.contains("--debug-free")
             || args.contains("--ui-test-route") { return }
         #endif
-        guard !appId.isEmpty, !clientToken.isEmpty else { return }
+        guard !isLive, !appId.isEmpty, !clientToken.isEmpty else { return }
+        // MOMENTUM-IOS-9: event flushes repeatedly queried CoreTelephony on main.
+        // Use the SDK's supported process cache rather than repeating carrier IPC.
+        Settings.shared.shouldUseCachedValuesForExpensiveMetadata = true
         // ATT has not been answered yet this launch, so start with the advertiser ID OFF: the SDK
         // must never be in a position to read the IDFA before the athlete has seen the prompt.
         // `AdTrackingConsent` turns these back on only if they allow tracking (and re-applies the

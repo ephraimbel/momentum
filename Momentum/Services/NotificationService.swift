@@ -38,7 +38,7 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     private var profile: UserProfile? {
         var descriptor = FetchDescriptor<UserProfile>()
         descriptor.fetchLimit = 1
-        return (try? PersistenceController.shared.container.mainContext.fetch(descriptor))?.first
+        return (try? PersistenceController.shared.availableContainer?.mainContext.fetch(descriptor))?.first
     }
 
     /// Siri meal receipts: the category carries the Undo action (see `SiriMealLogger.postReceipt`).
@@ -75,7 +75,9 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
                 return
             }
             Task { @MainActor in
-                SiriMealLogger.undoMeal(id: id, in: PersistenceController.shared.container.mainContext)
+                if let context = PersistenceController.shared.availableContainer?.mainContext {
+                    SiriMealLogger.undoMeal(id: id, in: context)
+                }
                 completionHandler()
             }
             return

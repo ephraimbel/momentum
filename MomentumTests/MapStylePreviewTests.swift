@@ -154,6 +154,27 @@ struct MapStylePreviewTests {
         #expect(attempts == 2)
     }
 
+    @Test func cancellingActiveWorkKeepsItsSlotUntilTheRendererStops() async {
+        let renderer = ControlledRenderer()
+        let pipeline = MapStylePreviewPipeline(limit: 1) { await renderer.load($0) }
+        let first = Task { await pipeline.image(for: request()) }
+        await until { renderer.requests.count == 1 }
+        first.cancel()
+        #expect(await first.value == nil)
+
+        let reopened = Task { await pipeline.image(for: request()) }
+        await until { pipeline.subscriberCount == 1 }
+        // The old loader ignores cancellation until its callback arrives. Reopening must not
+        // start another renderer or cache that late result.
+        #expect(renderer.requests.count == 1)
+        renderer.complete(0)
+        await until { renderer.requests.count == 2 }
+        #expect(pipeline.cachedImage(for: request()) == nil)
+        let expected = UIImage()
+        renderer.complete(1, image: expected)
+        #expect(await reopened.value === expected)
+    }
+
     private func until(_ predicate: () -> Bool) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(3))
         while !predicate(), ContinuousClock.now < deadline { await Task.yield() }

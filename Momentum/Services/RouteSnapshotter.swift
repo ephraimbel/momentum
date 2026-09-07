@@ -59,7 +59,7 @@ enum RouteSnapshotter {
                          insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
                          routeWidth: CGFloat = 8,
                          endpointDiameter: CGFloat? = nil) async -> Data? {
-        guard coordinates.count > 1 else { return nil }
+        guard !Task.isCancelled, coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
         // (Strava's default). Frame to the clipped path so the hidden ends aren't re-revealed by
@@ -76,7 +76,6 @@ enum RouteSnapshotter {
         // standalone maps (user call 2026-07-10).
         let snapshotter = Snapshotter(options: MapSnapshotOptions(size: size, pixelRatio: 2,
                                                                   showsLogo: false, showsAttribution: false))
-        snapshotter.styleURI = styleURI
         snapshotter.setCamera(to: snapshotter.camera(
             for: drawn, padding: insets, bearing: 0, pitch: 0))
         // The SAME solid route purple the live map draws — one trace color everywhere. (The old
@@ -86,68 +85,42 @@ enum RouteSnapshotter {
         let routeColor = UIColor(Theme.route).resolvedColor(
             with: UITraitCollection(userInterfaceStyle: .light))
 
-        // Wait for the style to load, then snapshot and stroke the route over it in the overlay
-        // handler (Core Graphics). Resume with the Sendable PNG `Data`.
-        return await withCheckedContinuation { (cont: CheckedContinuation<Data?, Never>) in
-            var tokens: [AnyCancelable] = []
-            var done = false
-            func finish(_ data: Data?) {
-                guard !done else { return }
-                done = true
-                tokens.removeAll()
-                cont.resume(returning: data)
+        // Own the renderer until success, failure, timeout or caller cancellation.
+        let render = RouteSnapshotRender()
+        // Casing follows the basemap so the trace lifts on any canvas:
+        //  • DARK map — a near-black hairline (a white halo bloomed into a fat glow that
+        //    swallowed streets, user report 2026-07-15).
+        //  • LIGHT canvas (the route card) — a soft dark lift, since a white halo is invisible
+        //    on near-white and the pastel periwinkle would otherwise wash out over pale water.
+        //  • COLOURED map (Standard/Streets/Satellite) — the classic white halo.
+        let darkBase = styleURI.rawValue.lowercased().contains("dark")
+        let lightBase = styleURI == .light
+        let casingColor: UIColor = darkBase ? UIColor(white: 0.07, alpha: 0.8)
+            : lightBase ? UIColor(white: 0.16, alpha: 0.32)
+            : UIColor.white.withAlphaComponent(0.95)
+        return await render.image(snapshotter: snapshotter, styleURI: styleURI) { overlay in
+            let ctx = overlay.context
+            let pts = drawn.map(overlay.pointForCoordinate)
+            guard pts.count > 1 else { return }
+            ctx.setLineJoin(.round); ctx.setLineCap(.round)
+            // Hairline casing under the route so it pops without haloing.
+            ctx.setLineWidth(routeWidth * 1.45); ctx.setStrokeColor(casingColor.cgColor)
+            ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
+            ctx.strokePath()
+            // One solid stroke of route purple. `routeWidth` is per-surface: Strava-thin —
+            // the route is a precise trace of the streets, never a marker swipe that
+            // covers whole blocks at city zoom.
+            ctx.setLineWidth(routeWidth); ctx.setStrokeColor(routeColor.cgColor)
+            ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
+            ctx.strokePath()
+            // Where the run began and where it ended (owner call 2026-07-30) — only on the
+            // surfaces that ask (full views, never grid thumbnails). These sit at the ends
+            // of the DRAWN path, which `clippingEnds` has already pulled ~200m in from the
+            // athlete's door, so the marks add no location the image wasn't showing.
+            if let endpointDiameter {
+                RouteEndpoints.draw(in: ctx, start: pts[0], finish: pts[pts.count - 1],
+                                    diameter: endpointDiameter)
             }
-            // Casing follows the basemap so the trace lifts on any canvas:
-            //  • DARK map — a near-black hairline (a white halo bloomed into a fat glow that
-            //    swallowed streets, user report 2026-07-15).
-            //  • LIGHT canvas (the route card) — a soft dark lift, since a white halo is invisible
-            //    on near-white and the pastel periwinkle would otherwise wash out over pale water.
-            //  • COLOURED map (Standard/Streets/Satellite) — the classic white halo.
-            let darkBase = styleURI.rawValue.lowercased().contains("dark")
-            let lightBase = styleURI == .light
-            let casingColor: UIColor = darkBase ? UIColor(white: 0.07, alpha: 0.8)
-                : lightBase ? UIColor(white: 0.16, alpha: 0.32)
-                : UIColor.white.withAlphaComponent(0.95)
-            snapshotter.onStyleLoaded.observeNext { _ in
-                snapshotter.start(overlayHandler: { overlay in
-                    let ctx = overlay.context
-                    let pts = drawn.map(overlay.pointForCoordinate)
-                    guard pts.count > 1 else { return }
-                    ctx.setLineJoin(.round); ctx.setLineCap(.round)
-                    // Hairline casing under the route so it pops without haloing.
-                    ctx.setLineWidth(routeWidth * 1.45); ctx.setStrokeColor(casingColor.cgColor)
-                    ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
-                    ctx.strokePath()
-                    // One solid stroke of route purple. `routeWidth` is per-surface: Strava-thin —
-                    // the route is a precise trace of the streets, never a marker swipe that
-                    // covers whole blocks at city zoom.
-                    ctx.setLineWidth(routeWidth); ctx.setStrokeColor(routeColor.cgColor)
-                    ctx.beginPath(); ctx.move(to: pts[0]); pts.dropFirst().forEach { ctx.addLine(to: $0) }
-                    ctx.strokePath()
-                    // Where the run began and where it ended (owner call 2026-07-30) — only on the
-                    // surfaces that ask (full views, never grid thumbnails). These sit at the ends
-                    // of the DRAWN path, which `clippingEnds` has already pulled ~200m in from the
-                    // athlete's door, so the marks add no location the image wasn't showing.
-                    if let endpointDiameter {
-                        RouteEndpoints.draw(in: ctx, start: pts[0], finish: pts[pts.count - 1],
-                                            diameter: endpointDiameter)
-                    }
-                }, completion: { result in
-                    switch result {
-                    case .success(let image): finish(image.pngData())
-                    case .failure: finish(nil)
-                    }
-                })
-            }.store(in: &tokens)
-            // Only a STYLE failure is fatal (nothing renders without a style). Tile/sprite/glyph
-            // errors are partial and transient — the snapshot still completes with what loaded.
-            // Failing the whole image on one missed tile left feed cards permanently mapless
-            // (user report 2026-07-10).
-            snapshotter.onMapLoadingError.observe { error in
-                if error.type == .style { finish(nil) }
-            }.store(in: &tokens)
-            // And never hang the caller if neither signal ever fires (offline, no cached style).
-            Task { try? await Task.sleep(for: .seconds(25)); finish(nil) }
         }
     }
 
@@ -182,4 +155,56 @@ enum RouteSnapshotter {
         return total / Double(coords.count - 1)
     }
 
+}
+
+/// A request owns all Mapbox callbacks. Completion clears ownership before cancellation because
+/// cancel() may itself invoke the completion callback. No renderer survives a dismissed caller.
+@MainActor
+private final class RouteSnapshotRender {
+    private var snapshotter: Snapshotter?
+    private var tokens: [AnyCancelable] = []
+    private var timeout: Task<Void, Never>?
+    private var continuation: CheckedContinuation<Data?, Never>?
+
+    func image(snapshotter: Snapshotter, styleURI: StyleURI,
+               overlay: @escaping SnapshotOverlayHandler) async -> Data? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled else { continuation.resume(returning: nil); return }
+                self.continuation = continuation
+                self.snapshotter = snapshotter
+                // Subscribe before assigning the style, including for an already-cached style.
+                snapshotter.onStyleLoaded.observeNext { [weak self, weak snapshotter] _ in
+                    guard let self, let snapshotter, self.continuation != nil else { return }
+                    snapshotter.start(overlayHandler: overlay) { [weak self] result in
+                        guard let self, self.continuation != nil else { return }
+                        self.finish((try? result.get())?.pngData())
+                    }
+                }.store(in: &tokens)
+                snapshotter.onMapLoadingError.observe { [weak self] error in
+                    // Missing tiles are partial results; only a missing style fails the request.
+                    if error.type == .style { self?.finish(nil) }
+                }.store(in: &tokens)
+                timeout = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(25)) } catch { return }
+                    self?.finish(nil)
+                }
+                snapshotter.styleURI = styleURI
+            }
+        } onCancel: {
+            Task { @MainActor in self.finish(nil) }
+        }
+    }
+
+    private func finish(_ data: Data?) {
+        guard let continuation else { return }
+        self.continuation = nil
+        timeout?.cancel()
+        timeout = nil
+        tokens.removeAll()
+        let renderer = snapshotter
+        snapshotter = nil
+        renderer?.cancel()
+        continuation.resume(returning: data)
+    }
 }

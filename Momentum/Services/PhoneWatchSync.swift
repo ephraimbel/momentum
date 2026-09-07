@@ -70,7 +70,7 @@ final class PhoneWatchSync: NSObject {
             context["readinessDayKey"] = Self.dayKey()
         }
 
-        let ctx = PersistenceController.shared.container.mainContext
+        guard let ctx = PersistenceController.shared.availableContainer?.mainContext else { return }
         let profiles = (try? ctx.fetch(FetchDescriptor<UserProfile>())) ?? []
         if let plan = profiles.first?.plan {
             let cal = Calendar.current
@@ -183,7 +183,7 @@ final class PhoneWatchSync: NSObject {
     /// phone sheet), then recompute readiness through the one recipe and push the fresh number
     /// back to the wrist.
     fileprivate func receiveCheckin(energyRaw: String, legsRaw: String) {
-        let ctx = PersistenceController.shared.container.mainContext
+        guard let ctx = PersistenceController.shared.availableContainer?.mainContext else { return }
         let checkins = (try? ctx.fetch(FetchDescriptor<DailyCheckin>())) ?? []
         if DailyCheckin.today(in: checkins) == nil {
             let checkin = DailyCheckin(energy: .init(rawValue: energyRaw) ?? .ok,
@@ -209,7 +209,7 @@ extension PhoneWatchSync {
     /// there is nothing new to compute, so the cached snapshot goes out as it is.
     fileprivate func receiveRefresh() {
         guard let health else { scheduleRefresh(); return }
-        let ctx = PersistenceController.shared.container.mainContext
+        guard let ctx = PersistenceController.shared.availableContainer?.mainContext else { return }
         Task {
             let workouts = (try? ctx.fetch(FetchDescriptor<Workout>())) ?? []
             let checkins = (try? ctx.fetch(FetchDescriptor<DailyCheckin>())) ?? []

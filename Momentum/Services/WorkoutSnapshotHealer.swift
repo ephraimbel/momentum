@@ -48,6 +48,8 @@ enum WorkoutSnapshotHealer {
                                                    styleURI: style.styleURI,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
+        // Dismissal is not a rendering failure. Let a visible tile retry this session.
+        guard !Task.isCancelled else { return }
         guard let data else { failed.insert(id); return }
         gps.mapSnapshotData = data
         gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
@@ -137,6 +139,7 @@ enum WorkoutSnapshotHealer {
                                                    styleURI: style.styleURI,
                                                    insets: RouteSnapshotter.workoutTileInsets)
         active -= 1
+        guard !Task.isCancelled else { return }
         guard let data else { return }
         gps.mapSnapshotData = data
         gps.mapSnapshotVersion = RouteSnapshotter.renderVersion

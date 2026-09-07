@@ -10,6 +10,7 @@ import Sentry
 /// assigned, and only `AnalyticsEvent`'s already-reviewed non-PII dimensions become breadcrumbs.
 enum SentryMonitor {
     enum Issue: String, Sendable {
+        case storeUnavailable = "swiftdata_store_unavailable"
         case storeQuarantined = "swiftdata_store_quarantined"
         case syncEncodingFailed = "workout_sync_encoding_failed"
         case syncRejected = "workout_sync_rejected"

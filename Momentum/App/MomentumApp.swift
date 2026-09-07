@@ -58,7 +58,7 @@ struct MomentumApp: App {
         // the personal sync re-uploads local history under the new account (idempotent — upserts
         // are id-keyed). postPublishedAt resets too so a future community return starts honest.
         authController.onFirstCloudSession = {
-            let context = PersistenceController.shared.container.mainContext
+            guard let context = PersistenceController.shared.availableContainer?.mainContext else { return }
             let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
             for workout in workouts {
                 workout.syncedAt = nil
@@ -74,7 +74,9 @@ struct MomentumApp: App {
         // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the
         // moment `profiles.isEmpty` flips true. Guest→real upgrade + first sign-in never reach here.
         authController.onAccountSwitch = {
-            DataManager.deleteAllUserData(in: PersistenceController.shared.container.mainContext)
+            if let context = PersistenceController.shared.availableContainer?.mainContext {
+                DataManager.deleteAllUserData(in: context)
+            }
         }
         // Billing follows the account: without this RevenueCat keeps a random anonymous customer id
         // per install, so a reinstall reads as a new customer and revenue can never be joined to a
@@ -138,7 +140,8 @@ struct MomentumApp: App {
         if let quarantine = PersistenceController.quarantineRecord, !quarantine.reported {
             services.analytics.log(.storeQuarantined(recovered: quarantine.recovered))
             SentryMonitor.capture(.storeQuarantined,
-                                  tags: ["recovered": String(quarantine.recovered)])
+                                  tags: ["recovered": String(quarantine.recovered),
+                                         "error_code": quarantine.errorCode ?? "unknown"])
             PersistenceController.markQuarantineReported()
         }
         // The legacy plan remains live while its running-domain sidecars are repaired. This starts
@@ -184,16 +187,22 @@ struct MomentumApp: App {
             // Value-driven (no conditional structure, so RootView identity never changes), no
             // preference writer at all (so no invalidation loop), and the window override is what
             // UIKit itself honors — status bar, sheets, and covers all follow.
-            root.background {
-                // The white welcome needs dark system chrome. Resume the athlete's saved
-                // appearance as soon as they leave the entry gate; onboarding stays unchanged.
-                AppearanceApplicator(style: !auth.isSignedIn ? .light
-                    : (AppAppearance(rawValue: appearanceRaw)?.interfaceStyle ?? .unspecified))
-                    .frame(width: 0, height: 0)
-                    .allowsHitTesting(false)
+            if let container = PersistenceController.shared.availableContainer {
+                root.background {
+                    // The white welcome needs dark system chrome. Resume the athlete's saved
+                    // appearance as soon as they leave the entry gate; onboarding stays unchanged.
+                    AppearanceApplicator(style: !auth.isSignedIn ? .light
+                        : (AppAppearance(rawValue: appearanceRaw)?.interfaceStyle ?? .unspecified))
+                        .frame(width: 0, height: 0)
+                        .allowsHitTesting(false)
+                }
+                .modelContainer(container)
+            } else {
+                StoreUnavailableView {
+                    PersistenceController.shared.retry()
+                }
             }
         }
-        .modelContainer(PersistenceController.shared.container)
     }
 
     private var root: some View {
@@ -275,5 +284,36 @@ private struct AppearanceApplicator: UIViewRepresentable {
             guard let window, window.overrideUserInterfaceStyle != style else { return }
             window.overrideUserInterfaceStyle = style
         }
+    }
+}
+
+/// No workout entry is mounted until a durable store is ready.
+private struct StoreUnavailableView: View {
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "externaldrive.badge.exclamationmark")
+                .font(.system(size: 40))
+                .foregroundStyle(Theme.inkSecondary)
+            Text("Your data couldn’t be opened")
+                .font(.display(28, weight: .semibold))
+                .multilineTextAlignment(.center)
+            Text("Your saved files have been kept for recovery. Try again after unlocking your iPhone or freeing up storage.")
+                .font(.rounded(16))
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center)
+            Button("Try again", action: retry)
+                .font(.rounded(16, weight: .semibold))
+                .foregroundStyle(Theme.background)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
+                .background(Theme.ink, in: Capsule())
+                .accessibilityIdentifier("storage-retry")
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.background)
+        .foregroundStyle(Theme.ink)
     }
 }
