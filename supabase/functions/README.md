@@ -10,7 +10,7 @@ the exception: not AI — the direct-wearable connect/ingest plumbing, docs/WEAR
 | `plan-narrate` | One-line rationale (≤16 words) for a deterministic plan adjustment. |
 | `garmin-oauth` | Garmin connect flow (OAuth2+PKCE `/start` + `/callback`). Deploy `--no-verify-jwt` — `/start` verifies the user JWT itself. |
 | `garmin-webhook` | Garmin activity-push receiver → `vendor_activities` staging inbox (idempotent). Deploy `--no-verify-jwt`. |
-| `revenuecat-openai-ads` | Authenticated RevenueCat purchase webhook → OpenAI Ads `subscription_created` conversion. Deploy `--no-verify-jwt`. |
+| `revenuecat-openai-ads` | Authenticated RevenueCat webhook → OpenAI Ads: `trial_started` on a free-trial start (optimisation signal) and `subscription_created` on a PAID start only (non-trial purchase, or the trial-conversion renewal). Rules in `conversion.ts`, tests via `deno test supabase/functions/revenuecat-openai-ads`. Deploy `--no-verify-jwt`. |
 
 ## Reliability contract (do not break)
 The iOS app **always** has a deterministic template fallback (`WorkoutReadTemplates.swift`,
