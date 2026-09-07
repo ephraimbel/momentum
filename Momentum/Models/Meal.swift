@@ -94,6 +94,10 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
     var sugarG: Int?
     var satFatG: Int?
     var nova: Int?
+    /// The portion's weight as served (ml for a drink) that the estimate assumed (2026-09-07):
+    /// the one number an athlete corrects first, so the sheet shows it beside the food. Optional
+    /// for old blobs and for rungs that never weigh (staples, labels). Scales with `qty`.
+    var gramsG: Int?
 
     /// Missing label fields and a stable portion basis are optional for old stored blobs.
     var unknownNutrients: [Nutrient]?
@@ -118,6 +122,8 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
         copy.qty = newQty
         copy.nutrition = scaled
         copy.portionBasis = basis
+        // The assumed weight follows the portion: half the eggs is half the grams.
+        copy.gramsG = gramsG.map { max(1, Int((Double($0) * newQty / qty).rounded())) }
         return copy
     }
 
@@ -133,6 +139,13 @@ struct MealItem: Codable, Identifiable, Equatable, Sendable {
         let plural = qty != 1 && !unit.hasSuffix("s") && unit.count > 2 ? "s" : ""
         return "\(qtyText) \(unit)\(plural)"
     }
+
+    /// "≈160 g" / "≈330 ml" — the portion the estimate assumed, when it weighed one. nil for
+    /// items that came from a label or a staple, which never guess a weight.
+    var portionWeightLabel: String? {
+        guard let g = gramsG, g > 0 else { return nil }
+        return "≈\(g) \(fluidsMl > 0 ? "ml" : "g")"
+    }
 }
 
 extension Meal {
@@ -141,11 +154,22 @@ extension Meal {
     var journalTitle: String {
         let items = self.items
         guard !items.isEmpty else {
-            // A photo logged without words (2026-09-07) has no sentence to show until the items land.
+            // A photo logged without words (2026-09-07) has no sentence to show until the items
+            // land; a row with neither words nor a plate still gets a name, never a blank line.
             let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return words.isEmpty && hasPhoto ? "Photo of a meal" : text
+            if !words.isEmpty { return words }
+            return hasPhoto ? "Photo of a meal" : "Meal"
         }
         return items.map { $0.qty == 1 ? $0.name : "\($0.name) ×\($0.qtyText)" }.joined(separator: " · ")
+    }
+
+    /// The server's own words for a meal it looked at and could not read as food (2026-09-07):
+    /// no numbers, zero confidence, the note set by the rejected branch. nil for every other
+    /// state, so the row shows the note ONCE, as the status line, and never twice.
+    var rejectionNote: String? {
+        guard carbsG == nil, source != "manual", confidence == 0,
+              let note, !note.isEmpty else { return nil }
+        return note
     }
 
     /// Whether a plate photo was logged with this meal. Reads the external-storage blob's presence

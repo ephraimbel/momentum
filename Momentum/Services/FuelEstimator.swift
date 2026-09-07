@@ -30,6 +30,13 @@ struct FuelEstimator {
             let sugar_g: Int?
             let satfat_g: Int?
             let nova: Int?
+            /// The portion the estimate assumed, as served (ml for a drink) — the photo pass's
+            /// visible portion basis (2026-09-07). Optional: the deployed text-only function
+            /// never sent it, and a label or staple never weighs.
+            let grams: Int?
+            /// Ethanol grams. Server-side energy bookkeeping (the Atwater identity the validator
+            /// reconciles kcal against); decoded so the item is complete, not surfaced.
+            let alcohol_g: Int?
         }
         let items: [Item]
         let confidence: Double
@@ -107,17 +114,22 @@ struct FuelEstimator {
             if Date() < until { return .unavailable }
             Self.estimateLimitedUntil = nil
         }
-        // An image the app would not send is not sent: the server refuses it anyway, and a
-        // request that never leaves owes no attempt.
-        if let imageJPEG, !MealPhoto.isSendable(imageJPEG) { return .unavailable }
-        let body = Self.requestBody(text: text, imageJPEG: imageJPEG, sessionLabel: sessionLabel, durationS: durationS)
-        var req = URLRequest(url: endpoint, timeoutInterval: imageJPEG == nil ? timeoutS : photoTimeoutS)
+        // An image the app would not send is not sent (the server refuses it anyway): the words
+        // go alone. With no words either there is nothing to judge, so the attempt is spent
+        // rather than refunded forever: a meal that can never be asked must come to rest.
+        let image = imageJPEG.flatMap { MealPhoto.isSendable($0) ? $0 : nil }
+        if image == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .declined }
+        var req = URLRequest(url: endpoint, timeoutInterval: image == nil ? timeoutS : photoTimeoutS)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let token = await SupabaseClientProvider.accessToken() ?? bearer
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         do {
-            req.httpBody = try JSONEncoder().encode(body)
+            // Base64 of a 2.5 MB plate plus the JSON pass is real work; it runs off the main
+            // actor, which is where every caller of this method lives.
+            req.httpBody = try await Task.detached(priority: .userInitiated) {
+                try Self.encodedBody(text: text, imageJPEG: image, sessionLabel: sessionLabel, durationS: durationS)
+            }.value
             let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse else { return .declined }
             if http.statusCode == 429 {
@@ -137,19 +149,24 @@ struct FuelEstimator {
     }
 
     /// The wire shape, pure, so the text-only and photo contracts can be pinned by tests.
-    struct RequestBody: Encodable, Equatable {
-        struct Context: Encodable, Equatable { let session: String?; let durationS: Double? }
-        struct Image: Encodable, Equatable { let mime: String; let base64: String }
+    struct RequestBody: Encodable, Equatable, Sendable {
+        struct Context: Encodable, Equatable, Sendable { let session: String?; let durationS: Double? }
+        struct Image: Encodable, Equatable, Sendable { let mime: String; let base64: String }
         let text: String
         let context: Context
         /// Omitted from the JSON when nil: a text-only request never carries the key.
         let image: Image?
     }
 
-    static func requestBody(text: String, imageJPEG: Data?, sessionLabel: String?, durationS: Double?) -> RequestBody {
+    nonisolated static func requestBody(text: String, imageJPEG: Data?, sessionLabel: String?, durationS: Double?) -> RequestBody {
         RequestBody(text: text,
                     context: .init(session: sessionLabel, durationS: durationS),
                     image: imageJPEG.map { .init(mime: MealPhoto.mimeType, base64: $0.base64EncodedString()) })
+    }
+
+    /// The bytes on the wire. Nonisolated so the encode can run wherever the caller sends it.
+    nonisolated static func encodedBody(text: String, imageJPEG: Data?, sessionLabel: String?, durationS: Double?) throws -> Data {
+        try JSONEncoder().encode(requestBody(text: text, imageJPEG: imageJPEG, sessionLabel: sessionLabel, durationS: durationS))
     }
 
     /// A decoded answer becomes exactly one outcome: a rejection when the server said so, an
@@ -162,11 +179,15 @@ struct FuelEstimator {
         return isValid(estimate) ? .estimated(estimate) : .declined
     }
 
-    /// The journal's line for a rejected photo, in the coach's voice, never a fabricated number.
-    static func rejectionLine(_ reason: String) -> String {
-        switch reason {
-        case "not_food": "That photo doesn't look like a meal. Add the foods by hand, or try another photo."
-        default: "That photo was too hard to read. Add the foods by hand, or try a clearer shot."
+    /// The journal's line for a rejected estimate, in the coach's voice, never a fabricated
+    /// number. A photo is spoken of as a photo; a sentence the model could not read as food (the
+    /// Siri lane, a text-only log) never hears about a photo it did not send.
+    nonisolated static func rejectionLine(_ reason: String, hasPhoto: Bool) -> String {
+        switch (reason, hasPhoto) {
+        case ("not_food", true): "That photo doesn't look like a meal. Add the foods by hand, or try another photo."
+        case (_, true): "That photo was too hard to read. Add the foods by hand, or try a clearer shot."
+        case ("not_food", false): "That didn't read as a meal. Add the foods by hand, or say what you ate."
+        default: "That was hard to read as a meal. Add the foods by hand, or try different words."
         }
     }
 
@@ -181,7 +202,8 @@ struct FuelEstimator {
                      potassiumMg: $0.potassium_mg, magnesiumMg: $0.magnesium_mg,
                      ironMg: $0.iron_mg, calciumMg: $0.calcium_mg,
                      fiberG: $0.fiber_g, sugarG: $0.sugar_g, satFatG: $0.satfat_g,
-                     nova: $0.nova.map { min(4, max(1, $0)) })   // clamp a wild class to the real scale
+                     nova: $0.nova.map { min(4, max(1, $0)) },   // clamp a wild class to the real scale
+                     gramsG: $0.grams)
         }
         meal.confidence = e.confidence
         meal.note = e.note.isEmpty ? nil : e.note
@@ -195,7 +217,8 @@ struct FuelEstimator {
               estimate.confidence.isFinite, (0...1).contains(estimate.confidence) else { return false }
         return estimate.items.allSatisfy { item in
             let numbers = [item.kcal, item.carbs_g, item.protein_g, item.fat_g, item.sodium_mg, item.fluids_ml]
-                + [item.potassium_mg, item.magnesium_mg, item.calcium_mg, item.fiber_g, item.sugar_g, item.satfat_g].compactMap { $0 }
+                + [item.potassium_mg, item.magnesium_mg, item.calcium_mg, item.fiber_g, item.sugar_g, item.satfat_g,
+                   item.grams, item.alcohol_g].compactMap { $0 }
             return !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && !item.unit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 && item.qty.isFinite && (0.001...10_000).contains(item.qty)

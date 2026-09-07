@@ -46,7 +46,10 @@ struct NutritionFactsView: View {
 
 struct NutritionDaySheet: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var day = Date()
+    @State private var day: Date
+
+    /// Opens on `day` (the Fuel dashboard's selected day, 2026-09-07); the picker reaches any day.
+    init(day: Date = Date()) { _day = State(initialValue: day) }
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {

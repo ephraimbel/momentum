@@ -181,10 +181,14 @@ had sat unused since V1; the composer's words, if any, as its caption) and the e
 against that ONE row — offline, the draft waits and the page's bounded retry sends the same photo
 later; a retry never inserts a second meal, and Delete cancels the in-flight task before the row
 goes. The request is the text contract plus one optional `image { mime, base64 }` key; the
-server validates type and size before it looks, passes the bytes to Gemini (`inline_data`) or
-Claude (`image` block) and never stores them. Every answer is validated server-side
-(`validate.ts`: ≤ 40 items, bounded finite numbers, unknown micros kept as null) and again by
-`FuelEstimator.isValid`. A photo of no food comes back as `reason: "not_food"` (or
+server validates type and size (by the bytes, not the label) before it looks, passes the bytes
+to Gemini (`inline_data`) or Claude (`image` block) and never stores them. Every answer is
+validated server-side (`validate.ts`: ≤ 40 items, bounded finite numbers, unknown micros kept as
+null, every item's kcal reconciled to its own macros, grams and kcal snapped to hand-sized
+steps, a photo's items listed largest first) and again by `FuelEstimator.isValid`. Each item
+carries the weight the estimate assumed (`grams`, kept as `MealItem.gramsG`, shown as "≈160 g"
+on the detail sheet's numbers line and scaled by the steppers): the portion is the number an
+athlete corrects first, so it is the one the sheet shows. A photo of no food comes back as `reason: "not_food"` (or
 `"unreadable"`): the row shows "That photo doesn't look like a meal. Add the foods by hand, or
 try another photo.", the cap is spent so the journal stops asking on its own, and no number is
 ever invented. The row and the detail sheet draw the plate through `MealPhotoView`
@@ -192,6 +196,26 @@ ever invented. The row and the detail sheet draw the plate through `MealPhotoVie
 answer exactly as before (`apply` refuses a manual meal). Retention: the photo lives only in the
 meal's blob; deleting the meal deletes the photo; nothing is uploaded anywhere but the estimate
 request. Recipe: `--seed-fuel-photo` seeds a resolved and a rejected photo meal.
+
+**How the photo estimate stays accurate and repeatable (vision pass, 2026-09-07).** The method
+is the one the best photo trackers converge on, and the published failure modes are designed
+against: (1) *weigh, then compute* — the prompt makes the model name each food, size it in grams
+from references in frame (plate, fork, mug, can, hand) and derive the numbers from per-100 g
+values for the food as prepared, because portion weight is the dominant error and a weight
+times a reference is repeatable where a whole-plate guess is not; (2) hidden fat is added on
+purpose (oil, butter, dressing never show), legible labels and packaging outrank any guess, and
+the athlete's words outrank the pixels ("two of these", "half of this, no cheese", "plus a flat
+white" all verified live); (3) decoding is pinned — one named model (`gemini-3.8-flash`, never
+the rolling alias), a fixed `seed`, thinking at its floor, `MEDIA_RESOLUTION_HIGH`; (4) the
+validator is the contract, not the model. Measured on a 14-photo battery through a canary
+(`scripts/meal_bench.ts`, 3 identical requests each): 9 of 14 plates byte-identical, kcal spread
+0 to 2.5% on the rest (one busy fry-up 5%), Big Mac 590 kcal against 563 on the label, a
+"Zero Sugar" can read from its label, a blank wall → `not_food` and a blurred plate →
+`unreadable` every time, median 2.7 s, about $0.004 per photo. Thinking "medium" was measured
+WORSE (slower, dearer, less repeatable, two timeouts) and `temperature` is deprecated on Gemini
+3; neither is used. `gemini-3.5-flash-lite` (`MEAL_MODEL`) is the documented cost lever at about
+$0.0017 per photo with the same repeatability. Not built: a "fix with words" re-estimate on a
+resolved photo meal (the loop exists implicitly: edit the words, then Estimate again).
 
 ## The barcode lane (2026-07-24)
 The one estimate-free path: scan a wrapper, read the LABEL. `BarcodeScanView` (full-screen camera,

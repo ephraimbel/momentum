@@ -177,6 +177,15 @@ struct MealDetailSheet: View {
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card))
     }
 
+    /// "220 kcal · 0 g carbs · ≈160 g": the assumed weight rides the numbers line (2026-09-07),
+    /// because it is the first thing an athlete checks against the plate, and the steppers scale
+    /// it. Built outside the view tree so the body's type-checker budget stays untouched.
+    private func numbersLine(_ item: MealItem) -> String {
+        let base = "\(item.kcal) kcal · \(item.carbsG) g carbs"
+        guard let weight = item.portionWeightLabel else { return base }
+        return base + " · " + weight
+    }
+
     private var itemsCard: some View {
         VStack(spacing: 0) {
             ForEach(items) { item in
@@ -186,7 +195,7 @@ struct MealDetailSheet: View {
                         Text("Per serving: \(basis)").font(.rounded(Theme.FontSize.label)).foregroundStyle(Theme.inkSecondary)
                     }
                     HStack {
-                        Text("\(item.kcal) kcal · \(item.carbsG) g carbs")
+                        Text(numbersLine(item))
                             .font(.rounded(Theme.FontSize.label)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
                         Spacer(minLength: 4)
                         Button { adjust(item, delta: -0.5) } label: {

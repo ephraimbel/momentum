@@ -43,7 +43,8 @@ struct FuelEstimatorTests {
             Issue.record("expected a rejection"); return
         }
         #expect(reason == "not_food")
-        #expect(FuelEstimator.rejectionLine(reason).contains("doesn't look like a meal"))
+        #expect(FuelEstimator.rejectionLine(reason, hasPhoto: true).contains("doesn't look like a meal"))
+        #expect(!FuelEstimator.rejectionLine(reason, hasPhoto: false).contains("photo"))
         #expect(!FuelEstimator.isValid(estimate))
     }
 
@@ -75,6 +76,35 @@ struct FuelEstimatorTests {
         #expect(meal.source == "manual")
         #expect(meal.items.isEmpty)
         #expect(!meal.isEstimable)
+    }
+
+    /// The photo pass (2026-09-07): an item's assumed weight lands on the meal, reads as "≈160 g"
+    /// (or ml for a drink), follows the stepper, and is simply absent when the function never
+    /// weighed the food (the deployed text-only shape, a staple, a label).
+    @Test func anEstimateCarriesItsPortionWeightAndTheStepperScalesIt() throws {
+        let rice = banana
+            .replacingOccurrences(of: "\"name\":\"Banana\"", with: "\"name\":\"Rice\",\"grams\":160,\"alcohol_g\":0")
+        let beer = banana
+            .replacingOccurrences(of: "\"name\":\"Banana\"", with: "\"name\":\"Beer\",\"grams\":330,\"alcohol_g\":13")
+            .replacingOccurrences(of: "\"fluids_ml\":0", with: "\"fluids_ml\":330")
+        let estimate = try decode(#"{"items":[\#(rice),\#(beer),\#(banana)],"confidence":0.6,"tags":[],"note":""}"#)
+        #expect(FuelEstimator.isValid(estimate))
+        let meal = Meal()
+        FuelEstimator.apply(estimate, to: meal)
+        let items = meal.items
+        #expect(items[0].gramsG == 160)
+        #expect(items[0].portionWeightLabel == "≈160 g")
+        #expect(items[1].portionWeightLabel == "≈330 ml")
+        #expect(items[2].gramsG == nil)
+        #expect(items[2].portionWeightLabel == nil)
+        let doubled = items[0].scaled(to: 2)
+        #expect(doubled.gramsG == 320)
+        #expect(doubled.kcal == 210)
+        let halved = doubled.scaled(to: 1)
+        #expect(halved.gramsG == 160)
+        // A negative weight is a malformed item, exactly like a negative macro.
+        let bad = try decode(#"{"items":[\#(rice.replacingOccurrences(of: "\"grams\":160", with: "\"grams\":-1"))],"confidence":0.6,"tags":[],"note":""}"#)
+        #expect(!FuelEstimator.isValid(bad))
     }
 
     @Test func aMalformedItemRejectsTheWholeResponse() throws {

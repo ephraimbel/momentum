@@ -1350,15 +1350,21 @@ extension DemoSeed {
 #endif
 
 #if DEBUG
-import UIKit
-
 extension DemoSeed {
     /// Two photo meals for the journal's photo states (2026-09-07): a plate that resolved
     /// (thumbnail, items, a modest confidence) and one the server could not read as food
-    /// (the honest line, no numbers). The image is drawn, not shipped.
+    /// (the honest line, no numbers). The image is drawn, not shipped. Fixed ids, so a
+    /// container that already carries them (every relaunch of a UI test run) gets no twins.
+    static let resolvedPhotoMealID = UUID(uuidString: "6D2F8A10-0000-4000-8000-0000000000A1")!
+    static let rejectedPhotoMealID = UUID(uuidString: "6D2F8A10-0000-4000-8000-0000000000A2")!
+
     static func seedFuelPhotos(in context: ModelContext) {
+        let resolvedID = resolvedPhotoMealID
+        let already = (try? context.fetchCount(FetchDescriptor<Meal>(predicate: #Predicate { $0.id == resolvedID }))) ?? 0
+        guard already == 0 else { return }
         let plate = renderPlate()
         let resolved = Meal()
+        resolved.id = resolvedPhotoMealID
         resolved.text = ""
         resolved.photoData = plate
         resolved.eatenAt = Calendar.current.date(byAdding: .hour, value: -3, to: Date()) ?? Date()
@@ -1379,18 +1385,21 @@ extension DemoSeed {
         context.insert(resolved)
 
         let rejected = Meal()
+        rejected.id = rejectedPhotoMealID
         rejected.text = ""
         rejected.photoData = renderPlate(empty: true)
         rejected.eatenAt = Calendar.current.date(byAdding: .minute, value: -40, to: Date()) ?? Date()
         rejected.source = "pending"
         rejected.estimateAttempts = 3
         rejected.confidence = 0
-        rejected.note = FuelEstimator.rejectionLine("not_food")
+        rejected.note = FuelEstimator.rejectionLine("not_food", hasPhoto: true)
         context.insert(rejected)
         try? context.save()
     }
 
-    private static func renderPlate(empty: Bool = false) -> Data? {
+    /// A drawn plate (or an empty one) as prepared JPEG bytes. Internal so the Fuel page's
+    /// `--fuel-photo-demo` hook can push it through the real photo lane on the simulator.
+    static func renderPlate(empty: Bool = false) -> Data? {
         let size = CGSize(width: 900, height: 900)
         let image = UIGraphicsImageRenderer(size: size).image { ctx in
             UIColor(red: 0.93, green: 0.90, blue: 0.86, alpha: 1).setFill()

@@ -31,6 +31,16 @@ enum FuelReadoutBuilder {
                                                 durationS: s.targetDurationS)
                     .map { FuelReadiness.SessionInput(date: s.date, durationS: $0, isRace: s.runType == .race) }
             }
+        // The run already done that day keeps its say in the carb tier (2026-09-07). A completed
+        // planned run leaves the session list above, so a day judged only by its OPEN sessions
+        // dropped to the easy tier the moment the long run was over, and every past day read as
+        // an easy one. A logged run of the day stands in at its real duration. The two never
+        // double up: the plan row excludes completed sessions, and the engine takes the LONGEST
+        // driver, never a sum, so an uncredited short run beside an open session changes nothing.
+        let ran: [FuelReadiness.SessionInput] = workouts
+            .filter { !$0.isDeleted && $0.type.discipline == .running && $0.durationS >= 60
+                      && cal.isDate($0.startedAt, inSameDayAs: now) }
+            .map { FuelReadiness.SessionInput(date: $0.startedAt, durationS: $0.durationS, isRace: false) }
         let today: [FuelReadiness.WorkoutInput] = workouts
             .filter { !$0.isDeleted && cal.isDate($0.startedAt, inSameDayAs: now) }
             .map { FuelReadiness.WorkoutInput(endedAt: $0.startedAt.addingTimeInterval($0.durationS),
@@ -43,7 +53,7 @@ enum FuelReadoutBuilder {
             let end = cal.date(byAdding: .day, value: 1, to: start) ?? start
             waterRows = (try? context.fetch(FetchDescriptor<WaterEntry>(predicate: #Predicate { $0.drankAt >= start && $0.drankAt < end }))) ?? []
         } else { waterRows = [] }
-        return FuelReadiness.readout(meals: Array(mealInputs), sessions: sessions,
+        return FuelReadiness.readout(meals: Array(mealInputs), sessions: sessions + ran,
                                      workoutsToday: today,
                                      bodyMassKg: massOverride ?? profile?.bodyMassKg,
                                      goal: goalOverride ?? goalInput(profile), waterMl: WaterEntry.total(waterRows, on: now), now: now)

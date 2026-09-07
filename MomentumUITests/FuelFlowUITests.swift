@@ -19,8 +19,9 @@ final class FuelFlowUITests: XCTestCase {
 
         // Log a meal by sentence. (The composer is a vertical-axis TextField — match by placeholder
         // across element types so the query survives how XCUITest surfaces it.)
-        let byPlaceholder = NSPredicate(format: "placeholderValue BEGINSWITH %@", "What did you eat?")
-        let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
+        // By identifier, not placeholder: the prompt changes with the hour (Breakfast? / Lunch? /
+        // Dinner? / Add a meal), so a placeholder match only held outside meal hours.
+        let field = app.descendants(matching: .any)["fuel-composer"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field not found.")
         field.tap()
         // The entry reveal-cascade can swallow the first tap's focus — retap until the keyboard
@@ -191,8 +192,9 @@ final class FuelFlowUITests: XCTestCase {
         // The page renders FULLY for a free athlete — the composer is live and typeable (the "try"),
         // not frosted behind a lock card. Match the vertical-axis TextField by placeholder, as the
         // other tests do.
-        let byPlaceholder = NSPredicate(format: "placeholderValue BEGINSWITH %@", "What did you eat?")
-        let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
+        // By identifier, not placeholder: the prompt changes with the hour (Breakfast? / Lunch? /
+        // Dinner? / Add a meal), so a placeholder match only held outside meal hours.
+        let field = app.descendants(matching: .any)["fuel-composer"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field missing — the free page should be live, not frosted.")
         field.tap()
         // The entry reveal-cascade can swallow the first tap's focus — retap until the keyboard confirms.
@@ -294,8 +296,9 @@ final class FuelFlowUITests: XCTestCase {
 
         // Type a REWORDING of the seeded "2 eggs, toast, coffee". The normalizer collapses joiner
         // words ("and", "with") and comma boundaries to the same key.
-        let byPlaceholder = NSPredicate(format: "placeholderValue BEGINSWITH %@", "What did you eat?")
-        let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
+        // By identifier, not placeholder: the prompt changes with the hour (Breakfast? / Lunch? /
+        // Dinner? / Add a meal), so a placeholder match only held outside meal hours.
+        let field = app.descendants(matching: .any)["fuel-composer"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field not found.")
         field.tap()
         if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
@@ -339,8 +342,9 @@ final class FuelFlowUITests: XCTestCase {
             .firstMatch.waitForExistence(timeout: 6), "Starter chips missing on an empty journal.")
         shot(app, "10-starter-chips")
 
-        let byPlaceholder = NSPredicate(format: "placeholderValue BEGINSWITH %@", "What did you eat?")
-        let field = app.descendants(matching: .any).matching(byPlaceholder).firstMatch
+        // By identifier, not placeholder: the prompt changes with the hour (Breakfast? / Lunch? /
+        // Dinner? / Add a meal), so a placeholder match only held outside meal hours.
+        let field = app.descendants(matching: .any)["fuel-composer"].firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 8), "Composer field not found.")
         field.tap()
         if !app.keyboards.firstMatch.waitForExistence(timeout: 2) {
