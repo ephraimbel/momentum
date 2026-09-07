@@ -308,14 +308,18 @@ enum PlanEngine {
             let isTimeTrialWeek = wantsTimeTrial && !timeTrialPlaced && phase == .build && !isDeload
             if isTimeTrialWeek { timeTrialPlaced = true }
             let isCheckpointWeek = openCheckpoint && w == openBlockWeeks - 1 && !isDeload
+            // A test week is a lighter week (2026-09-07): the checkpoint replaces the quality and
+            // the rest of the running eases ten percent, so the athlete tests on fresh legs. The
+            // block's biggest week is the one before it; the ramp bookkeeping is untouched.
+            let weekMult = isCheckpointWeek ? volumeMult * 0.9 : volumeMult
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
-                                 goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload,
+                                 goal: profile.goal, p5k: p5k, volumeMult: weekMult, isDeload: isDeload,
                                  raceDistanceM: profile.raceDistanceM, weekIndex: w,
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
                                  injuryAreas: injuryAreas, phase: phase,
                                  qualityBias: qualityBias, longWaveMult: longWaveMult,
-                                 podium: podiumActive, weekVolumeM: startWeeklyM * volumeMult,
+                                 podium: podiumActive, weekVolumeM: startWeeklyM * weekMult,
                                  timeTrial: isTimeTrialWeek || isCheckpointWeek,
                                  timeTrialDistanceM: isCheckpointWeek ? nil : 5_000,
                                  racePace: racePace(week: w),

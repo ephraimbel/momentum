@@ -115,6 +115,52 @@ struct PlanCheckpointTests {
         #expect(ttMile.rationale?.contains("strong and steady") == true)
     }
 
+    // MARK: - The test week
+
+    @Test func theTestWeekIsLighterAndFarFromTheLongRun() {
+        let p = plan(inputs(experience: .some, weeklyM: 26_000))
+        let last = PlanEngine.openBlockWeeks - 1
+        let biggestBefore = p.weeks[..<last].filter { !$0.isDeload }.map(\.runVolumeM).max() ?? 0
+        let testWeek = p.weeks[last].runVolumeM
+        #expect(testWeek < biggestBefore, "the test week eases: \(testWeek) vs \(biggestBefore)")
+        #expect(testWeek >= biggestBefore * 0.8, "but only a little")
+        guard let tt = checkpoints(p).first?.session,
+              let long = p.weeks[last].sessions.first(where: { $0.runType == .long }) else {
+            Issue.record("the test week should carry both the checkpoint and the long run"); return
+        }
+        let gap = abs(tt.dayOffset - long.dayOffset)
+        #expect(min(gap, 7 - gap) >= 2, "the test never sits next to the long run")
+    }
+
+    @MainActor @Test func notesAndTheWeekAheadKnowTheCheckpointIsComing() {
+        let week = CoachNotes.Week(index: 5, total: 6, phase: .build, isDeload: false, isTaper: false,
+                                   runDays: 4, runVolumeM: 26_000, longRunDay: 6, hardRunDay: 3,
+                                   previousLongRunM: 10_000, weeksToRace: nil, raceDistanceM: nil,
+                                   liftDays: 0, checkpointDay: 3)
+        let before = CoachNotes.session(GeneratedSession(dayOffset: 2, discipline: .running, runType: .easy, targetDistanceM: 6_000), week: week)
+        let after = CoachNotes.session(GeneratedSession(dayOffset: 4, discipline: .running, runType: .easy, targetDistanceM: 6_000), week: week)
+        #expect(before.contains("The checkpoint is tomorrow"), "\(before)")
+        #expect(after.contains("yesterday's checkpoint"), "\(after)")
+        let ahead = CoachNotes.weekAhead(index: 5, total: 6, phase: .build, isDeload: false, isTaper: false,
+                                         runs: 4, lifts: 0, hasLong: true, hasHard: true,
+                                         weeksToRace: nil, raceName: nil, checkpointDay: "Thursday")
+        #expect(ahead.contains("checkpoint on Thursday"), "\(ahead)")
+        #expect(!ahead.contains("The easy days matter"), "one closing line, not two")
+        for t in [before, after, ahead] {
+            CoachVoiceTests.assertCoachVoice(t, "checkpoint week")
+            #expect(!t.contains("-"), "\(t)")
+        }
+    }
+
+    @MainActor @Test func theCheckpointReadSpeaksTheResult() {
+        let three = WorkoutReadTemplates.checkpointClause(.init(distanceM: 3_000, timeS: 870), unit: .metric)
+        #expect(three.hasPrefix("Checkpoint done:") && three.contains("14:30")
+                && three.contains("5K estimate of 24:55") && three.contains("paces move"), "\(three)")
+        let mile = WorkoutReadTemplates.checkpointClause(.init(distanceM: 1_609, timeS: 522), unit: .imperial)
+        #expect(mile.contains("8:42") && mile.contains("Beat it") && !mile.contains("5K estimate"), "\(mile)")
+        for t in [three, mile] { CoachVoiceTests.assertCoachVoice(t, "checkpoint read") }
+    }
+
     // MARK: - The block report
 
     @MainActor @Test func blockReportReadsLikeACoachAndCarriesTheNumbers() {

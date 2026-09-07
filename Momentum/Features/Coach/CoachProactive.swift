@@ -69,6 +69,8 @@ enum CoachProactive {
         let phase = plan.weekPhases.indices.contains(index)
             ? (PlanPhase(rawValue: plan.weekPhases[index]) ?? .build) : .build
         let cardio = sessions.filter { $0.discipline != .strength }
+        let checkpointDay = cardio.first { ($0.intervals ?? "").contains("Time trial") }?
+            .date.formatted(.dateTime.weekday(.wide))
         let text = CoachNotes.weekAhead(
             index: index, total: total, phase: phase,
             isDeload: phase == .recovery, isTaper: phase == .taper,
@@ -77,7 +79,8 @@ enum CoachProactive {
             hasHard: cardio.contains { [.tempo, .intervals, .progression].contains($0.runType ?? .easy) },
             weeksToRace: plan.raceDate.flatMap { calendar.dateComponents([.day], from: week.start, to: $0).day }
                 .map { max(0, $0 / 7) },
-            raceName: nil)
+            raceName: nil,
+            checkpointDay: checkpointDay)
         context.insert(ChatMessage(role: .coach, text: text, card: nil))
         try? context.save()
         AppNotification.post(kind: .coaching, title: "Your week ahead",

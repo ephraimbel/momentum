@@ -35,6 +35,8 @@ enum CoachNotes {
         var weeksToRace: Int?
         var raceDistanceM: Double?
         var liftDays: Int
+        /// The day of the block's checkpoint time trial, when this week carries one.
+        var checkpointDay: Int? = nil
     }
 
     // MARK: - The note on a session
@@ -110,6 +112,12 @@ enum CoachNotes {
     private static func easyWhy(_ s: GeneratedSession, week: Week, seed: Int) -> String {
         if week.index == 0 {
             return "Your first week is about showing up, not proving anything."
+        }
+        if let test = week.checkpointDay, test == s.dayOffset + 1 {
+            return "Keep it truly easy. The checkpoint is tomorrow, and fresh legs are the point."
+        }
+        if let test = week.checkpointDay, test == s.dayOffset - 1 {
+            return "Easy after yesterday's checkpoint. Let the work soak in."
         }
         if let hard = week.hardRunDay, hard == s.dayOffset + 1 {
             return "It keeps your legs fresh for tomorrow's \(hardNoun(week))."
@@ -233,7 +241,8 @@ enum CoachNotes {
     /// out. Two lifts around them. The easy days matter as much as the hard one."
     static func weekAhead(index: Int, total: Int, phase: PlanPhase, isDeload: Bool, isTaper: Bool,
                           runs: Int, lifts: Int, hasLong: Bool, hasHard: Bool,
-                          weeksToRace: Int?, raceName: String?) -> String {
+                          weeksToRace: Int?, raceName: String?,
+                          checkpointDay: String? = nil) -> String {
         var lines: [String] = []
         lines.append("Week \(index + 1) of \(total).")
         if isTaper || phase == .taper {
@@ -250,6 +259,9 @@ enum CoachNotes {
         else { shape += "." }
         if runs > 0 { lines.append(shape) }
         if lifts > 0 { lines.append("\(numberWord(lifts).capitalized) lift\(lifts == 1 ? "" : "s") around \(runs > 0 ? "them" : "the week").") }
+        if let checkpointDay {
+            lines.append("The block ends with your checkpoint on \(checkpointDay). Everything else this week stays easy on purpose.")
+        }
         if let toRace = weeksToRace, toRace >= 0 {
             let name = raceName ?? "race day"
             switch toRace {
@@ -262,6 +274,8 @@ enum CoachNotes {
             lines.append("First week. Show up, keep the easy days easy, and let the plan do the rest.")
         } else if isDeload || phase == .recovery {
             lines.append("Less this week on purpose. This is where the last few weeks turn into fitness.")
+        } else if checkpointDay != nil {
+            lines.append("Run the test honest and let the block report do the talking.")
         } else if hasHard {
             lines.append("The easy days matter as much as the hard one. Keep them easy.")
         } else {
@@ -328,7 +342,8 @@ enum CoachNotes {
                     : nil,
                 weeksToRace: PlanEngine.weeksToRace(startDate: weekStart, raceDate: raceDate, calendar: calendar),
                 raceDistanceM: raceDistanceM,
-                liftDays: week.sessions.count - cardio.count)
+                liftDays: week.sessions.count - cardio.count,
+                checkpointDay: cardio.first { $0.intervals?.contains("Time trial") == true }?.dayOffset)
             for i in weeks[w].sessions.indices
             where PlanEngine.isGenericRationale(weeks[w].sessions[i].rationale, for: weeks[w].sessions[i]) {
                 weeks[w].sessions[i].rationale = session(weeks[w].sessions[i], week: ctx)

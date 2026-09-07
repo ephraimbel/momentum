@@ -111,8 +111,12 @@ enum WorkoutReadTemplates {
             narrative = "\(dist) at \(Formatters.pace(secPerKm: pace, unit: distanceUnit))."
         }
         if let trend = splitTrend(gps) { narrative += " \(trend)." }
-        // Close the coaching loop: name the prescribed session and how it landed.
-        if planned, let clause = coachingClause(runType: workout.plannedSession?.runType, reps: gps.structuredReps) {
+        // Close the coaching loop: name the prescribed session and how it landed. A checkpoint
+        // gets its own read: the test inside the run and what happens next (2026-09-07).
+        if planned, let testM = PlanEngine.timeTrialDistanceM(intervals: workout.plannedSession?.intervals),
+           let reading = CheckpointResult.read(workout: workout, testDistanceM: testM) {
+            narrative += " " + checkpointClause(reading, unit: distanceUnit)
+        } else if planned, let clause = coachingClause(runType: workout.plannedSession?.runType, reps: gps.structuredReps) {
             narrative += " \(clause)"
         } else if planned {
             narrative += " That's today's session done."
@@ -123,6 +127,15 @@ enum WorkoutReadTemplates {
             WorkoutRead.Insight(label: "Elevation", value: "\(Int(gps.elevationGainM)) m", note: ""),
         ]
         return WorkoutRead(narrative: narrative, insights: insights, planAdjustment: nil)
+    }
+
+    /// The checkpoint's read: the test inside the run, its 5K estimate when the distance supports one,
+    /// and what happens next. A mile is a benchmark to beat, not a predictor.
+    static func checkpointClause(_ r: CheckpointResult.Reading, unit: DistanceUnit) -> String {
+        let head = "Checkpoint done: \(Formatters.distance(meters: r.distanceM, unit: unit)) in \(BlockReport.clock(r.timeS))."
+        guard r.distanceM >= 2_000 else { return head + " Beat it at the end of the next block." }
+        let p5k = PlanEngine.riegelP5k(distanceM: r.distanceM, timeS: r.timeS)
+        return head + " That is a 5K estimate of \(BlockReport.clock(p5k * 5)), and your training paces move with it."
     }
 
     /// The coaching tie-in for a prescribed run — names the session and, for a guided one, how the reps
