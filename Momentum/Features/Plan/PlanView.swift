@@ -1809,10 +1809,14 @@ struct PlanView: View {
     /// first session's title rather than the icon top.
     private func boardDateColumn(_ day: Date, isToday: Bool, hasSessions: Bool) -> some View {
         VStack(spacing: 0) {
+            // One line each, shrinking before they truncate: "MON" must never read "M…" at
+            // accessibility type sizes inside the fixed date column.
             Text(day.formatted(.dateTime.weekday(.abbreviated)).uppercased())
                 .font(.rounded(9.5, weight: .black)).tracking(0.4)
+                .lineLimit(1).minimumScaleFactor(0.6)
             Text(day.formatted(.dateTime.day()))
                 .font(.display(19, weight: .heavy)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.6)
         }
         .foregroundStyle(isToday ? Theme.background : (hasSessions ? Theme.ink : Theme.inkTertiary))
         .frame(width: Self.dateColWidth, height: 44)

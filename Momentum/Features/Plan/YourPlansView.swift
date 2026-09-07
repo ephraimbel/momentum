@@ -511,7 +511,7 @@ struct PlanShelfCard<MenuContent: View>: View {
                         .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     Text(goalLine)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 Menu { menu() } label: {

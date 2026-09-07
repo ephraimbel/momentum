@@ -103,13 +103,21 @@ final class PlanFlowsUITests: XCTestCase {
         let restRow = restRows.firstMatch
         XCTAssertTrue(restRow.waitForExistence(timeout: 25),
                       "The board should show an explained rest day.")
-        let restBefore = restRows.count
+        // The move swaps which day rests, so the rest count never changes and the first rest row
+        // can even move UP (the day the run left now rests). What must change is where the lifted
+        // run sits: below its old place, on the day it was dropped on.
+        let restY = restRow.frame.minY
 
-        // Tuesday's easy run: the third of the three identical easy runs, top to bottom.
-        let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS '5 mi'"))
-        XCTAssertGreaterThanOrEqual(runs.count, 3, "The 5-day seed should plan three easy runs.")
-        let tuesdayRun = runs.element(boundBy: 2)
-        XCTAssertTrue(tuesdayRun.exists)
+        // The first on-screen run row is the one to lift (the seeded week's shape has changed
+        // since this test was written; a row further down can sit below the fold, and a press
+        // that starts off screen drags the page instead of the session).
+        let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS ' mi'"))
+        XCTAssertGreaterThanOrEqual(runs.count, 1, "The 5-day seed should plan runs.")
+        let tuesdayRun = runs.element(boundBy: 0)
+        XCTAssertTrue(tuesdayRun.exists && tuesdayRun.isHittable)
+        let liftedLabel = tuesdayRun.label
+        let liftedY = tuesdayRun.frame.minY
+        XCTAssertLessThan(liftedY, restY, "The seeded week's first run sits above its first rest day.")
 
         // The drag handle is the session's glyph, which sits just left of the row body and is
         // deliberately not its own accessibility element (the row already carries the session and
@@ -129,11 +137,18 @@ final class PlanFlowsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(
             NSPredicate(format: "label BEGINSWITH 'Moved to'")).firstMatch.waitForExistence(timeout: 10),
                       "Dropping a session on a day should confirm where it landed.")
-        // ...and that day is no longer a rest day, which is the move actually happening rather than
-        // a toast fired over an unchanged board: one fewer rest row than before the drop.
-        let fewer = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in restRows.count < restBefore }, object: nil)
-        XCTAssertEqual(XCTWaiter().wait(for: [fewer], timeout: 8), .completed,
-                       "The day the session was dropped on must stop reading as a rest day.")
+        // ...and the run really moved: the same row now sits below where it was, on the day that
+        // used to rest (a toast over an unchanged board would leave it where it started).
+        let after = XCTAttachment(screenshot: app.screenshot()); after.name = "after-drop"; after.lifetime = .keepAlways; add(after)
+        // The row's label grows a coaching note once it lands ("Another hard day follows this
+        // one."), so it is found by its title and target, never its full label.
+        let liftedPrefix = liftedLabel.components(separatedBy: ", ").prefix(2).joined(separator: ", ")
+        let moved = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", liftedPrefix)).firstMatch
+        let movedDown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            moved.exists && moved.frame.minY > liftedY + 20
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [movedDown], timeout: 8), .completed,
+                       "The lifted session must land on the day it was dropped on.")
     }
 
     /// The intensity mix reaches a SCREEN (2026-09-05).
