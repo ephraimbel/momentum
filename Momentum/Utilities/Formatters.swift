@@ -55,6 +55,23 @@ enum Formatters {
         return "\(distanceNumeral(value)) \(u == .imperial ? "mi" : "km")"
     }
 
+    /// The LIVE distance — the recorder's hero and map peek, the lock screen, the wrist. FIXED
+    /// precision (two decimals under 100, one above), because a number that is ticking up must not
+    /// change its digit count as it goes. `distance(meters:unit:)` drops trailing zeros so a clean
+    /// prescription reads "6 mi" / "3.5 mi" — right for a plan row, wrong for a live readout, where
+    /// it made the hero read "4.09" → "4.1" → "4" → "4.02" and visibly change width mid-run (tabular
+    /// figures equalise digit WIDTH, not digit COUNT). Finished-run surfaces keep `distance(...)`.
+    static func liveDistance(meters: Double, unit: DistanceUnit) -> String {
+        let u = unit.resolved()
+        let value = u == .imperial ? meters / metersPerMile : meters / 1000
+        return "\(liveDistanceNumeral(value)) \(u == .imperial ? "mi" : "km")"
+    }
+
+    /// The live numeral alone, for heroes that set the unit beside it.
+    static func liveDistanceNumeral(_ value: Double) -> String {
+        value >= 100 ? String(format: "%.1f", value) : String(format: "%.2f", value)
+    }
+
     /// The numeral alone, already in display units — for heroes that render the unit as a separate
     /// label beneath. Same rounding as `distance(meters:unit:)`, which is written in terms of it.
     static func distanceNumeral(_ value: Double) -> String {

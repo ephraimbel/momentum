@@ -63,6 +63,7 @@ actor GPSTrackingEngine {
         static let liveActivityUpdateS = 3.0
         static let gpsLostTimeoutS = 8.0   // no accepted fix for this long → GPSLost (keep timing)
         static let maxFixAgeS = 10.0       // drop fixes older than this (e.g. a cached background fix)
+        static let routeSpacingM = 2.0     // minimum spacing between live route points (RouteSmoothing's contract)
     }
 
     let type: WorkoutType
@@ -90,6 +91,8 @@ actor GPSTrackingEngine {
 
     // Read-only snapshots for the view model.
     var distanceM: Double { processor.distanceM }
+    /// The pre-Doppler chord sum, for logging beside the headline on a real run (never displayed).
+    var chordOnlyDistanceM: Double { processor.chordOnlyDistanceM }
     var smoothedPaceSPerKm: Double { processor.smoothedPaceSPerKm }
     var elevationGainM: Double { processor.elevationGainM }
 
@@ -133,9 +136,20 @@ actor GPSTrackingEngine {
         let result = processor.ingest(fix, paused: paused)
         let accepted = result != .rejected
         // Build the route from the Kalman-corrected position (not the raw fix): the first accepted
-        // fix (anchor) plus every real move.
-        if !manuallyPaused, case .accepted(let added) = result, added > 0 || route.isEmpty {
-            route.append(Coordinate(lat: processor.filteredLat, lon: processor.filteredLon))
+        // fix plus every MOVING fix that has drawn at least `routeSpacingM` from the last point.
+        // Distance and the polyline are decoupled on purpose: distance follows the device's speed
+        // (see `GPSDistanceRule`), the line follows the filtered track, and the spacing keeps
+        // `RouteSmoothing`'s "real points ≥ 2 m apart" contract regardless of how distance accrued.
+        // Stationary and paused fixes never extend the line, so a red light can't scribble.
+        if accepted, !paused, processor.lastFixWasMoving {
+            let tip = Coordinate(lat: processor.filteredLat, lon: processor.filteredLon)
+            if let last = route.last {
+                if Geo.distance(lat1: last.lat, lon1: last.lon, lat2: tip.lat, lon2: tip.lon) >= Const.routeSpacingM {
+                    route.append(tip)
+                }
+            } else {
+                route.append(tip)
+            }
         }
         // Auto-paused fixes are stored as NOT accepted, exactly like manual ones. They used to be
         // stored accepted — the engine counted zero for them while every "saved route = accepted

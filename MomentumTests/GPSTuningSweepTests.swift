@@ -46,23 +46,31 @@ struct GPSTuningSweepTests {
     }
 
     /// Dead-straight, the inflation case.
-    func straight(trueM: Double, stepM: Double, sigma: Double, seed: UInt32 = 20_260_721) -> [GPSProcessor.Fix] {
+    /// `doppler: false` reports no speed (CoreLocation's negative sentinel), exercising the chord
+    /// fallback the pre-Doppler engine was; `true` reports the true speed, as a phone does outdoors.
+    func straight(trueM: Double, stepM: Double, sigma: Double, doppler: Bool = true,
+                  seed: UInt32 = 20_260_721) -> [GPSProcessor.Fix] {
         var rng = Seeded(state: seed)
         return (0...Int(trueM / stepM)).map { i in
-            fix(eastM: 0, northM: Double(i) * stepM, t: Double(i), speed: stepM, rng: &rng, sigma: sigma)
+            fix(eastM: 0, northM: Double(i) * stepM, t: Double(i), speed: doppler ? stepM : -1, rng: &rng, sigma: sigma)
         }
     }
 
     /// A closed circle of known circumference — the curve-fidelity case. Any candidate that chords
     /// the arc shows up here as a DEFICIT, which is the failure mode straight-line tuning hides.
-    func circle(circumferenceM: Double, stepM: Double, sigma: Double, seed: UInt32 = 991) -> [GPSProcessor.Fix] {
+    /// One fix per second around the circle. The reported speed is exactly what the geometry
+    /// implies (`circumference / n` metres per second): a fixture whose speed disagrees with its own
+    /// points would test the fixture, not the headline.
+    func circle(circumferenceM: Double, stepM: Double, sigma: Double, doppler: Bool = true,
+                seed: UInt32 = 991) -> [GPSProcessor.Fix] {
         var rng = Seeded(state: seed)
         let r = circumferenceM / (2 * .pi)
         let n = Int(circumferenceM / stepM)
+        let v = circumferenceM / Double(n)
         return (0...n).map { i in
             let theta = 2 * .pi * Double(i) / Double(n)
             return fix(eastM: r * cos(theta), northM: r * sin(theta),
-                       t: Double(i) * (stepM / 2.9), speed: 2.9, rng: &rng, sigma: sigma)
+                       t: Double(i), speed: doppler ? v : -1, rng: &rng, sigma: sigma)
         }
     }
 
@@ -97,15 +105,23 @@ struct GPSTuningSweepTests {
     ///
     /// A real fix is a curvature-aware motion model, not a different constant.
     ///
+    /// RESOLVED 2026-09-06 — not by a motion model but by sidestepping one: distance now integrates
+    /// the device's speed reading (`GPSDistanceRule`). Speed is a scalar, so there is no path to
+    /// rectify on a straight and no arc to chord on a bend; the table above becomes the
+    /// characterisation of the chord FALLBACK, which still carries a run whenever the device reports
+    /// no speed. Both regimes are pinned below: with a speed reading, neither knob matters any more;
+    /// without one, the historical trade-off is exactly as recorded.
+    ///
     /// CAVEAT on the fixtures: a continuous circle is a worst case. Real routes are mostly straight
     /// with intermittent turns, so field error sits somewhere between the straight and circle columns.
     /// These numbers rank the options honestly; they are not a prediction of a specific run.
     @Test func tighteningTheFilterTradesStraightAccuracyForTurnAccuracy() {
+        // The chord fallback (no speed reading): the trade-off that could not be tuned away.
         let straight15 = { (a: Double) in
-            abs(self.measure(self.straight(trueM: 8000, stepM: 2.9641, sigma: 1.5), accel: a, gate: 2.0) - 8000) / 8000
+            abs(self.measure(self.straight(trueM: 8000, stepM: 2.9641, sigma: 1.5, doppler: false), accel: a, gate: 2.0) - 8000) / 8000
         }
         let bend = { (a: Double) in
-            abs(self.measure(self.circle(circumferenceM: 200, stepM: 2.9, sigma: 1.5), accel: a, gate: 2.0) - 200) / 200
+            abs(self.measure(self.circle(circumferenceM: 200, stepM: 2.9, sigma: 1.5, doppler: false), accel: a, gate: 2.0) - 200) / 200
         }
         // Straights improve as the filter tightens...
         #expect(straight15(0.20) < straight15(0.60), "tighter filtering should reduce straight-line inflation")
@@ -115,13 +131,39 @@ struct GPSTuningSweepTests {
                 "the turn penalty should exceed the straight gain, which is why 0.60 stays")
     }
 
-    /// A longer move gate chords tight turns. Pins why `minMovementGateM` stays at 2.0.
-    @Test func aLongerMoveGateChordsTightTurns() {
-        let tight = { (g: Double) in
-            self.measure(self.circle(circumferenceM: 40, stepM: 2.9, sigma: 0), accel: 0.6, gate: g)
+    /// With a speed reading, the knobs stop mattering: the same 8 km straight and 200 m circle hold
+    /// inside 1% / 2% at either filter setting, because the headline no longer measures the filtered
+    /// path's length at all. (The circle's 2% rather than 1%: the anchor may still be holding its
+    /// last ~3 m span when the loop ends — a tail, not a chord.)
+    @Test func withASpeedReadingTheHeadlineIsIndifferentToTheFilter() {
+        for accel in [0.20, 0.60] {
+            let straight = self.measure(self.straight(trueM: 8000, stepM: 2.9641, sigma: 1.5), accel: accel, gate: 2.0)
+            let bend = self.measure(self.circle(circumferenceM: 200, stepM: 2.9, sigma: 1.5), accel: accel, gate: 2.0)
+            #expect(abs(straight - 8000) / 8000 < 0.01, "accel \(accel): straight \(straight)m vs 8000m")
+            #expect(abs(bend - 200) / 200 < 0.02, "accel \(accel): bend \(bend)m vs 200m")
         }
-        #expect(tight(5.0) < tight(2.0), "a longer gate should under-report a tight circle")
-        #expect((40 - tight(5.0)) / 40 > 0.10, "gate 5 should lose >10% of a 40 m circle — the reason it isn't shipped")
+    }
+
+    /// A longer move gate chords tight turns — on the chord fallback. Pins why `minMovementGateM`
+    /// stays at 2.0 for the runs the device leaves speedless, and that with a speed reading the gate
+    /// no longer chords anything: it only decides WHEN to integrate, not WHAT, so its whole cost on a
+    /// 13-step circle is the one span still held when the loop ends (any anchor gate has that tail;
+    /// at the shipped 2 m gate a running stride always clears it).
+    @Test func aLongerMoveGateChordsTightTurns() {
+        let tightNoSpeed = { (g: Double) in
+            self.measure(self.circle(circumferenceM: 40, stepM: 2.9, sigma: 0, doppler: false), accel: 0.6, gate: g)
+        }
+        #expect(tightNoSpeed(5.0) < tightNoSpeed(2.0), "a longer gate should under-report a tight circle")
+        #expect((40 - tightNoSpeed(5.0)) / 40 > 0.10, "gate 5 should lose >10% of a 40 m circle — the reason it isn't shipped")
+        let stepM = 40.0 / 13   // the fixture's one-second step
+        // Gate 5 needs two or three ~3 m spans to clear, so the held tail is at most two spans.
+        let tightWithSpeed = self.measure(self.circle(circumferenceM: 40, stepM: 2.9, sigma: 0), accel: 0.6, gate: 5.0)
+        #expect(40 - tightWithSpeed <= 2 * stepM + 0.1,
+                "with a speed reading gate 5 may only lose the held tail: \(tightWithSpeed)m")
+        #expect(tightWithSpeed > tightNoSpeed(5.0), "integrating speed must beat chording the arc at the same gate")
+        // At the shipped gate a stride clears the hold, so at most the final span is still held.
+        let shipped = self.measure(self.circle(circumferenceM: 40, stepM: 2.9, sigma: 0), accel: 0.6, gate: 2.0)
+        #expect(shipped <= 40.1 && 40 - shipped <= stepM + 0.1, "gate 2 with a speed reading: \(shipped)m vs 40m")
     }
 
     /// DIAGNOSTIC — kept, disabled. Flip `.disabled` off to reprint the grid when revisiting the

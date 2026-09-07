@@ -1,8 +1,9 @@
 import Foundation
 
-/// Pure GPS sample processing (PRD §8.3) — accept gate, distance accumulation against a stable
-/// anchor, pace EMA, and auto-pause detection. Extracted from the actor so it can be unit-tested
-/// against recorded traces with no CoreLocation dependency. **Constants here are authoritative.**
+/// Pure GPS sample processing (PRD §8.3) — accept gate, Doppler-first distance (`GPSDistanceRule`),
+/// speed-smoothed current pace, and auto-pause detection. Extracted from the actor so it can be
+/// unit-tested against recorded traces with no CoreLocation dependency. **Constants here are
+/// authoritative.**
 struct GPSProcessor {
 
     struct Fix: Equatable, Sendable {
@@ -26,8 +27,15 @@ struct GPSProcessor {
         /// margin is treated as a GPS spike — the guard that catches jumps slipping under the hard cap
         /// because fixes arrived seconds apart.
         var outlierSpeedMarginMS: Double
+        /// Positional movement required before distance accrues — jitter under it holds the anchor.
+        /// Also the corroboration gate for integrated speed (see `GPSDistanceRule`).
         var minMovementGateM = 2.0
-        var paceEmaAlpha = 0.2
+        /// Time constant of the current-pace smoother. Pace follows the device's speed reading (a
+        /// steady, unbiased signal) through a 6 s exponential average: at 1 Hz that is ~8 s/km RMS
+        /// around a steady effort against ~50 s/km for the old per-fix position-delta EMA, with a
+        /// worst 1 s jump of ~15 s/km instead of ~150. Short enough to show a surge within a few
+        /// strides; long enough that the number on the screen stops flickering.
+        var paceTimeConstantS = 6.0
         var autoPauseSpeedMS: Double
         var autoPauseSecs: Double
         /// Kalman process-noise (σ_a) for the real-time position filter (see `GPSKalmanFilter`).
@@ -74,24 +82,33 @@ struct GPSProcessor {
     /// light an 80 m GPS spike reads as a lazy 1.3 m/s and sails through. Measured against the fix
     /// from one second ago, the same spike reads as 80 m/s and is rejected.
     private var lastAccepted: Fix?
-    private(set) var distanceM: Double = 0
+    var distanceM: Double { distance.distanceM }
     private(set) var elevationGainM: Double = 0
-    /// EMA-smoothed pace in seconds per km (0 until first movement).
+    /// Smoothed pace in seconds per km (0 until first movement). Derived from `smoothedSpeedMS`.
     private(set) var smoothedPaceSPerKm: Double = 0
+    /// Exponentially smoothed speed (m/s), the quantity actually averaged: averaging speeds and
+    /// inverting is correct; averaging paces over-weights the slow samples.
+    private var smoothedSpeedMS: Double = 0
     private var belowSpeedSince: Date?
+    /// The distance rule (Doppler-first, chord fallback) shared with the finished-run replay.
+    private var distance: GPSDistanceRule
+    /// True when the last ingested fix was accepted AND counted as movement — not paused, not
+    /// Doppler-stationary. The engine uses it to decide whether the fix may extend the live route.
+    private(set) var lastFixWasMoving = false
 
     /// Real-time Kalman filter (§8.3): corrects each accepted fix before it feeds the route + distance.
     private var kalman: GPSKalmanFilter
     /// The latest fix's Kalman-corrected position — the point the live route polyline should draw.
     private(set) var filteredLat = 0.0
     private(set) var filteredLon = 0.0
-    /// Filtered position of the last point distance was measured from (advances only past the move gate).
-    private var distAnchorLat = 0.0
-    private var distAnchorLon = 0.0
+
+    /// What the pre-Doppler chord sum would have read for this run — for on-device comparison only.
+    var chordOnlyDistanceM: Double { distance.chordOnlyDistanceM }
 
     init(config: Config) {
         self.config = config
         self.kalman = GPSKalmanFilter(config: GPSKalmanFilter.Config(accelNoiseMS2: config.accelNoiseMS2))
+        self.distance = GPSDistanceRule(config: .init(minMovementGateM: config.minMovementGateM))
     }
 
     /// Accept iff accuracy ∈ (0, minAccuracy], strictly newer than the anchor, and the implied speed
@@ -127,6 +144,11 @@ struct GPSProcessor {
     /// contributes zero, exactly like Strava's pause).
     mutating func ingest(_ fix: Fix, paused: Bool = false) -> Result {
         guard Self.acceptable(fix, previous: lastAccepted ?? anchor, config: config) else { return .rejected }
+        // How long since the device last spoke to us — the pace smoother's clock. Measured against
+        // the last ACCEPTED fix (paused or stationary ones included), not the distance anchor: while
+        // a slow walker's anchor holds for several fixes, each 1 s speed reading is still one second
+        // of evidence, not three.
+        let sinceLastFixS = lastAccepted.map { fix.t.timeIntervalSince($0.t) } ?? 0
         lastAccepted = fix
 
         // Kalman-correct the accepted position. Distance and the route polyline are measured off this
@@ -144,42 +166,44 @@ struct GPSProcessor {
         let dopplerStationary = fix.speedMS >= 0 && fix.speedMS < config.autoPauseSpeedMS
 
         if paused || dopplerStationary {
+            lastFixWasMoving = false
             anchor = fix
-            distAnchorLat = f.lat
-            distAnchorLon = f.lon
+            distance.rebase(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)
             if paused {   // manual pause: the detour's altitude is not ours
                 climbAnchorAltM = nil
                 smoothedAltM = nil
             }
             return .accepted(distanceAddedM: 0)
         }
+        lastFixWasMoving = true
 
         guard let prev = anchor else {
             anchor = fix
-            distAnchorLat = f.lat
-            distAnchorLon = f.lon
+            _ = distance.step(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)   // seeds the anchor
             accrueClimb(fix.altitudeM)   // seeds the smoother + climb anchor, accrues nothing
             return .accepted(distanceAddedM: 0)
         }
 
-        let d = Geo.distance(lat1: distAnchorLat, lon1: distAnchorLon, lat2: f.lat, lon2: f.lon)
-        guard d >= config.minMovementGateM else {
-            return .accepted(distanceAddedM: 0) // micro-move: keep the distance anchor stable
+        // Distance: the shared Doppler-first rule (see `GPSDistanceRule` for why). Zero while the
+        // anchor holds behind the movement gate — a micro-move keeps the anchor stable.
+        let added = distance.step(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)
+
+        // Current pace follows the device's speed reading when it has one, smoothed over
+        // `paceTimeConstantS`; without one it falls back to the distance the rule just accrued over
+        // the span it covered. Updated on every moving fix (not only when the anchor advances), so
+        // the number keeps breathing at 1 Hz while a slow walker's anchor holds.
+        let spanS = fix.t.timeIntervalSince(prev.t)   // the span `added` was measured over
+        let sample: Double? = fix.speedMS >= 0 ? fix.speedMS : (added > 0 && spanS > 0 ? added / spanS : nil)
+        if let sample, sample > 0, sinceLastFixS > 0 {
+            let alpha = 1 - exp(-sinceLastFixS / config.paceTimeConstantS)
+            smoothedSpeedMS = smoothedSpeedMS == 0 ? sample : smoothedSpeedMS + alpha * (sample - smoothedSpeedMS)
+            smoothedPaceSPerKm = smoothedSpeedMS > 0 ? 1000 / smoothedSpeedMS : 0
         }
 
-        distanceM += d
+        guard added > 0 else { return .accepted(distanceAddedM: 0) }
         accrueClimb(fix.altitudeM)
-        let dt = fix.t.timeIntervalSince(prev.t)
-        if dt > 0 {
-            let instPaceSPerKm = (dt / d) * 1000
-            smoothedPaceSPerKm = smoothedPaceSPerKm == 0
-                ? instPaceSPerKm
-                : config.paceEmaAlpha * instPaceSPerKm + (1 - config.paceEmaAlpha) * smoothedPaceSPerKm
-        }
         anchor = fix
-        distAnchorLat = f.lat
-        distAnchorLon = f.lon
-        return .accepted(distanceAddedM: d)
+        return .accepted(distanceAddedM: added)
     }
 
     /// Smoothed hysteresis elevation gain: altitude is EMA-smoothed, then ascents count once the

@@ -49,9 +49,11 @@ extension GPSDetail {
     /// **The** reduction of a finished workout's samples to `(moving time, cumulative distance)`.
     ///
     /// This is a faithful replay of `GPSProcessor`: the stored fixes run back through the identical
-    /// causal Kalman filter, distance accrues between *filtered* positions behind the same 2 m
-    /// movement gate, Doppler-stationary fixes accrue nothing, and paused spans advance neither
-    /// metres nor seconds. So the totals it produces agree with `distanceM`/`durationS` on the row.
+    /// causal Kalman filter, distance accrues between *filtered* positions through the very same
+    /// `GPSDistanceRule` the live engine used (Doppler-first behind the 2 m movement gate, chord
+    /// fallback), Doppler-stationary fixes accrue nothing, and paused spans advance neither metres
+    /// nor seconds. Sharing the rule — not re-implementing it — is what makes the totals agree with
+    /// `distanceM`/`durationS` on the row exactly, rather than approximately.
     ///
     /// It exists because four sites — the splits list, the pace/elevation charts, the achievement
     /// badges, and the record book — each summed raw haversine hops between raw fixes instead. GPS
@@ -79,16 +81,18 @@ extension GPSDetail {
 
         var points: [RoutePoint] = []
         points.reserveCapacity(usable.count)
-        var cumulativeM = 0.0
         var movingS = 0.0
-        var anchor: (lat: Double, lon: Double)?
+        var rule = GPSDistanceRule(config: .init(minMovementGateM: config.minMovementGateM))
         var previousT: Date?
 
         for (sample, position) in zip(usable, filtered) {
+            // A trace with no speed provenance is replayed as "speed unknown" everywhere, so the
+            // rule takes its chord path for every span — the pre-Doppler behaviour, by construction.
+            let speed = hasSpeedSignal ? sample.speedMS : -1
             // A pause rebases the distance anchor and freezes the clock — the walk to the coffee
             // shop contributes neither metres nor seconds, exactly as it did live.
             guard !sample.pausedSpan else {
-                anchor = position
+                rule.rebase(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed)
                 previousT = sample.t
                 continue
             }
@@ -97,25 +101,15 @@ extension GPSDetail {
             if let previousT { movingS += max(0, sample.t.timeIntervalSince(previousT)) }
             previousT = sample.t
 
-            guard let last = anchor else {
-                anchor = position
-                points.append(RoutePoint(t: movingS, cumulativeM: cumulativeM,
-                                         altitudeM: sample.altitudeM, speedMS: sample.speedMS))
-                continue
-            }
             // Doppler says "not covering ground" → rebase and accrue nothing, so standing at a red
             // light can't wander its way into distance (the engine's on-device fix, 2026-07-23).
             let stationary = hasSpeedSignal && sample.speedMS >= 0 && sample.speedMS < config.autoPauseSpeedMS
-            if !stationary {
-                let d = Geo.distance(lat1: last.lat, lon1: last.lon, lat2: position.lat, lon2: position.lon)
-                if d >= config.minMovementGateM {
-                    cumulativeM += d
-                    anchor = position
-                }
+            if stationary {
+                rule.rebase(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed)
             } else {
-                anchor = position
+                _ = rule.step(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed)
             }
-            points.append(RoutePoint(t: movingS, cumulativeM: cumulativeM,
+            points.append(RoutePoint(t: movingS, cumulativeM: rule.distanceM,
                                      altitudeM: sample.altitudeM, speedMS: sample.speedMS))
         }
         return points

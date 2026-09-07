@@ -152,8 +152,9 @@ final class CardioViewModel {
         var r = Readout()
         let imperial = distanceUnit.resolved() == .imperial
         r.distanceUnit = imperial ? "mi" : "km"
-        r.distance = Formatters.distance(meters: distanceM, unit: distanceUnit)
-            .components(separatedBy: " ").first ?? "0"
+        // Live readout: fixed precision, so the hero never changes width as it ticks (see
+        // `Formatters.liveDistance`).
+        r.distance = Formatters.liveDistanceNumeral(imperial ? distanceM / Formatters.metersPerMile : distanceM / 1000)
         let t = elapsed()
         let cycling = type.discipline == .cycling
         let cur = Self.currentPaceCell(smoothedPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0,
@@ -311,7 +312,8 @@ final class CardioViewModel {
     private func deliver(_ line: CoachCueGate.Line, at now: TimeInterval) {
         coach.spoke(line, stepIndex: tracker?.index, at: now)
         coachLine = line.text
-        voice?.announce(line.text)
+        // The screen gets every line; the voice gets what the verbosity dial allows.
+        voice?.announce(line.text, kind: line.kind)
         coachLineTask?.cancel()
         coachLineTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(CoachCueGate.dwellS))
@@ -325,9 +327,12 @@ final class CardioViewModel {
     /// per-step cues instead of mile splits.
     private func announceMilestonesIfNeeded() {
         guard structured == nil else { return }
+        // The zone rides the split only at Full, and only from a live reading: a stale strap's
+        // last number is not a zone, it is a memory.
+        let zone = voice?.verbosity.speaksZone == true ? hrZoneIndex : nil
         for line in coach.plannedFix(distanceM: distanceM, elapsedS: elapsed(),
                                      smoothedPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0,
-                                     paused: isPaused, gpsLost: gpsLost) {
+                                     paused: isPaused, gpsLost: gpsLost, zone: zone) {
             cue(line)
         }
     }
@@ -458,10 +463,16 @@ final class CardioViewModel {
         if t != tracker { tracker = t }
         // Don't coach a paused athlete: pace reads are stale and time isn't advancing.
         guard !isPaused else { return }
-        // A 3-2-1 haptic countdown as any *timed* step (a rep or a recovery) nears its end, so the
-        // transition never catches the athlete by surprise. Light ticks; the transition itself buzzes.
-        if let step = t.current, step.target.isTime {
-            let sec = Int(t.remaining(distanceM: d, elapsedS: e).rounded())
+        // As any *timed* step (a rep or a recovery) nears its end: the coach calls "10 seconds"
+        // once, then a 3-2-1 haptic countdown, so the transition never catches the athlete by
+        // surprise in either channel. Light ticks; the transition itself buzzes.
+        if let step = t.current, case let .duration(total) = step.target {
+            let remaining = t.remaining(distanceM: d, elapsedS: e)
+            if let warning = coach.stepEnding(stepIndex: t.index, stepDurationS: total,
+                                              remainingS: remaining, paused: isPaused) {
+                cue(warning)
+            }
+            let sec = Int(remaining.rounded())
             if (1...3).contains(sec), sec != lastCountdownSecond {
                 lastCountdownSecond = sec
                 Haptics.light()
@@ -529,6 +540,13 @@ final class CardioViewModel {
 
     /// Live heart rate (bpm) from the composed source (BLE strap, or Watch session via Health).
     var bpm: Int? { heartRate.bpm }
+
+    /// Current HR zone (1…5) when both a live BPM and a max HR are known — the number the voice
+    /// reads. `hrZone` below is the same banding as a label for the screen.
+    var hrZoneIndex: Int? {
+        guard let b = bpm, let m = maxHR, b > 0, m > 0 else { return nil }
+        return HeartRateZones.zone(forBpm: b, maxHR: m)
+    }
 
     /// Current HR zone label ("Z1"…"Z5") when both a live BPM and a max HR are known.
     var hrZone: String? {
@@ -631,6 +649,14 @@ final class CardioViewModel {
             t.skip(distanceM: distanceM, elapsedS: structuredElapsed())
             tracker = t
         }
+        // On-device accuracy log: the Doppler-first headline beside what the old chord sum would have
+        // read. Nothing displays this; it exists so a real run can be checked against a known route
+        // (`log stream --predicate 'category == "gps-accuracy"'`). A ratio well under 1.0 on a clear-
+        // sky run is the chord inflation being removed; a ratio near 1.0 means the device supplied no
+        // usable speed and the chord fallback carried the run.
+        let chordOnlyM = await engine.chordOnlyDistanceM
+        Logger(subsystem: "com.ephraimbel.momentum.app", category: "gps-accuracy")
+            .info("finish distance=\(self.distanceM, format: .fixed(precision: 1))m chordOnly=\(chordOnlyM, format: .fixed(precision: 1))m ratio=\(chordOnlyM > 0 ? self.distanceM / chordOnlyM : 0, format: .fixed(precision: 3)) movingS=\(self.elapsed(), format: .fixed(precision: 0))")
         await engine.finish(durationOverrideS: elapsed(), elapsedOverrideS: totalElapsed())
         // Persist the finish-time extras — average cadence/HR and a guided run's per-rep
         // breakdown — in ONE store hop with one save. Three separate awaited round-trips here
@@ -747,7 +773,7 @@ final class CardioViewModel {
             let speed = t > 0 ? distanceM / t : 0
             return Formatters.speed(ms: speed, unit: distanceUnit)
         case .walking:
-            return Formatters.distance(meters: distanceM, unit: distanceUnit)
+            return Formatters.liveDistance(meters: distanceM, unit: distanceUnit)
         default:
             return Formatters.pace(secPerKm: snapshot?.smoothedPaceSPerKm ?? 0, unit: distanceUnit)
         }
@@ -761,7 +787,9 @@ final class CardioViewModel {
         }
     }
 
-    var secondaryDistance: String { Formatters.distance(meters: distanceM, unit: distanceUnit) }
+    /// Lock screen + Dynamic Island distance — fixed precision like the live hero, so the card's
+    /// number holds its width between throttled pushes.
+    var secondaryDistance: String { Formatters.liveDistance(meters: distanceM, unit: distanceUnit) }
 
     var isPaused: Bool { state == .paused || state == .autoPaused }
 
@@ -847,13 +875,20 @@ final class CardioViewModel {
 
     /// Pace/speed for the secondary readout — speed for rides, pace otherwise (distance has its own
     /// slot, so we never duplicate it the way `heroValue` would for walks).
+    ///
+    /// The lock screen obeys the same honesty rule as the live page (`currentPaceCell`): current
+    /// pace is a claim about right now, so during a signal dropout it reads the placeholder beside
+    /// the GPS LOST chip rather than a frozen number that looks live. The ride's figure is the
+    /// average speed, which is real distance over a real clock and degrades honestly on its own.
     private var paceOrSpeed: (value: String, label: String) {
         switch type.discipline {
         case .cycling:
             let t = elapsed()
             return (Formatters.speed(ms: t > 0 ? distanceM / t : 0, unit: distanceUnit), "Speed")
         default:
-            return (Formatters.pace(secPerKm: snapshot?.smoothedPaceSPerKm ?? 0, unit: distanceUnit), "Pace")
+            let cell = Self.currentPaceCell(smoothedPaceSPerKm: snapshot?.smoothedPaceSPerKm ?? 0,
+                                            gpsLost: gpsLost, cycling: false, unit: distanceUnit)
+            return ([cell.value, cell.unit].compactMap { $0 }.joined(separator: " "), "Pace")
         }
     }
 

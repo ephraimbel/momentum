@@ -172,7 +172,7 @@ struct MetricsPage: View {
                     }
                     heartMetric
                     HStack(alignment: .top, spacing: 12) {
-                        metric("Distance", Formatters.distance(meters: model.distanceM, unit: unit),
+                        metric("Distance", Formatters.liveDistance(meters: model.distanceM, unit: unit),
                                WatchTheme.ink, size: 20)
                         metric("Cal", "\(Int(model.activeEnergyKcal))", WatchTheme.energy, size: 20)
                     }
@@ -453,7 +453,7 @@ struct MapPage: View {
         }
         .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
         .overlay(alignment: .bottom) {
-            Text(Formatters.distance(meters: model.distanceM, unit: unit))
+            Text(Formatters.liveDistance(meters: model.distanceM, unit: unit))
                 .font(.system(size: 14, weight: .bold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(WatchTheme.ink)
                 .padding(.horizontal, 10).padding(.vertical, 4)

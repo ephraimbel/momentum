@@ -64,13 +64,18 @@ struct GPSReplayTests {
         var east = 0.0, t = 0.0
         _ = p.ingest(fix(eastM: 0, northM: 0, t: t))   // anchor
 
+        // The device's speed reading wobbles too (±0.4 m/s ≈ ±60 s/km instantaneous): pace follows
+        // that reading now, so this is what the smoother has to hold inside the bar.
+        let speedWobble = [0.3, -0.2, 0.4, -0.4, 0.1, -0.3, 0.2, -0.1]
         var prevSmoothed: Double?
         var maxInstJump = 0.0, prevInst: Double?
         var maxSmoothedJump = 0.0
         for i in 0..<80 {
             let step = stepLengths[i % stepLengths.count]
             east += step; t += 1   // one fix per second
-            guard case .accepted(let added) = p.ingest(fix(eastM: east, northM: 0, t: t)), added > 0
+            guard case .accepted(let added) = p.ingest(fix(eastM: east, northM: 0, t: t,
+                                                            speed: 2.5 + speedWobble[i % speedWobble.count])),
+                  added > 0
             else { continue }
 
             let inst = 1000.0 / step   // s/km implied by this 1s step
@@ -156,10 +161,15 @@ extension GPSReplayTests {
         return total
     }
 
-    /// THE gate for everything downstream: the Kalman + 2 m move-gate headline stays inside ±2% at
-    /// 1 Hz with realistic jitter, while the raw walk over the SAME fixes inflates well past it.
-    /// If this ever fails, `GPSProcessor` must be fixed before any consumer is rebuilt on top of it.
-    @Test(arguments: [0.5, 1.0])
+    /// THE gate for everything downstream: the headline stays inside ±2% at 1 Hz with realistic
+    /// jitter, while the raw walk over the SAME fixes inflates well past it. If this ever fails,
+    /// `GPSProcessor` must be fixed before any consumer is rebuilt on top of it.
+    ///
+    /// History: at σ = 1.5 the chord-sum headline breached this bar (+2.08%), recorded here as a known
+    /// defect with instructions to extend the bar once the processor was tightened. It was — distance
+    /// now integrates the device's speed reading (`GPSDistanceRule`), so the bar extends to the noise
+    /// a phone actually reports (σ = 3–5 m per axis) and holds with room to spare.
+    @Test(arguments: [0.5, 1.0, 1.5, 3.0, 5.0])
     func distanceHoldsTwoPercentUnderRealisticNoise(sigma: Double) {
         let fixes = noisyStraight(trueM: 8000, stepM: 2.9641, sigmaM: sigma, hz: 1)
         // No pre-filter: `ingest` already gates internally against `lastAccepted ?? anchor`, which
@@ -168,35 +178,6 @@ extension GPSReplayTests {
         for f in fixes { _ = p.ingest(f) }
         let error = abs(p.distanceM - 8000) / 8000
         #expect(error < 0.02, "σ=\(sigma): headline \(p.distanceM)m vs 8000m → \(error * 100)% off")
-    }
-
-    /// CHARACTERISATION OF A KNOWN DEFECT — not an endorsement.
-    ///
-    /// Measured inflation of `GPSProcessor.distanceM` over a dead-straight 8 km at 1 Hz, with
-    /// independent Gaussian position noise:
-    ///
-    ///     σ = 0.5 m → 8008.8 m  (+0.11%)
-    ///     σ = 1.0 m → 8070.5 m  (+0.88%)
-    ///     σ = 1.5 m → 8166.4 m  (+2.08%)   ← breaches the §13.11 ±2% bar
-    ///
-    /// The error is ONE-DIRECTIONAL (always long) and grows roughly with σ², because perpendicular
-    /// jitter adds path length that can never cancel. σ = 1.5 m/axis is not a pathological figure —
-    /// consumer GPS with clear sky view sits near 3–5 m CEP, i.e. σ ≈ 2–3 m/axis, and canopy or urban
-    /// canyon is worse. Caveat in the other direction: real GNSS error is strongly time-correlated,
-    /// so independent noise is a WORST case for this particular mode and true inflation is likely
-    /// lower than these numbers.
-    ///
-    /// This test exists so the breach is recorded rather than discovered later, and so it fails
-    /// loudly if it gets worse. **When `GPSProcessor` is tightened, this test should start failing —
-    /// delete it then, and extend the parameterised bar above to 1.5.**
-    @Test func headlineInflationAtHighNoiseIsAKnownBreach() {
-        let fixes = noisyStraight(trueM: 8000, stepM: 2.9641, sigmaM: 1.5, hz: 1)
-        var p = GPSProcessor(config: .forType(.run))
-        for f in fixes { _ = p.ingest(f) }
-        let error = (p.distanceM - 8000) / 8000
-        #expect(error > 0, "inflation is one-directional — a negative error means the model changed")
-        #expect(error > 0.02, "σ=1.5 no longer breaches ±2% (\(error * 100)%) — tighten the bar and delete this test")
-        #expect(error < 0.035, "inflation got materially WORSE: \(error * 100)%")
     }
 
     /// The fixture is genuinely in the buggy regime — otherwise the test above proves nothing about

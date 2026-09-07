@@ -272,4 +272,159 @@ struct GPSProcessorTests {
         step(110, times: 10)
         #expect(p.elevationGainM == settled)
     }
+
+    // MARK: Doppler-first distance (2026-09-06) — the headline no longer sums the filtered path
+
+    /// Time-correlated GPS error, the kind a phone actually produces (AR(1), τ ≈ 15 s). Independent
+    /// noise flatters the chord sum; this does not.
+    private struct Wobble {
+        var state: UInt32 = 20_260_906
+        mutating func next() -> Double { state = 1_664_525 &* state &+ 1_013_904_223; return (Double(state) + 1) / 4_294_967_297.0 }
+        mutating func gauss() -> Double { let u1 = next(), u2 = next(); return (-2 * log(u1)).squareRoot() * cos(2 * .pi * u2) }
+    }
+    private let lat0 = 37.0, lon0 = -122.0
+    private var mLat: Double { 111_320.0 }
+    private var mLon: Double { 111_320.0 * cos(lat0 * .pi / 180) }
+
+    /// A steady straight run at `speed`, one fix per second, σ metres of correlated position error,
+    /// and a device speed reading wobbling ±`dopplerSigma`.
+    private func noisyRun(seconds: Int, speed: Double, sigma: Double, dopplerSigma: Double = 0.25,
+                          doppler: Bool = true) -> [GPSProcessor.Fix] {
+        var rng = Wobble()
+        let a = exp(-1.0 / 15.0), inn = sigma * (1 - a * a).squareRoot()
+        var ex = sigma * rng.gauss(), ey = sigma * rng.gauss()
+        return (0..<seconds).map { i in
+            ex = a * ex + inn * rng.gauss(); ey = a * ey + inn * rng.gauss()
+            let along = Double(i) * speed
+            return GPSProcessor.Fix(t: Date(timeIntervalSinceReferenceDate: Double(i)),
+                                    lat: lat0 + (along + ey) / mLat, lon: lon0 + ex / mLon,
+                                    accuracyM: sigma,
+                                    speedMS: doppler ? max(0, speed + dopplerSigma * rng.gauss()) : -1,
+                                    altitudeM: 0)
+        }
+    }
+
+    /// THE fix. At a reported accuracy of 5 m the chord sum ran ~5% long on a straight and worse on a
+    /// grid — miles long, pace flatteringly fast, every run. Integrating the device's speed holds the
+    /// headline inside 1% on the same fixes, and the retained chord-only figure proves the fixture is
+    /// in the regime that used to break.
+    @Test(arguments: [3.0, 5.0, 8.0])
+    func dopplerIntegrationHoldsTheHeadlineUnderCorrelatedNoise(sigma: Double) {
+        var p = GPSProcessor(config: runConfig)
+        for f in noisyRun(seconds: 1000, speed: 3.0, sigma: sigma) { _ = p.ingest(f) }
+        let truth = 999 * 3.0
+        #expect(abs(p.distanceM - truth) / truth < 0.012, "σ=\(sigma): headline \(p.distanceM)m vs \(truth)m")
+        #expect(p.chordOnlyDistanceM > truth * 1.02, "σ=\(sigma): chord sum \(p.chordOnlyDistanceM)m should still inflate — fixture not exercising the defect")
+    }
+
+    /// A walker is where the chord sum was worst (+27% measured at 1.2 m/s, jitter being a large
+    /// fraction of each step). The same rule holds them inside 3%.
+    @Test func aSlowWalkerIsNotInflated() {
+        var p = GPSProcessor(config: .forType(.walk))
+        for f in noisyRun(seconds: 1200, speed: 1.2, sigma: 5) { _ = p.ingest(f) }
+        let truth = 1199 * 1.2
+        #expect(abs(p.distanceM - truth) / truth < 0.03, "walker \(p.distanceM)m vs \(truth)m")
+    }
+
+    /// Without a speed reading the chord fallback carries the run — and still measures it (not zero,
+    /// not the old raw-walk inflation either: the Kalman + gate stay).
+    @Test func withoutASpeedReadingTheChordFallbackStillMeasuresTheRun() {
+        var p = GPSProcessor(config: runConfig)
+        for f in noisyRun(seconds: 600, speed: 3.0, sigma: 3, doppler: false) { _ = p.ingest(f) }
+        let truth = 599 * 3.0
+        #expect(p.distanceM > truth * 0.98 && p.distanceM < truth * 1.06, "fallback \(p.distanceM)m vs \(truth)m")
+    }
+
+    /// Speed is integrated only once the POSITION has moved past the gate: a frozen position with a
+    /// confident speed reading accrues nothing, so jitter can't be talked into distance.
+    @Test func speedIsOnlyTrustedWhenThePositionCorroboratesMovement() {
+        var p = GPSProcessor(config: runConfig)
+        _ = p.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
+        for i in 1...10 {   // ~0.5 m wander, device insisting on 3 m/s
+            _ = p.ingest(fix(0.0000045 * Double(i % 2), 0, acc: 5, speed: 3, t: Double(i)))
+        }
+        #expect(p.distanceM == 0)
+    }
+
+    /// A stuck or bogus speed is bounded by what the position supports (`2 × chord + 2 m`), so one
+    /// bad reading can't add tens of metres; a real stride's reading sits far under the cap.
+    @Test func aBogusSpeedIsCappedByWhatThePositionSupports() {
+        var p = GPSProcessor(config: runConfig)
+        _ = p.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
+        // 2.5 m of real movement in 1 s, device claiming 20 m/s: trapezoid says 11.5 m, cap says 7 m.
+        guard case let .accepted(added) = p.ingest(fix(0.0000225, 0, acc: 5, speed: 20, t: 1)) else {
+            Issue.record("expected accepted"); return
+        }
+        #expect(added <= 2 * 2.5 + 2 + 0.05)
+        #expect(added >= 2.5 - 0.05)
+        // A genuine stride: reading and position agree, nothing is capped.
+        var q = GPSProcessor(config: runConfig)
+        _ = q.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
+        guard case let .accepted(stride) = q.ingest(fix(0.000027, 0, acc: 5, speed: 3, t: 1)) else {
+            Issue.record("expected accepted"); return
+        }
+        #expect(abs(stride - 3.0) < 0.05)
+    }
+
+    /// Past 30 s between counted fixes the endpoint speeds say nothing about the gap — the chord is
+    /// the honest floor (`accumulatesDistance` above is the 60 s case; this is the boundary).
+    @Test func aLongGapFallsBackToTheChord() {
+        var p = GPSProcessor(config: runConfig)
+        _ = p.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
+        // 29 s, 60 m apart (~2.07 m/s implied; device says 3): integrated → 87 m, but capped at 2·60+2.
+        guard case let .accepted(inside) = p.ingest(fix(0.00054, 0, acc: 5, speed: 3, t: 29)) else { Issue.record("accepted"); return }
+        #expect(inside > 60.5 && inside <= 122.1)
+        var q = GPSProcessor(config: runConfig)
+        _ = q.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
+        guard case let .accepted(outside) = q.ingest(fix(0.00054, 0, acc: 5, speed: 3, t: 31)) else { Issue.record("accepted"); return }
+        #expect(abs(outside - 60.0) < 0.5, "past the gap the chord is used: \(outside)m")
+    }
+
+    // MARK: Current pace follows the speed reading
+
+    /// The number on the screen: on a steady effort with real jitter it now holds within ~25 s/km of
+    /// the truth and never jumps more than 30 s/km between seconds (it used to swing ±150).
+    @Test func currentPaceFollowsTheSpeedReadingAndStaysSteady() {
+        var p = GPSProcessor(config: runConfig)
+        var prev: Double?
+        var worst = 0.0, offAfterWarmup = 0.0
+        for (i, f) in noisyRun(seconds: 300, speed: 3.0, sigma: 5).enumerated() {
+            _ = p.ingest(f)
+            let pace = p.smoothedPaceSPerKm
+            if i > 30 {
+                offAfterWarmup = max(offAfterWarmup, abs(pace - 1000 / 3.0))
+                if let prev { worst = max(worst, abs(pace - prev)) }
+            }
+            prev = pace
+        }
+        #expect(offAfterWarmup < 25, "pace strayed \(offAfterWarmup) s/km from a steady 5:33")
+        #expect(worst < 30, "pace jumped \(worst) s/km between seconds")
+    }
+
+    /// A surge shows within a few strides: from 3.0 to 4.5 m/s the smoothed pace crosses halfway to
+    /// the new value inside ~5 s (the 6 s time constant), so an interval's start is felt, not lagged.
+    @Test func currentPaceReactsToASurgeWithinSeconds() {
+        var p = GPSProcessor(config: runConfig)
+        var t = 0.0, along = 0.0
+        func go(_ speed: Double, _ seconds: Int) {
+            for _ in 0..<seconds { t += 1; along += speed
+                _ = p.ingest(GPSProcessor.Fix(t: Date(timeIntervalSinceReferenceDate: t), lat: lat0 + along / mLat, lon: lon0,
+                                              accuracyM: 5, speedMS: speed, altitudeM: 0)) }
+        }
+        go(3.0, 60)
+        #expect(abs(p.smoothedPaceSPerKm - 1000 / 3.0) < 2)
+        go(4.5, 5)
+        let halfway = 1000 / ((3.0 + 4.5) / 2)
+        #expect(p.smoothedPaceSPerKm < halfway, "after 5 s of surging pace should be past halfway: \(p.smoothedPaceSPerKm)")
+        go(4.5, 25)
+        #expect(abs(p.smoothedPaceSPerKm - 1000 / 4.5) < 3)
+    }
+
+    /// Without a speed reading pace falls back to the distance the rule accrued over the span it
+    /// covered — the pre-Doppler behaviour, smoothed the same way.
+    @Test func currentPaceFallsBackToChordSpeedWithoutDoppler() {
+        var p = GPSProcessor(config: runConfig)
+        for f in noisyRun(seconds: 120, speed: 3.0, sigma: 0.5, doppler: false) { _ = p.ingest(f) }
+        #expect(abs(p.smoothedPaceSPerKm - 1000 / 3.0) < 15, "fallback pace \(p.smoothedPaceSPerKm) vs 333")
+    }
 }

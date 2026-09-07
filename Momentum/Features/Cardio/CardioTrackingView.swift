@@ -163,7 +163,7 @@ struct CardioTrackingView: View, Equatable {
                     LivePager(vm: vm, page: $page, type: type, distanceUnit: distanceUnit,
                               structured: structured, goalMeters: goalMeters,
                               targetPaceSPerKm: targetPaceSPerKm, sessionLine: sessionLine,
-                              hasGuide: guideRoute.count > 1,
+                              hasGuide: guideRoute.count > 1, finishing: finishing,
                               onDragReveal: { mapRevealing = $0 },
                               onClose: { confirmStop = true }, onFinish: { confirmStop = true })
                         .equatable()
@@ -180,7 +180,13 @@ struct CardioTrackingView: View, Equatable {
                 // re-run the whole finish path — second store save, second snapshot render,
                 // second `onFinish` into the presenter (audit 2026-08-11).
                 guard let vm, !finishing else { return }
-                finishing = true
+                // The save screen needs the better part of a second to mount its map hero, and the
+                // finish itself is two store writes. Without this the live page sat unchanged for
+                // ~1.6 s after the tap — an active Pause pill and a ticking clock over a run the
+                // athlete had just ended. `finishing` dims the numerals like a pause, retires the
+                // controls to a single "Finishing" pill, and the haptic lands on the tap itself.
+                Haptics.medium()
+                withAnimation(Motion.standard) { finishing = true }
                 Task { onFinish(await vm.finish()) }
             }
             Button("Keep going", role: .cancel) {}
@@ -823,6 +829,9 @@ private struct LivePager: View, Equatable {
     let targetPaceSPerKm: Double?
     let sessionLine: String
     let hasGuide: Bool
+    /// True from the moment Finish is confirmed until the save screen takes over — both pages
+    /// step back and the controls retire (see the Finish dialog in `CardioTrackingView`).
+    let finishing: Bool
     /// Fired with `true` on the FIRST frame of a pull-down (and `false` when the drag ends or the
     /// page settles) — never per frame. The root relays it to `LiveMapLayer.covered` so the puck
     /// throttle releases the moment the map starts to show under the sliding page, not at commit.
@@ -834,6 +843,7 @@ private struct LivePager: View, Equatable {
         a.vm === b.vm && a.page == b.page && a.type == b.type && a.sessionLine == b.sessionLine
             && a.goalMeters == b.goalMeters && a.targetPaceSPerKm == b.targetPaceSPerKm
             && a.hasGuide == b.hasGuide && (a.structured == nil) == (b.structured == nil)
+            && a.finishing == b.finishing
     }
 
     @State private var pageDrag: CGFloat = 0
@@ -861,7 +871,7 @@ private struct LivePager: View, Equatable {
             // The peek is mounted only once it can be seen (map page, or mid-pull); its controls
             // would otherwise shadow the stats page's for assistive tech.
             if page == .map || pageDrag > 0 {
-                LiveMapPeek(vm: vm, type: type, active: page == .map,
+                LiveMapPeek(vm: vm, type: type, active: page == .map, finishing: finishing,
                             onShowStats: { setPage(.stats) }, onFinish: onFinish)
                     .equatable()
                     .opacity(peekOpacity)
@@ -873,6 +883,7 @@ private struct LivePager: View, Equatable {
             LiveStatsPage(vm: vm, type: type, distanceUnit: distanceUnit, structured: structured,
                           goalMeters: goalMeters, targetPaceSPerKm: targetPaceSPerKm,
                           sessionLine: sessionLine, hasGuide: hasGuide, active: page == .stats,
+                          finishing: finishing,
                           onClose: onClose, onShowMap: { setPage(.map) }, onFinish: onFinish)
                 .equatable()
                 .offset(y: statsOffset)
@@ -948,6 +959,7 @@ private struct LiveStatsPage: View, Equatable {
     let sessionLine: String
     let hasGuide: Bool
     let active: Bool
+    let finishing: Bool
     let onClose: () -> Void
     let onShowMap: () -> Void
     let onFinish: () -> Void
@@ -956,6 +968,7 @@ private struct LiveStatsPage: View, Equatable {
         a.vm === b.vm && a.type == b.type && a.sessionLine == b.sessionLine && a.active == b.active
             && a.goalMeters == b.goalMeters && a.targetPaceSPerKm == b.targetPaceSPerKm
             && a.hasGuide == b.hasGuide && (a.structured == nil) == (b.structured == nil)
+            && a.finishing == b.finishing
     }
 
     var body: some View {
@@ -979,7 +992,7 @@ private struct LiveStatsPage: View, Equatable {
             }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, Theme.Space.sm)
-            LiveControls(vm: vm, onDark: false, active: active, onFinish: onFinish)
+            LiveControls(vm: vm, onDark: false, active: active, finishing: finishing, onFinish: onFinish)
                 .padding(.horizontal, Theme.Space.md)
                 .padding(.bottom, Theme.Space.md)
         }
@@ -1080,8 +1093,12 @@ private struct LiveStatsPage: View, Equatable {
             }
             .padding(.top, Theme.Space.sm)
         }
-        .opacity(r.isPaused ? 0.45 : 1)
-        .animation(Motion.standard, value: r.isPaused)
+        // A row inserting into a centred stack (heart rate, on its first reading) re-centres
+        // everything; without a geometry group the rows above slid through the arriving row for a
+        // frame whenever that landed under an in-flight animation (the page's own entrance).
+        .geometryGroup()
+        .opacity(r.isPaused || finishing ? 0.45 : 1)
+        .animation(Motion.standard, value: r.isPaused || finishing)
     }
 
     private var rule: some View { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -1212,10 +1229,45 @@ private struct LiveControls: View {
     let vm: CardioViewModel
     let onDark: Bool
     let active: Bool
+    /// Finish has been confirmed: the controls retire to one quiet, disabled "Finishing" pill so
+    /// the athlete sees the tap land while the save screen mounts (nothing here is tappable — a
+    /// second Pause or Finish mid-finish has nothing left to act on).
+    let finishing: Bool
     let onFinish: () -> Void
 
     var body: some View {
         let paused = vm.readout.isPaused
+        Group {
+            if finishing {
+                HStack(spacing: 10) {
+                    ProgressView().tint(.white).controlSize(.small)
+                    Text("Finishing")
+                }
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity).frame(height: 56)
+                .background(Capsule().fill(Theme.purple.opacity(0.7)))
+                .accessibilityLabel("Finishing")
+                .accessibilityHidden(!active)
+                .transition(.opacity)
+            } else {
+                // No transition on the controls themselves: they must appear with the page, instantly
+                // and hittable, exactly as before the finishing pill existed. A fade-in here landed
+                // under the page's own entrance and widened the window in which a first-instant tap
+                // on Pause could miss (RunPauseUITests taps the moment the button exists).
+                controls(paused: paused)
+                    // The inactive page's Pause/Finish must stay invisible to VoiceOver + XCUITest
+                    // (one "Pause" at a time) — gated here, on the controls, as it always was.
+                    .accessibilityHidden(!active)
+            }
+        }
+        .animation(Motion.standard, value: finishing)
+        // Only the page that owns the screen exposes its Pause/Finish — the other set is invisible
+        // and must be invisible to VoiceOver + XCUITest too (one "Pause" at a time).
+        .accessibilityHidden(!active)
+    }
+
+    private func controls(paused: Bool) -> some View {
         HStack(spacing: Theme.Space.sm) {
             Button {
                 Task {
@@ -1273,9 +1325,6 @@ private struct LiveControls: View {
             }
         }
         .animation(Motion.standard, value: paused)
-        // Only the page that owns the screen exposes its Pause/Finish — the other set is invisible
-        // and must be invisible to VoiceOver + XCUITest too (one "Pause" at a time).
-        .accessibilityHidden(!active)
     }
 }
 
@@ -1297,10 +1346,13 @@ private struct LiveMapPeek: View, Equatable {
     let vm: CardioViewModel
     let type: WorkoutType
     let active: Bool
+    let finishing: Bool
     let onShowStats: () -> Void
     let onFinish: () -> Void
 
-    static func == (a: Self, b: Self) -> Bool { a.vm === b.vm && a.type == b.type && a.active == b.active }
+    static func == (a: Self, b: Self) -> Bool {
+        a.vm === b.vm && a.type == b.type && a.active == b.active && a.finishing == b.finishing
+    }
 
     var body: some View {
         let r = vm.readout
@@ -1354,11 +1406,11 @@ private struct LiveMapPeek: View, Equatable {
                         .accessibilityLabel(r.paceLabel)
                         .accessibilityValue("\(r.pace) \(r.paceUnit ?? "")")
                     }
-                    .opacity(r.isPaused ? 0.45 : 1)
-                    .animation(Motion.standard, value: r.isPaused)
+                    .opacity(r.isPaused || finishing ? 0.45 : 1)
+                    .animation(Motion.standard, value: r.isPaused || finishing)
                 }
                 .padding(.horizontal, Theme.Space.md)
-                LiveControls(vm: vm, onDark: true, active: active, onFinish: onFinish)
+                LiveControls(vm: vm, onDark: true, active: active, finishing: finishing, onFinish: onFinish)
                     .padding(.horizontal, Theme.Space.sm)
             }
             .padding(.bottom, Theme.Space.sm)
