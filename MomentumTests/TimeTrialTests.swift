@@ -56,9 +56,13 @@ struct TimeTrialTests {
         // 5K race: race-pace reps ARE the 5K work; a 5K TT would just be the race early.
         #expect(timeTrials(PlanEngine.generate(profile: inputs(raceM: 5_000, weeksOut: 12),
                                                catalog: [], startDate: start)).isEmpty)
-        // No race: rolling blocks recalibrate from ordinary quality days instead.
-        #expect(timeTrials(PlanEngine.generate(profile: inputs(raceM: nil, weeksOut: nil),
-                                               catalog: [], startDate: start)).isEmpty)
+        // No race: the rolling block carries its own checkpoint in its final week, sized to the
+        // athlete's running week (2026-09-07). A 40 km/wk runner tests over 5K.
+        let open = timeTrials(PlanEngine.generate(profile: inputs(raceM: nil, weeksOut: nil),
+                                                  catalog: [], startDate: start))
+        #expect(open.count == 1)
+        #expect(open.first?.week.index == PlanEngine.openBlockWeeks - 1)
+        #expect(open.first?.session.targetDistanceM == 5_000)
     }
 
     @Test func twoDayWeeksHaveNoQualitySlotForIt() {

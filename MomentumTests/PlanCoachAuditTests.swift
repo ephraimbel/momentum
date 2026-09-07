@@ -43,8 +43,8 @@ struct PlanCoachAuditTests {
         if note.hasPrefix("last"), let km = Double(note.dropFirst(5).prefix(while: { $0.isNumber || $0 == "." })) {
             return km * 1000
         }
-        // The 5K time trial is 5 km of racing.
-        if note.contains("time trial") { return 5_000 }
+        // A time trial is its distance of racing (5K on race plans; a mile, 3K or 5K closing an open block).
+        if note.contains("time trial") { return s.targetDistanceM ?? 5_000 }
         // "6×1km @ threshold" / "5×400m @ race pace" — reps × rep distance.
         if let d = StructuredWorkoutBuilder.parseIntervals(s.intervals) {
             return Double(d.reps) * d.distanceM

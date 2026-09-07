@@ -35,22 +35,22 @@ enum RestDayLine {
                      phase: PlanPhase?) -> String? {
         // Tomorrow first: what a rest day is FOR beats what it follows.
         switch tomorrow {
-        case .race: return "Rest — everything banked for race day."
-        case .long: return "Rest — fresh legs for tomorrow's long run."
-        case .quality: return "Rest — fresh for tomorrow's speed work."
+        case .race: return "Rest. Everything banked for race day."
+        case .long: return "Rest. Fresh legs for tomorrow's long run."
+        case .quality: return "Rest. Fresh for tomorrow's speed work."
         case .strength, .easy, .none: break
         }
         switch yesterday {
-        case .race: return "Rest — you earned this one."
-        case .long: return "Rest — absorbing yesterday's long run."
-        case .quality: return "Rest — absorbing yesterday's hard work."
+        case .race: return "Rest. You earned this one."
+        case .long: return "Rest. Absorbing yesterday's long run."
+        case .quality: return "Rest. Absorbing yesterday's hard work."
         case .strength, .easy, .none: break
         }
-        if dayAfter == .long { return "Rest — two days out from the long run." }
-        if dayAfter == .race { return "Rest — two days out from the race." }
+        if dayAfter == .long { return "Rest. Two days out from the long run." }
+        if dayAfter == .race { return "Rest. Two days out from the race." }
         switch phase {
-        case .taper: return "Rest — the taper is doing its work."
-        case .recovery: return "Rest — down week, lighter on purpose."
+        case .taper: return "Rest. The taper is doing its work."
+        case .recovery: return "Rest. Down week, lighter on purpose."
         default: return nil
         }
     }

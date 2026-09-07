@@ -1251,4 +1251,34 @@ struct PlanCoachingTests {
                                                   plan: plan, in: ctx) == nil)
         #expect(stateRecord(plan, ctx)?.thresholdSPerKm == nil)
     }
+
+    /// A planned checkpoint time trial is the measurement itself: its result applies at once
+    /// instead of banking for a second strong run (2026-09-07). A mile stays under the evidence
+    /// floor, so a new runner's benchmark never rewrites their paces.
+    @Test func aPlannedTimeTrialRecalibratesImmediately() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = futureEasyRun(in: ctx, p5k: 330)
+        let tt = PlannedSession()
+        tt.date = Date(); tt.discipline = .running; tt.runType = .tempo
+        tt.intervals = "Time trial: 3K at race effort"; tt.targetDistanceM = 3_000; tt.status = .completed
+        let plan = makePlan(in: ctx, sessions: [future, tt]); plan.p5kSPerKm = 330
+
+        let result = run(in: ctx, distanceM: 3_000, durationS: 870)   // 4:50/km, about a 24:55 5K
+        result.plannedSession = tt; tt.completedWorkout = result
+        #expect(PlanCoaching.recalibratePaces(from: result, plan: plan, in: ctx) != nil)
+        #expect(plan.p5kSPerKm < 330, "the checkpoint applied without waiting for a second run")
+        #expect(plan.pendingP5kAt == nil)
+
+        // The mile: below the 2 km evidence floor, nothing moves.
+        let mileSession = PlannedSession()
+        mileSession.date = Date(); mileSession.discipline = .running; mileSession.runType = .tempo
+        mileSession.intervals = "Time trial: 1 mile at a strong, steady effort"; mileSession.targetDistanceM = 1_609
+        ctx.insert(mileSession); plan.sessions.append(mileSession)
+        let before = plan.p5kSPerKm
+        let mile = run(in: ctx, distanceM: 1_609, durationS: 420)
+        mile.plannedSession = mileSession; mileSession.completedWorkout = mile
+        #expect(PlanCoaching.recalibratePaces(from: mile, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == before)
+    }
 }

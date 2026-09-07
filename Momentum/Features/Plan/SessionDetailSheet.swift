@@ -191,7 +191,7 @@ struct SessionDetailSheet: View {
     private var racePaceCaveat: String? {
         let mentionsRacePace = session.intervals?.lowercased().contains("race") ?? false
         guard mentionsRacePace || session.runType == .race else { return nil }
-        return "Race pace here is your current predicted pace — it moves with your fitness as training lands, so the plan always trains you where you are today."
+        return "Race pace here is your current predicted pace. It moves with your fitness as training lands, so the plan always trains you where you are today."
     }
 
     private var exercisesSection: some View {

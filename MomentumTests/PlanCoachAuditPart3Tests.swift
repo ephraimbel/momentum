@@ -96,7 +96,7 @@ struct PlanCoachAuditPart3Tests {
     /// else).
     private func doseM(_ s: GeneratedSession) -> Double {
         let note = (s.intervals ?? "").lowercased()
-        if note.contains("time trial") { return 5_000 }
+        if note.contains("time trial") { return s.targetDistanceM ?? 5_000 }
         if note.hasPrefix("last"), let km = Double(note.dropFirst(5).prefix(while: { $0.isNumber || $0 == "." })) {
             return km * 1_000
         }

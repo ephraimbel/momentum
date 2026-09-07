@@ -14,6 +14,9 @@ struct PlanView: View {
     @ReducedMotionPreference private var reduceMotion
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
+    /// The closing block's report for the renewal card (`PlanBlockReview`), refreshed with the
+    /// derived state so `body` never walks the journal.
+    @State private var blockReview: BlockReport.Text?
     // The season sidecars, live: a few rows each, so the next tune-up is a filter, not a fetch
     // in the body (2026-09-03).
     @Query private var seasonRecords: [RunningSeasonRecord]
@@ -273,7 +276,7 @@ struct PlanView: View {
             Button("Take over my plan") { goSelfCoached() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Upcoming prescribed sessions are removed — everything you've completed stays. You write your own weeks from here (add sessions, use the library), and the coach stops prescribing or adjusting. You can ask for a new plan anytime.")
+            Text("Upcoming prescribed sessions are removed. Everything you've completed stays. You write your own weeks from here (add sessions, use the library), and the coach stops prescribing or adjusting. You can ask for a new plan anytime.")
         }
         .sheet(isPresented: $showAwayDays) {
             let cal = Calendar.current
@@ -1212,7 +1215,7 @@ struct PlanView: View {
         .padding(.bottom, Theme.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase — \($0.intent)" } ?? summary), \(done) of \(total) sessions done")
+        .accessibilityLabel("\(weekTitle), \(weekPhase.map { "\($0.label) phase. \($0.intent)" } ?? summary), \(done) of \(total) sessions done")
     }
 
     /// The displayed week's planned-vs-done ledger — sessions live (check-offs re-render models
@@ -1277,6 +1280,18 @@ struct PlanView: View {
         }
         weekPhaseCache = computeWeekPhase()
         coachsReadModel.hybridInsight = hybridWeekInsight
+        refreshBlockReview(plan: plan, calendar: cal)
+    }
+
+    /// The block report for the renewal card, computed with the derived state (never in `body`):
+    /// the closing block's real numbers, or nil while the card is not showing.
+    private func refreshBlockReview(plan: TrainingPlan, calendar cal: Calendar) {
+        guard showRenewalPrompt else { blockReview = nil; return }
+        let snapshots = (try? context.fetch(FetchDescriptor<FitnessSnapshot>(
+            sortBy: [SortDescriptor(\.weekStart)]))) ?? []
+        blockReview = BlockReport.text(
+            PlanBlockReview.summary(plan: plan, workouts: workouts, snapshots: snapshots, calendar: cal),
+            unit: distanceUnit)
     }
 
     private func rebuildPlanScoped(plan: TrainingPlan, calendar cal: Calendar) {
@@ -1469,6 +1484,19 @@ struct PlanView: View {
                     Text("Let’s see where you’re at and build your next block around what you’ve actually been running. Nothing’s locked in.")
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+                    if let blockReview, !blockReview.lines.isEmpty {
+                        // The block in numbers: the checkpoint, the estimate, the volume, the long
+                        // run, the sessions. Each line is one true thing the athlete did.
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(blockReview.lines.enumerated()), id: \.offset) { _, line in
+                                Text(line)
+                                    .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.ink)
+                                    .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+                            }
+                        }
+                        .padding(.top, 4)
+                        .accessibilityElement(children: .combine)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -1492,6 +1520,10 @@ struct PlanView: View {
     /// the current week, so the board repopulates immediately).
     private func renewBlock() {
         guard let profile = profiles.first else { return }
+        // The review first, while the closing block's sessions are still the plan's.
+        if let plan = profile.plan {
+            PlanBlockReview.post(PlanBlockReview.summary(plan: plan, in: context), unit: distanceUnit, in: context)
+        }
         PlanService.renewBlock(for: profile, in: context)
         Haptics.success()
         withAnimation(Motion.standard) {
@@ -1807,7 +1839,7 @@ struct PlanView: View {
         return names.count > 3 ? "\(shown) +\(names.count - 3)" : shown
     }
 
-    /// "30–60 g carbs/hr" — the same deterministic gate as the Today deck and the session sheet
+    /// "30 to 60 g carbs/hr", the same deterministic gate as the Today deck and the session sheet
     /// (running, ≥1 h estimated), so the surfaces can never disagree. The board keeps just the
     /// number (the row is a glance line and "· drink to thirst" clipped it); the sheet carries
     /// the full guidance.
@@ -1818,7 +1850,7 @@ struct PlanView: View {
                                                         durationS: session.targetDurationS) else { return nil }
         let g = FuelingGuide.guidance(durationS: dur, isRace: session.runType == .race)
         guard let carbs = g.carbsPerHour else { return nil }
-        return "\(carbs.lowerBound)–\(carbs.upperBound) g carbs/hr"
+        return "\(carbs.lowerBound) to \(carbs.upperBound) g carbs/hr"
     }
 
     /// The session's TYPE as a quiet eyebrow ("TEMPO RUN", "LONG RUN", "STRENGTH") — the Runna
@@ -1908,7 +1940,7 @@ struct PlanView: View {
         VStack(spacing: Theme.Space.lg) {
             BrandMark(size: 72)
             Text("No plan yet").font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
-            Text("Tell us your goal and we'll build a week that fits — race or no race.")
+            Text("Tell us your goal and we'll build a week that fits, race or no race.")
                 .font(.rounded(Theme.FontSize.body, weight: .regular)).foregroundStyle(Theme.inkSecondary)
                 .multilineTextAlignment(.center)
             if profiles.first != nil {
@@ -1930,7 +1962,7 @@ struct PlanView: View {
                         .background(Capsule().stroke(Theme.ink, lineWidth: 1.5))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Plan it myself — no coach plan")
+                .accessibilityLabel("Plan it myself, no coach plan")
             }
         }
         .padding(Theme.Space.xl).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1956,7 +1988,7 @@ struct PlanView: View {
 
     private func weekSummary(done: Int, total: Int) -> String {
         guard total > 0 else { return "Open week · tap + to plan" }
-        if done == total { return "All done — strong week." }
+        if done == total { return "All done. Every session landed." }
         return "\(done) done · \(total - done) to go"
     }
 

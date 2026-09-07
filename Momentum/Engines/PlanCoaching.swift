@@ -507,7 +507,14 @@ enum PlanCoaching {
                                  in context: ModelContext, calendar: Calendar = .current) -> Recalibration? {
         guard let plan, workout.type.discipline == .running, let gps = workout.gps else { return nil }
         guard !plan.isSelfCoached else { return nil }   // their targets are theirs — never rewritten
-        let dist = gps.distanceM, time = workout.durationS, current = plan.p5kSPerKm
+        var dist = gps.distanceM, time = workout.durationS
+        let current = plan.p5kSPerKm
+        // A planned checkpoint is read as the test inside the recording (the athlete warms up
+        // first), never as the whole run at a blended pace (2026-09-07).
+        if let testM = PlanEngine.timeTrialDistanceM(intervals: workout.plannedSession?.intervals),
+           let reading = CheckpointResult.read(workout: workout, testDistanceM: testM) {
+            dist = reading.distanceM; time = reading.timeS
+        }
         // Need a meaningful distance to extrapolate a 5k from — Riegel off a 400 m rep is noise.
         guard dist >= 2000, time > 0, current > 0 else { return nil }
 
@@ -530,8 +537,11 @@ enum PlanCoaching {
         if let last = plan.lastRecalibratedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
 
-        // Two-run confirmation. A race result is maximal, definitive evidence — apply immediately.
+        // Two-run confirmation. A race result is maximal, definitive evidence, and so is a planned
+        // checkpoint time trial: the test exists to measure, so its result applies at once
+        // (2026-09-07). Everything else banks and waits for a second strong run.
         let isRaceResult = workout.plannedSession?.runType == .race
+            || (workout.plannedSession?.intervals?.contains("Time trial") ?? false)
         let hasFreshEvidence = plan.pendingP5kAt.map {
             (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) <= 14
         } ?? false

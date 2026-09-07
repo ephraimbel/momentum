@@ -16,39 +16,39 @@ struct RestDayLineTests {
 
     @Test func tomorrowsRaceOutranksEverything() {
         #expect(line(y: .long, t: .race, d2: .long, phase: .taper)
-                == "Rest — everything banked for race day.")
+                == "Rest. Everything banked for race day.")
     }
 
     @Test func tomorrowsLongRunReadsAsPreparation() {
-        #expect(line(t: .long) == "Rest — fresh legs for tomorrow's long run.")
+        #expect(line(t: .long) == "Rest. Fresh legs for tomorrow's long run.")
     }
 
     @Test func tomorrowsQualityReadsAsPreparation() {
-        #expect(line(t: .quality) == "Rest — fresh for tomorrow's speed work.")
+        #expect(line(t: .quality) == "Rest. Fresh for tomorrow's speed work.")
     }
 
     @Test func preparationOutranksAbsorption() {
         // The future is actionable; the past is done. A rest between intervals and a long run is
         // ABOUT the long run.
-        #expect(line(y: .quality, t: .long) == "Rest — fresh legs for tomorrow's long run.")
+        #expect(line(y: .quality, t: .long) == "Rest. Fresh legs for tomorrow's long run.")
     }
 
     @Test func yesterdaysLongRunReadsAsAbsorption() {
-        #expect(line(y: .long) == "Rest — absorbing yesterday's long run.")
-        #expect(line(y: .quality) == "Rest — absorbing yesterday's hard work.")
-        #expect(line(y: .race) == "Rest — you earned this one.")
+        #expect(line(y: .long) == "Rest. Absorbing yesterday's long run.")
+        #expect(line(y: .quality) == "Rest. Absorbing yesterday's hard work.")
+        #expect(line(y: .race) == "Rest. You earned this one.")
     }
 
     @Test func twoDaysOutFromTheLongRunStillEarnsALine() {
-        #expect(line(d2: .long) == "Rest — two days out from the long run.")
-        #expect(line(d2: .race) == "Rest — two days out from the race.")
+        #expect(line(d2: .long) == "Rest. Two days out from the long run.")
+        #expect(line(d2: .race) == "Rest. Two days out from the race.")
     }
 
     @Test func phaseLinesAreTheLastResort() {
-        #expect(line(phase: .taper) == "Rest — the taper is doing its work.")
-        #expect(line(phase: .recovery) == "Rest — down week, lighter on purpose.")
+        #expect(line(phase: .taper) == "Rest. The taper is doing its work.")
+        #expect(line(phase: .recovery) == "Rest. Down week, lighter on purpose.")
         // But any neighbour rule still wins over the phase.
-        #expect(line(y: .long, phase: .taper) == "Rest — absorbing yesterday's long run.")
+        #expect(line(y: .long, phase: .taper) == "Rest. Absorbing yesterday's long run.")
     }
 
     // MARK: What deliberately says nothing
@@ -82,7 +82,7 @@ struct RestDayLineTests {
         for y in all { for t in all { for d2 in all { for p in phases {
             guard let s = line(y: y, t: t, d2: d2, phase: p) else { continue }
             #expect(!s.contains("!"))
-            #expect(s.hasPrefix("Rest — "))
+            #expect(s.hasPrefix("Rest. "))
             for banned in ["missed", "behind", "should have", "failed", "lazy"] {
                 #expect(!s.lowercased().contains(banned))
             }

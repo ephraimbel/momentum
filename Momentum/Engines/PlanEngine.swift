@@ -167,6 +167,12 @@ enum PlanEngine {
             && profile.runningExperience != .new && weeklyForTest >= 30_000
             && placedTuneUps.isEmpty
         var timeTrialPlaced = false
+        // Open-block checkpoint (2026-09-07): an athlete with no race still needs a measured answer
+        // to "am I getting better?", and the plan should be the one to ask. The final week of every
+        // rolling block carries a short time trial sized to the athlete (a mile, 3K or 5K), and the
+        // block report reads the result back. `openBlockCheckpointDistanceM` says who tests, over what.
+        let openCheckpoint = openBlockCarriesCheckpoint(
+            profile: profile, cardio: cardio, runDays: runDays, totalWeeks: totalWeeks, injuryAreas: injuryAreas)
 
         // Build ceiling: volume grows toward the GOAL's peak and then HOLDS — a year-long marathon
         // plan reaches marathon volume; a no-race block never exceeds double its start. Clamped so
@@ -301,6 +307,7 @@ enum PlanEngine {
             loadingRun = isDeload || isTaper ? 0 : loadingRun + 1
             let isTimeTrialWeek = wantsTimeTrial && !timeTrialPlaced && phase == .build && !isDeload
             if isTimeTrialWeek { timeTrialPlaced = true }
+            let isCheckpointWeek = openCheckpoint && w == openBlockWeeks - 1 && !isDeload
             let runs = hasCardio
                 ? cardioSessions(discipline: cardio!, runDays: runDays, level: profile.runningExperience,
                                  goal: profile.goal, p5k: p5k, volumeMult: volumeMult, isDeload: isDeload,
@@ -308,7 +315,9 @@ enum PlanEngine {
                                  currentWeeklyVolumeM: profile.currentWeeklyVolumeM, longestRunM: profile.longestRunM,
                                  injuryAreas: injuryAreas, phase: phase,
                                  qualityBias: qualityBias, longWaveMult: longWaveMult,
-                                 podium: podiumActive, weekVolumeM: startWeeklyM * volumeMult, timeTrial: isTimeTrialWeek,
+                                 podium: podiumActive, weekVolumeM: startWeeklyM * volumeMult,
+                                 timeTrial: isTimeTrialWeek || isCheckpointWeek,
+                                 timeTrialDistanceM: isCheckpointWeek ? nil : 5_000,
                                  racePace: racePace(week: w),
                                  specificIndex: (raceInWindow && w >= specificStart) ? w - specificStart : -1,
                                  sessionMinutes: profile.sessionMinutes,
@@ -524,11 +533,16 @@ enum PlanEngine {
             for s in weeks[w].sessions.indices where weeks[w].sessions[s].discipline == .running {
                 let runType = weeks[w].sessions[s].runType
                 if let d = weeks[w].sessions[s].targetDistanceM, d > 0 {
-                    // A time trial IS its distance — "5K time trial", never "3 mi time trial".
-                    let canonical = runType == .race
-                        || weeks[w].sessions[s].intervals?.contains("Time trial") == true
-                    weeks[w].sessions[s].targetDistanceM =
-                        RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: canonical)
+                    // A race snaps to its canonical distance. A time trial IS its distance: the
+                    // label's distance is restored here exactly, so the load reconciliation above can
+                    // never leave a test short, and a mile or a 3K is never dragged to the nearest
+                    // canonical race (which tripled a test week, 2026-09-07).
+                    if let testM = timeTrialDistanceM(intervals: weeks[w].sessions[s].intervals) {
+                        weeks[w].sessions[s].targetDistanceM = testM
+                    } else {
+                        weeks[w].sessions[s].targetDistanceM =
+                            RunRounding.snap(meters: d, unit: profile.distanceUnit, isRace: runType == .race)
+                    }
                 }
                 if let p = weeks[w].sessions[s].targetPaceSPerKm, p > 0, let runType {
                     weeks[w].sessions[s].targetPaceSPerKm =
@@ -872,7 +886,8 @@ enum PlanEngine {
                                injuryAreas: Set<InjuryArea> = [], phase: PlanPhase = .build,
                                qualityBias: Double = 1.0, longWaveMult: Double = 1.0,
                                podium: Bool = false, weekVolumeM: Double? = nil,
-                               timeTrial: Bool = false, racePace: Double? = nil,
+                               timeTrial: Bool = false, timeTrialDistanceM: Double? = 5_000,
+                               racePace: Double? = nil,
                                specificIndex: Int = -1, sessionMinutes: Int = 0,
                                thresholdSPerKm: Double? = nil,
                                riegelExponent: Double = DanielsPaces.populationRiegelExponent,
@@ -1143,21 +1158,47 @@ enum PlanEngine {
         var primaryQuality: (type: RunType, intervals: String?, paceOverride: Double?, note: String?)?
         if runDays >= 2 && weekCanCarryQuality && !isDeload && goal != .stayConsistent && isRunning {
             if timeTrial {
-                // The checkpoint race effort — replaces this week's quality menu. A .tempo carrier
-                // (planned quality, so a hard result banks recalibration evidence) at 5K race pace.
-                let tt = (type: RunType.tempo, intervals: Optional("Time trial: 5K at race effort"),
-                          paceOverride: Optional(pace(.race, p5k: p5k)),
-                          note: Optional("A checkpoint, not a race: run it honest. Your training paces recalibrate from the result."))
+                // The checkpoint race effort replaces this week's quality menu. A .tempo carrier
+                // (planned quality, so the result is recalibration evidence) at the distance's race
+                // pace. Race plans test over 5K; an open block tests over the distance the athlete
+                // has the base for (`openBlockCheckpointDistanceM`). The mile is run strong and
+                // steady at 5K pace rather than all out: a new runner's form is the thing to protect,
+                // and a mile is a benchmark to beat next block, not a 5K predictor.
+                // nil = an open block's checkpoint, sized to THIS running week (a hybrid athlete's
+                // running is a share of their days, so the declared total would overstate it).
+                // `weeklyM` is this week's planned running volume, already carried up the block's
+                // ramp; the base the athlete tests from is that figure before the ramp.
+                let ttM = timeTrialDistanceM
+                    ?? checkpointDistanceM(level: level, weeklyRunningM: weeklyM / max(volumeMult, 0.01))
+                let label: String, ttPace: Double, ttNote: String
+                switch ttM {
+                case ..<2_000:
+                    label = "Time trial: 1 mile at a strong, steady effort"
+                    ttPace = pace(.race, p5k: p5k)
+                    ttNote = "A checkpoint, not a race. Ten easy minutes first, then run the mile strong and steady and note the time. We run it again at the end of the next block."
+                case ..<4_000:
+                    label = "Time trial: 3K at race effort"
+                    // Riegel: time scales with distance^exponent, so pace scales with distance^(exponent - 1).
+                    // The Daniels table clamps anything under 5K to 5K pace, so the curve is applied here.
+                    ttPace = pace(.race, p5k: p5k) * pow(ttM / 5_000, riegelExponent - 1)
+                    ttNote = "A checkpoint, not a race. Ten easy minutes first, then run it honest and even. Your training paces recalibrate from the result."
+                default:
+                    label = "Time trial: 5K at race effort"
+                    ttPace = pace(.race, p5k: p5k)
+                    ttNote = "A checkpoint, not a race: run it honest. Your training paces recalibrate from the result."
+                }
+                let tt = (type: RunType.tempo, intervals: Optional(label),
+                          paceOverride: Optional(ttPace), note: Optional(ttNote))
                 primaryQuality = tt
-                var session = makeRun(tt.type, 5_000, hard: true, intervals: tt.intervals,
+                var session = makeRun(tt.type, ttM, hard: true, intervals: tt.intervals,
                                       paceOverride: tt.paceOverride, note: tt.note)
                 // A test is its exact distance — never scaled by the week's multiplier (the final
                 // snap also keeps it canonical, so the governor can't be silently undone there).
-                session.targetDistanceM = 5_000
+                session.targetDistanceM = ttM
                 out.append(session)
-                // The fixed 5K can outweigh the quality it replaced — shave the surplus off the
+                // The fixed test can outweigh the quality it replaced — shave the surplus off the
                 // easy days so the week's TOTAL stays on the governed ramp.
-                spendSurplus(qualityBase * volumeMult - 5_000)
+                spendSurplus(qualityBase * volumeMult - ttM)
             } else {
                 let q = qualityWorkout(weekIndex: weekIndex, raceDistanceM: raceDistanceM, level: level, p5k: p5k,
                                        injuryAreas: injuryAreas, phase: phase, weeklyVolumeM: weeklyM,
@@ -1381,6 +1422,40 @@ enum PlanEngine {
 
     /// Body areas that high-impact hill repeats load hardest (ENDURANCE-FOCUS §8.2) — with a history
     /// here, quality stays flat and controlled.
+    /// The checkpoint distance for an open-ended block's final week, or nil when the block carries
+    /// none. Sized the way a coach sizes a test: a mile for a new runner or a light week, 3K in the
+    /// middle, 5K once the base is there. No test for the habit builder (`.stayConsistent` carries no
+    /// quality at all), for a cross-training block, for fewer than two run days, for a plan that is
+    /// not a rolling block, or when the injury history is impact or speed sensitive: a maximal effort
+    /// is the classic re-injury mechanism, so that athlete's block report speaks through volume and
+    /// the long run instead.
+    static func openBlockCarriesCheckpoint(profile: PlanInputs, cardio: Discipline?, runDays: Int,
+                                           totalWeeks: Int, injuryAreas: Set<InjuryArea>) -> Bool {
+        profile.raceDate == nil && totalWeeks == openBlockWeeks && cardio == .running && runDays >= 2
+            && profile.goal != .stayConsistent
+            && injuryAreas.isDisjoint(with: impactSensitiveAreas)
+            && injuryAreas.isDisjoint(with: speedSensitiveAreas)
+    }
+
+    /// The test distance for an athlete's running week: a mile for a new runner or a light week, 3K
+    /// in the middle, 5K once the base is there. Sized to the RUNNING week, never the declared total.
+    static func checkpointDistanceM(level: ExperienceLevel, weeklyRunningM: Double) -> Double {
+        if level == .new || weeklyRunningM < 20_000 { return 1_609 }
+        if weeklyRunningM < 35_000 { return 3_000 }
+        return 5_000
+    }
+
+    /// The test distance a time-trial label prescribes ("Time trial: 3K at race effort" reads 3000),
+    /// or nil for anything that is not a time trial. The label is the contract the block report and
+    /// the recalibration read, so it is parsed here and nowhere else.
+    static func timeTrialDistanceM(intervals: String?) -> Double? {
+        guard let intervals, intervals.contains("Time trial") else { return nil }
+        if intervals.contains("1 mile") { return 1_609 }
+        if intervals.contains("3K") { return 3_000 }
+        if intervals.contains("5K") { return 5_000 }
+        return nil
+    }
+
     static let impactSensitiveAreas: Set<InjuryArea> = [.shins, .ankle, .achilles, .foot, .calf, .knee, .itBand]
     /// Areas whose classic re-injury mechanism is maximal-speed running — no sprint-fast reps/strides.
     static let speedSensitiveAreas: Set<InjuryArea> = [.hamstring, .hip]

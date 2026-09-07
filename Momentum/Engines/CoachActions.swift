@@ -342,6 +342,10 @@ enum CoachActions {
             guard let plan = profile.plan else { return .declined(reason: noPlan) }
             // Rolling plan → a true renewal: reassess what they actually ran, next block, counter up.
             if plan.raceDate == nil {
+                // The review first, while the closing block's sessions are still the plan's.
+                PlanBlockReview.post(PlanBlockReview.summary(plan: plan, in: context, today: today),
+                                     unit: DistanceUnit(rawValue: profile.distanceUnit) ?? .auto,
+                                     today: today, in: context)
                 PlanService.renewBlock(for: profile, startDate: today, in: context)
                 let block = (profile.plan?.blockIndex ?? 0) + 1
                 return notify(Receipt(
