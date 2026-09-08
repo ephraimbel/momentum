@@ -32,8 +32,11 @@ struct MapStylePreviewRequest: Hashable, Sendable {
                                longitude: min(180, max(-180, (Double(longitudeBucket) + 0.5) / 50)))
     }
     var size: CGSize { CGSize(width: width, height: height) }
-    // v2 excludes old cropped/day-only thumbnails without deleting anyone's cache.
-    var key: String { "v2_\(option.rawValue)_\(latitudeBucket)_\(longitudeBucket)_\(width)x\(height)_\(scale)_p\(Int(pitch))" }
+    // The version prefix retires stale renders without deleting anyone's cache: v2 dropped the
+    // old cropped/day-only thumbnails, v3 drops every thumbnail baked with the Mapbox logo on it
+    // (2026-09-07). Bump it whenever what the renderer draws changes, or an existing install
+    // keeps serving the old picture from disk forever.
+    var key: String { "v3_\(option.rawValue)_\(latitudeBucket)_\(longitudeBucket)_\(width)x\(height)_\(scale)_p\(Int(pitch))" }
 }
 
 /// Small, cancellable FIFO. At most two snapshots (including disk work) run at once. Identical
@@ -195,8 +198,14 @@ private final class MapStyleSnapshotRender {
             await withCheckedContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(returning: nil); return }
                 self.continuation = continuation
+                // No logo or attribution baked in: these are ~220x165 style swatches in a picker,
+                // where the mark lands on top of the thumbnail it is meant to describe. The credit
+                // lives in Settings' colophon (see `MapChrome`), and `RouteSnapshotter` renders on
+                // the same terms.
                 let renderer = Snapshotter(options: MapSnapshotOptions(size: request.size,
-                                                                      pixelRatio: CGFloat(request.scale)))
+                                                                      pixelRatio: CGFloat(request.scale),
+                                                                      showsLogo: false,
+                                                                      showsAttribution: false))
                 snapshotter = renderer
                 renderer.onStyleLoaded.observeNext { [weak self, weak renderer] _ in
                     guard let self, let renderer, self.continuation != nil else { return }

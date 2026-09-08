@@ -1,22 +1,30 @@
-import MapboxMaps
+// `@_spi(Restricted)`: the SDK gates `LogoViewOptions.visibility` and
+// `AttributionButtonOptions.visibility` behind this SPI group and offers no other way to hide
+// them (neither is an initializer parameter). Everything else in this file is ordinary public API.
+@_spi(Restricted) import MapboxMaps
 
-/// Minimal map chrome: the decorative scale and compass stay hidden while Mapbox's required logo
-/// and attribution remain visible at opposite bottom corners. Keeping this policy in one place makes
-/// every map feel consistent and prevents a presentation-only screen from accidentally suppressing
-/// required attribution.
+/// Bare map chrome: nothing the SDK draws over the map survives (owner call 2026-09-07). The
+/// scale bar and compass were already gone; the logo and the attribution button now go with them,
+/// so a route, a heatmap and a live run are the map and nothing else.
+///
+/// **The credit did not disappear, it moved.** Settings' colophon carries "© Mapbox" and
+/// "© OpenStreetMap" as tappable links to each licence, which is where this app's attribution
+/// lives and why these ornaments can be hidden here. `RouteSnapshotter` has baked its images
+/// without them since 2026-07-10 on the same reasoning; this brings the live maps in line.
+/// Keeping the policy in one place is what stops a screen from drifting back on its own.
 enum MapChrome {
     static var minimal: OrnamentOptions {
+        // The logo and attribution carry their visibility as a settable property rather than an
+        // init parameter, so they are built and then hidden.
+        var logo = LogoViewOptions()
+        logo.visibility = .hidden
+        var attribution = AttributionButtonOptions()
+        attribution.visibility = .hidden
         return OrnamentOptions(
             scaleBar: ScaleBarViewOptions(visibility: .hidden),
             compass: CompassViewOptions(visibility: .hidden),
-            logo: LogoViewOptions(
-                position: .bottomLeading,
-                margins: CGPoint(x: 8, y: 8)
-            ),
-            attributionButton: AttributionButtonOptions(
-                position: .bottomTrailing,
-                margins: CGPoint(x: 8, y: 8)
-            )
+            logo: logo,
+            attributionButton: attribution
         )
     }
 
