@@ -54,7 +54,14 @@ struct FuelView: View {
     @Query(FuelView.recentMeals) private var meals: [Meal]
     @Query(FuelView.recentWorkouts) private var workouts: [Workout]
     @Query private var profiles: [UserProfile]
-    @Query(sort: \WaterEntry.drankAt, order: .reverse) private var waterEntries: [WaterEntry]
+    /// Bounded like the meals: the strip reaches 30 days back, and every water row ever logged
+    /// refetching on every save anywhere in the app is waste that grows with the athlete.
+    private static var recentWater: FetchDescriptor<WaterEntry> {
+        var d = FetchDescriptor<WaterEntry>(sortBy: [SortDescriptor(\WaterEntry.drankAt, order: .reverse)])
+        d.fetchLimit = 600
+        return d
+    }
+    @Query(FuelView.recentWater) private var waterEntries: [WaterEntry]
 
     /// The day on the dashboard (2026-09-07): today by default, any of the last 30 days by the
     /// strip. Every number on the page is judged for THIS day; logging lands on it.
@@ -166,11 +173,19 @@ struct FuelView: View {
         let today = cal.startOfDay(for: Date())
         guard next <= today, next >= earliestDay else { return }
         Haptics.selection()
+        PerfMark.start("fuel-day-switch")
         followsToday = next == today
-        withAnimation(reduceMotion ? nil : Motion.crossfade) { selectedDay = next }
+        // No transaction around the switch: the numerals (`NumericFeedback`) and rings animate
+        // their own values, and a page-wide layout animation over a card of raised rows is the
+        // one kind of animation the house rule forbids.
+        selectedDay = next
         refreshDerived()
-        // A day with a meal still waiting for numbers (an offline log) gets its retry now.
-        Task { await retryPendingEstimates() }
+        PerfMark.end("fuel-day-switch")
+        // A day with a meal still waiting for numbers (an offline log) gets its retry now; a day
+        // without one skips the sweep.
+        if daySlice().contains(where: { $0.needsEstimate(maxAttempts: Self.maxEstimateAttempts) }) {
+            Task { await retryPendingEstimates() }
+        }
     }
     /// Midnight while the page is open, or a foreground after it: a page resting on today moves
     /// to the new today. A pinned past day stays where the athlete put it.
@@ -189,6 +204,8 @@ struct FuelView: View {
     @State private var cachedTip: String?
     @State private var cachedDayMeals: [Meal] = []
     @State private var cachedUsuals: [Meal] = []
+    /// The `usualsSignature` the chips were built from; nil until the first build.
+    @State private var usualsToken: Int?
     /// Row titles decoded ONCE per refresh — `Meal.journalTitle` runs a JSONDecoder over `itemsData`
     /// on every single access, and every visible row calls it on every render pass.
     @State private var cachedTitles: [UUID: String] = [:]
@@ -660,6 +677,11 @@ struct FuelView: View {
     /// change, on the minute tick, on foreground, and eagerly from every mutator so the change frame
     /// costs one engine run instead of four.
     private func refreshDerived() {
+        // Every mutator refreshes eagerly and `.onChange(of: cacheSignature)` refreshes again on
+        // the next frame: the second pass is redundant whenever the first already matched the
+        // signature, and it used to redo the usuals fetch, the title decodes and the week.
+        let signature = cacheSignature
+        if cacheToken == signature, cachedReadout != nil { return }
         // Through `uncachedPass`, not a fresh compute: the first paint already ran the full
         // engine pass into `passMemo`, and `.onAppear` used to run the identical pass a second
         // time back-to-back (perf audit 2026-08-13). Same key (signature + minute), so this can
@@ -668,8 +690,17 @@ struct FuelView: View {
         cachedReadout = pass.readout
         cachedTip = pass.tip
         cachedDayMeals = pass.today
-        let repeats = computeUsuals()
-        cachedUsuals = repeats
+        // The usuals read the recent past, not the day: recomputed (a 300-row fetch) only when
+        // the journal itself changed, never for a day switch or a minute tick.
+        let usualsKey = usualsSignature
+        let repeats: [Meal]
+        if usualsKey == usualsToken, !cachedUsuals.isEmpty || usualsToken != nil {
+            repeats = cachedUsuals
+        } else {
+            repeats = computeUsuals()
+            cachedUsuals = repeats
+            usualsToken = usualsKey
+        }
         // Decode `itemsData` once per meal per refresh instead of once per row per render pass.
         var titles: [UUID: String] = [:]
         var scores: [UUID: HealthScore.Verdict] = [:]
@@ -694,7 +725,18 @@ struct FuelView: View {
                 .filter { !$0.isDeleted }
                 .map { FuelWeek.MealInput(eatenAt: $0.eatenAt, carbsG: $0.carbsG, proteinG: $0.proteinG) },
             bodyMassKg: profiles.first?.bodyMassKg, now: Date())
-        cacheToken = cacheSignature
+        cacheToken = signature
+    }
+
+    /// What the usuals depend on: the journal's size and ends (a delete past the window shifts
+    /// the tail), and which of the day's meals have numbers (a landing estimate can mint a usual).
+    private var usualsSignature: Int {
+        var h = Hasher()
+        h.combine(meals.count)
+        h.combine(meals.first?.persistentModelID)
+        h.combine(meals.last?.persistentModelID)
+        for m in daySlice() { h.combine(m.id); h.combine(m.carbsG != nil); h.combine(m.source) }
+        return h.finalize()
     }
 
     /// The row/chip title, decoded at refresh time. Honors the same validity guard as `usuals` and
@@ -1406,7 +1448,9 @@ struct FuelView: View {
     private func commitNewMeal(_ meal: Meal) -> Bool {
         do {
             try MealNutritionStore.insert(meal, in: context)
-            refreshDerived()
+            // No eager refresh: the query has not republished yet, so a pass here could only
+            // judge the day without the new row. The signature moves on the next frame and
+            // `.onChange` runs the one real pass.
             return true
         } catch {
             saveError = "Your meal wasn’t saved. Your typed draft is still here; please try again."
@@ -1500,7 +1544,7 @@ struct FuelView: View {
                 Button {
                     Haptics.selection()
                     followsToday = true
-                    withAnimation(reduceMotion ? nil : Motion.crossfade) { selectedDay = cal.startOfDay(for: Date()) }
+                    selectedDay = cal.startOfDay(for: Date())
                     refreshDerived()
                 } label: {
                     VStack(spacing: 1) {

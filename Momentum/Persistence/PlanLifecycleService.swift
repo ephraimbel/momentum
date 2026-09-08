@@ -178,7 +178,10 @@ enum PlanLifecycleService {
            calendar.startOfDay(for: raceDate) < day {
             throw Failure.startAfterRaceDay
         }
-        if let profile, let blueprint = record.blueprint {
+        // The cached preview is rebuilt for the scheduled day unless it already is (the builder
+        // previews an upcoming plan for its day, so a Save there would run the generator twice).
+        if let profile, let blueprint = record.blueprint,
+           !(record.preview.map { calendar.isDate($0.startDate, inSameDayAs: day) } ?? false) {
             let built = preview(for: blueprint, profile: profile, startDate: day, today: now, in: context, calendar: calendar)
             record.previewData = try JSONEncoder().encode(built)
         }

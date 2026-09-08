@@ -46,7 +46,9 @@ struct ManagePlanView: View {
     /// The proposal on screen. Set directly by rows that need no input; set through
     /// `pendingRequest` by the pickers, which hand it over as they dismiss (two sibling sheets
     /// swapped in one tick is the presentation race the codebase documents).
-    @State private var request: PlanAdjustmentService.Request?
+    @State private var request: PlanAdjustmentService.Request? {
+        didSet { if request != nil { PerfMark.start("proposal-ready") } }
+    }
     @State private var pendingRequest: PlanAdjustmentService.Request?
     @State private var picker: Picker?
     @State private var showInjury = false
@@ -58,6 +60,8 @@ struct ManagePlanView: View {
     @State private var unavailable: [Row: String] = [:]
     /// The plan's signature, refreshed with availability rather than hashed in every body pass.
     @State private var currentSignature: Int = 0
+    /// Sessions the reconciler rolled forward or left missed, counted with availability.
+    @State private var missedCount = 0
 
     private enum Picker: String, Identifiable {
         case days, sessionLength, move, pause, equipment
@@ -105,8 +109,9 @@ struct ManagePlanView: View {
                 PlanProposalSheet(request: r, profile: profile, workouts: workouts, distanceUnit: distanceUnit) { result in
                     switch result {
                     case .applied(let receipt, let undo):
-                        applied = ManageReceipt(receipt: receipt, undo: undo,
-                                                signature: PlanAdjustmentService.signature(of: profile.plan))
+                        let signature = PlanAdjustmentService.signature(of: profile.plan)
+                        applied = ManageReceipt(receipt: receipt, undo: undo, signature: signature)
+                        currentSignature = signature
                         onPlanChanged()
                         refreshAvailability()
                     case .declined:
@@ -152,9 +157,16 @@ struct ManagePlanView: View {
             .alert("That didn’t work", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("OK", role: .cancel) { failure = nil }
             } message: { Text(failure ?? "Please try again.") }
-            .task { refreshAvailability() }
+            // After the sheet has landed: the availability pass walks the plan several times and
+            // builds the load insights over 300 workouts, which under the presentation spring is
+            // a visible hitch. Rows read as available until then (a tap re-checks anyway).
+            .task {
+                try? await Task.sleep(for: .milliseconds(350))
+                refreshAvailability()
+            }
         }
         .nestedPaywallHost()
+        .onAppear { PerfMark.end("manage-open") }
         .presentationDetents([.large])
     }
 
@@ -235,11 +247,9 @@ struct ManagePlanView: View {
     }
 
     private var missedLine: String {
-        guard let plan else { return "" }
-        let cal = Calendar.current
-        // Every session the reconciler touched: rolled forward (moved) or left as missed.
-        let missed = plan.sessions.filter { $0.status == .missed || $0.status == .moved }.count
-        _ = cal
+        guard plan != nil else { return "" }
+        // Counted with availability, never per body pass.
+        let missed = missedCount
         if missed == 0 { return "Missed sessions roll forward on their own. Lighten the week if you need a gentler way back" }
         return "\(missed) rolled forward already. Lighten the week for a gentler way back"
     }
@@ -297,7 +307,10 @@ struct ManagePlanView: View {
             next[.move] = "Nothing open in the next two weeks"
         }
         unavailable = next
-        currentSignature = PlanAdjustmentService.signature(of: profile.plan)
+        missedCount = plan?.sessions.filter { $0.status == .missed || $0.status == .moved }.count ?? 0
+        // The signature is only read by the receipt card; hashing every session for a page with
+        // no receipt is waste.
+        if applied != nil { currentSignature = PlanAdjustmentService.signature(of: profile.plan) }
     }
 
     private func receiptCard(_ applied: ManageReceipt) -> some View {
@@ -473,9 +486,13 @@ struct PlanProposalSheet: View {
                     Text("proposal").font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
                 }
             }
-            // Let the sheet land first: the proposal can run the full generator (a rebuild
-            // preview), and "Working out what changes" should be a frame, not a freeze.
-            .task { await Task.yield(); compute() }
+            // After the sheet has landed: a rebuild proposal runs the full generator, and
+            // "Working out what changes" is the designed state for that beat, not a freeze under
+            // the presentation spring.
+            .task {
+                try? await Task.sleep(for: .milliseconds(150))
+                compute()
+            }
             // Bought from the sheet: the change they were applying applies, no second tap.
             .onChange(of: paywall.isPro) { _, pro in
                 if pro, proposal?.isAvailable == true, declined == nil { apply() }
@@ -533,6 +550,7 @@ struct PlanProposalSheet: View {
         let fresh = PlanAdjustmentService.proposal(for: request, profile: profile, workouts: workouts,
                                                    distanceUnit: distanceUnit, in: context)
         withAnimation(Motion.crossfade) { proposal = fresh }
+        PerfMark.end("proposal-ready")
     }
 
     private func apply() {

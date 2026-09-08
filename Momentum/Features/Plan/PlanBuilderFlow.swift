@@ -16,6 +16,9 @@ struct PlanBuilderFlow: View {
     /// Editing an existing draft or upcoming plan; nil is a fresh plan.
     let draft: PlanShelfRecord?
     let distanceUnit: DistanceUnit
+    /// The host's already-fetched workouts, for propagation after a start (never the profile's
+    /// whole relationship, which faults every workout ever logged).
+    let workouts: [Workout]
     var onFinish: (PlanBuilderOutcome) -> Void
 
     @Environment(\.modelContext) private var context
@@ -100,11 +103,12 @@ struct PlanBuilderFlow: View {
         var id: String { "\(overlap.currentEnd.timeIntervalSince1970)-\(startDay.timeIntervalSince1970)" }
     }
 
-    init(profile: UserProfile, draft: PlanShelfRecord?, distanceUnit: DistanceUnit,
+    init(profile: UserProfile, draft: PlanShelfRecord?, distanceUnit: DistanceUnit, workouts: [Workout] = [],
          onFinish: @escaping (PlanBuilderOutcome) -> Void) {
         self.profile = profile
         self.draft = draft
         self.distanceUnit = distanceUnit
+        self.workouts = workouts
         self.onFinish = onFinish
         var b = draft?.blueprint ?? PlanBlueprint(profile: profile)
         if draft == nil {
@@ -146,7 +150,13 @@ struct PlanBuilderFlow: View {
                             .font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
+                        // Keyed on the step and crossfaded: swapping the subtree under a spring
+                        // animated the layout of a whole step (a graphical date picker and two
+                        // wheels on the race step), which is the one kind of animation the house
+                        // rule forbids.
                         stepContent
+                            .id(step)
+                            .transition(.opacity)
                     }
                     .padding(Theme.Space.lg)
                 }
@@ -218,11 +228,14 @@ struct PlanBuilderFlow: View {
                 #endif
             }
             // A beat after the step transition, so the generator never runs under the animation.
-            .onChange(of: step) { _, new in if new == .preview { schedulePreview(delay: 0.3) } }
+            .onChange(of: step) { _, new in
+                if new == .preview { PerfMark.start("builder-preview"); schedulePreview(delay: 0.3) }
+            }
             .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
             .onDisappear { previewTask?.cancel() }
         }
         .nestedPaywallHost()
+        .onAppear { PerfMark.end("builder-open") }
         .presentationDetents([.large])
         // A swipe never bypasses the Cancel button's question or the shelf handoff behind it.
         .interactiveDismissDisabled(step != .goal || draft != nil)
@@ -371,13 +384,13 @@ struct PlanBuilderFlow: View {
     private func advance() {
         guard canAdvance, let next = Step(rawValue: step.rawValue + 1) else { return }
         Haptics.light()
-        withAnimation(reduceMotion ? nil : Motion.standard) { step = next }
+        withAnimation(reduceMotion ? nil : Motion.crossfade) { step = next }
     }
 
     private func back() {
         guard let previous = Step(rawValue: step.rawValue - 1) else { return }
         Haptics.light()
-        withAnimation(reduceMotion ? nil : Motion.standard) { step = previous }
+        withAnimation(reduceMotion ? nil : Motion.crossfade) { step = previous }
     }
 
     // MARK: - Step 1: goal
@@ -995,6 +1008,7 @@ struct PlanBuilderFlow: View {
             let start = previewStart
             let built = PlanLifecycleService.preview(for: snapshot, profile: profile, startDate: start, in: context)
             guard !Task.isCancelled, token == previewToken else { return }
+            PerfMark.end("builder-preview")
             withAnimation(reduceMotion ? nil : Motion.crossfade) {
                 preview = built
                 previewing = false
@@ -1108,7 +1122,7 @@ struct PlanBuilderFlow: View {
             }
             let activation = try PlanLifecycleService.activate(blueprint, from: draft, for: profile, in: context)
             previewTask?.cancel()
-            PlanLifecycleService.propagate(activation, profile: profile, workouts: profile.workouts,
+            PlanLifecycleService.propagate(activation, profile: profile, workouts: workouts,
                                            notifications: services.notifications, in: context)
             Haptics.success()
             onFinish(.activated)

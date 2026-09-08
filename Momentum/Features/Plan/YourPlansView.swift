@@ -24,6 +24,7 @@ struct YourPlansView: View {
     @Query private var records: [PlanShelfRecord]
 
     @State private var reviewing: ReviewTarget?
+    @State private var currentReview: CurrentReview?
     @State private var scheduling: PlanShelfRecord?
     @State private var overlapDecision: OverlapDecision?
     @State private var deleting: PlanShelfRecord?
@@ -131,11 +132,11 @@ struct YourPlansView: View {
             .sheet(item: $reviewing, onDismiss: runPending) { target in
                 switch target.kind {
                 case .current:
-                    if let plan = profile.plan {
-                        PlanReviewView(title: plan.name.isEmpty ? PlanBlueprint(profile: profile).displayName : plan.name,
-                                       status: nil,
-                                       blueprint: currentBlueprint(plan),
-                                       preview: currentPreview(plan),
+                    // Built once at the tap (`openCurrentReview`): a sheet's content closure runs
+                    // on every parent body pass, and the snapshot walks every session.
+                    if let review = currentReview {
+                        PlanReviewView(title: review.title, status: nil,
+                                       blueprint: review.blueprint, preview: review.preview,
                                        distanceUnit: distanceUnit) {
                             reviewActions(.current)
                         }
@@ -178,6 +179,7 @@ struct YourPlansView: View {
             } message: { Text(failure ?? "Please try again.") }
         }
         .nestedPaywallHost()
+        .onAppear { PerfMark.end("your-plans-open") }
     }
 
     // MARK: - Sections
@@ -228,9 +230,22 @@ struct YourPlansView: View {
         return b
     }
 
-    private func currentPreview(_ plan: TrainingPlan) -> PlanPreview {
-        PlanPreview.build(snapshot: CoachUndo.planState(of: plan), blueprint: currentBlueprint(plan),
-                          distanceUnit: distanceUnit, anchor: PlanLifecycleService.span(of: plan).start)
+    /// The current plan as the review sheet shows it, snapshotted once when the sheet is asked for.
+    private struct CurrentReview {
+        let title: String
+        let blueprint: PlanBlueprint
+        let preview: PlanPreview
+    }
+
+    private func openCurrentReview() {
+        guard let plan = profile.plan else { return }
+        let blueprint = currentBlueprint(plan)
+        currentReview = CurrentReview(
+            title: plan.name.isEmpty ? blueprint.displayName : plan.name,
+            blueprint: blueprint,
+            preview: PlanPreview.build(snapshot: CoachUndo.planState(of: plan), blueprint: blueprint,
+                                       distanceUnit: distanceUnit, anchor: PlanLifecycleService.span(of: plan).start))
+        openCurrentReview()
     }
 
     private func currentCard(_ plan: TrainingPlan) -> some View {
@@ -250,11 +265,11 @@ struct YourPlansView: View {
             progress: plan.isSelfCoached ? nil : progress.fraction,
             primaryAction: (plan.isSelfCoached ? "Manage" : "Manage plan", { onManageCurrent() }),
             menu: {
-                Button { reviewing = ReviewTarget(kind: .current) } label: { Label("Preview", systemImage: "eye") }
+                Button { openCurrentReview() } label: { Label("Preview", systemImage: "eye") }
                 Button { onManageCurrent() } label: { Label("Manage plan", systemImage: "slider.horizontal.3") }
             })
-        .onTapGesture { reviewing = ReviewTarget(kind: .current) }
-        .accessibilityAction(named: "Preview") { reviewing = ReviewTarget(kind: .current) }
+        .onTapGesture { openCurrentReview() }
+        .accessibilityAction(named: "Preview") { openCurrentReview() }
         .accessibilityIdentifier("plans-current")
     }
 

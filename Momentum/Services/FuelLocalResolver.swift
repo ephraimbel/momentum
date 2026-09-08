@@ -36,7 +36,11 @@ enum FuelLocalResolver {
             sortBy: [SortDescriptor(\.eatenAt, order: .reverse)]
         )
         descriptor.fetchLimit = candidateLimit
-        return ((try? context.fetch(descriptor)) ?? []).filter { !$0.nutrition.values.isEmpty }
+        // The scalars answer for almost every row; the blob is decoded only for the rare row
+        // that carries nothing but `nutritionData` (300 JSON decodes per send otherwise).
+        return ((try? context.fetch(descriptor)) ?? []).filter {
+            $0.carbsG != nil || $0.kcal != nil || !$0.nutrition.values.isEmpty
+        }
     }
 
     /// The remembered meal whose text canonicalizes to the same key, or nil.

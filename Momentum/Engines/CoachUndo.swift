@@ -191,8 +191,10 @@ enum CoachUndo {
     /// chat or from Manage plan) invalidates every older snapshot, because they describe a world
     /// that no longer exists. Nulls every chat card's undo; the caller keeps its own if it wants one.
     static func makeSoleUndoPoint(in context: ModelContext) {
-        let all = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
-        for m in all where m.undoJSON != nil { m.undoJSON = nil }
+        // Only the messages that hold one: a long-tenured thread has thousands of rows and at
+        // most one undo point among them.
+        let holders = (try? context.fetch(FetchDescriptor<ChatMessage>(predicate: #Predicate { $0.undoJSON != nil }))) ?? []
+        for m in holders { m.undoJSON = nil }
     }
 
     // MARK: - Restore

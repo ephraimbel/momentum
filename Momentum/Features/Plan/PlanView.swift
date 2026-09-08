@@ -55,6 +55,8 @@ struct PlanView: View {
     @State private var manageReceipt: ManageReceipt?
     /// The `--plan-*` presentation hooks fire once, not on every return to the tab.
     @State private var debugHooksFired = false
+    /// The day the race settle and the upcoming-plan sweep last ran on appear.
+    @State private var settledOn: Date?
     /// Manage plan (2026-09-07): every adjustment by intent, each as a proposal with Apply / Undo.
     @State private var showManage = false
     /// The plan builder, opened from Your plans on a fresh blueprint or an existing draft.
@@ -353,10 +355,15 @@ struct PlanView: View {
             }
             // An upcoming plan whose day has come starts here too (Today's bootstrap is the usual
             // door; an athlete who opens straight onto Plan should not see last week's plan).
-            if let p = profiles.first {
+            // Once per local day on appear (the scene-active path covers a night parked here):
+            // `onAppear` re-fires on every tab return and sheet dismissal, and the settle is three
+            // fetches each time for a result that cannot change within the day.
+            let today = Calendar.current.startOfDay(for: Date())
+            if settledOn != today, let p = profiles.first {
+                settledOn = today
                 PlanService.settleRaces(for: p, today: Date(), in: context)
                 if let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
-                    PlanLifecycleService.propagate(activation, profile: p, workouts: p.workouts,
+                    PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
                                                    notifications: services.notifications, in: context)
                     weekStart = currentWeekStart
                     rebuildDerived()
@@ -863,7 +870,7 @@ struct PlanView: View {
                                 Label("I'm away some days…", systemImage: "airplane")
                             }
                         }
-                        Button { showManage = true } label: {
+                        Button { PerfMark.start("manage-open"); showManage = true } label: {
                             Label("Manage plan", systemImage: "wrench.and.screwdriver")
                         }
                         if plan?.isSelfCoached != true {
@@ -875,7 +882,7 @@ struct PlanView: View {
                             Label(plan?.isSelfCoached == true ? "Build me a plan" : "Start a new plan",
                                   systemImage: "arrow.triangle.2.circlepath")
                         }
-                        Button { showYourPlans = true } label: {
+                        Button { PerfMark.start("your-plans-open"); showYourPlans = true } label: {
                             Label("Your plans", systemImage: "square.stack")
                         }
                         if plan?.isSelfCoached != true {
@@ -916,7 +923,7 @@ struct PlanView: View {
     }
 
     private func shelfSheetDismissed() {
-        rebuildDerived()
+        // No rebuild here: the tab's own `onAppear` follows every sheet dismissal and does it.
         guard let next = shelfFollowUp else { return }
         shelfFollowUp = nil
         switch next {
@@ -925,7 +932,7 @@ struct PlanView: View {
         case .settings: showSettings = true
         case .awayDays: showAwayDays = true
         case .library: showLibrary = true
-        case .compose(let target): composing = target
+        case .compose(let target): PerfMark.start("builder-open"); composing = target
         }
     }
 
@@ -958,7 +965,7 @@ struct PlanView: View {
     @ViewBuilder
     private func builderSheet(_ target: PlanComposeTarget) -> some View {
         if let p = profiles.first {
-            PlanBuilderFlow(profile: p, draft: target.record, distanceUnit: distanceUnit) { outcome in
+            PlanBuilderFlow(profile: p, draft: target.record, distanceUnit: distanceUnit, workouts: workouts) { outcome in
                 if outcome == .activated {
                     planChangedFromShelf()
                 } else if outcome != .cancelled || target.fromShelf {

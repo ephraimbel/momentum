@@ -80,7 +80,11 @@ enum PlanAdjustmentService {
             h.combine(s.rationale?.hasPrefix(InjuryResponse.marker) ?? false)
             // A to-many relationship has no stable order between fetches; sort before hashing or
             // the signature moves on its own the moment the sheet closes and the undo dies.
-            h.combine(s.strengthTargets.map { "\($0.order)|\($0.exercise?.name ?? "")|\($0.targetSets)" }.sorted())
+            // Only a strength session carries targets; reading the relationship on a run is a
+            // fault for nothing.
+            if s.discipline == .strength {
+                h.combine(s.strengthTargets.map { "\($0.order)|\($0.exercise?.name ?? "")|\($0.targetSets)" }.sorted())
+            }
         }
         return h.finalize()
     }
