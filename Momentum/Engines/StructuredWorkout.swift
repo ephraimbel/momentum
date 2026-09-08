@@ -151,7 +151,11 @@ enum StructuredWorkoutBuilder {
     // MARK: Strides — an easy run capped with short, fast, relaxed accelerations. Effort-based.
 
     static func strides(reps: Int, strideS: Double, easyPace: Double, totalDistanceM: Double?) -> StructuredWorkout {
-        let easyM = max(1500, (totalDistanceM ?? 4000) - 800)   // the bulk is the easy run; strides tack on
+        // Reserve nominal distance for ALL timed strides and walk recoveries before sizing
+        // the easy lead-in; a fixed 800m allowance silently overfilled six-stride sessions.
+        let finishS = Double(max(1, reps)) * strideS + Double(max(0, reps - 1)) * 60
+        let finishM = finishS / max(1, easyPace) * 1000
+        let easyM = max(1500, (totalDistanceM ?? 4000) - finishM)
         var steps: [WorkoutStep] = [WorkoutStep(kind: .warmup, target: .distance(easyM), paceSPerKm: easyPace)]
         for i in 1...max(1, reps) {
             steps.append(WorkoutStep(kind: .work, target: .duration(strideS), paceSPerKm: nil,

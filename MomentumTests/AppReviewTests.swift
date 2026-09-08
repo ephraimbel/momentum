@@ -127,6 +127,19 @@ struct AppReviewTests {
 
     // MARK: The onboarding beat's debit
 
+    @Test func revisitingOnboardingDoesNotSpendLaterReviewOpportunities() {
+        let d = suite()
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        AppReview.recordOnboardingAsk(defaults: d, now: day(0))
+        AppReview.recordOnboardingAsk(defaults: d, now: day(1))
+        AppReview.recordOnboardingAsk(defaults: d, now: day(2))
+        #expect(d.integer(forKey: "com.momentum.review.asks.v2") == 1)
+        #expect(d.object(forKey: "com.momentum.review.lastAsk.v2") as? Date == day(0))
+        for _ in 0..<5 { AppReview.recordWorkoutSaved(defaults: d) }
+        #expect(AppReview.shouldRequestReview(defaults: d, now: day(3)),
+                "returning to onboarding must not consume or postpone the fifth-item opportunity")
+    }
+
     /// The beat spends one slot, so the athlete is NOT asked again the first time they save a
     /// workout — the cards resume at the 5th logged item.
     @Test func theOnboardingAskSpendsOneSlotAndPushesTheCardsToTheNextMilestone() {

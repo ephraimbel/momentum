@@ -5,22 +5,28 @@ import Foundation
 /// engine seeds and `PlanCoaching.recalibratePaces` sharpens from strong runs) — using Riegel's
 /// endurance model: T₂ = T₁·(D₂/D₁)^1.06, the same relationship the plan engine inverts to derive P5k.
 ///
-/// Pure + deterministic. Conservative by construction (assumes a flat course + good conditions);
+/// Pure + deterministic. Assumes a flat course and good conditions;
 /// it's an estimate to train toward, never a medical or performance guarantee.
 enum RacePredictor {
     /// Riegel's fatigue exponent — matches `PlanEngine.riegelP5k`, so prediction and pace-seeding stay
-    /// inverses of one another. Validated to the marathon; the endurance correction below carries the
-    /// honesty past it.
+    /// inverses of one another through the marathon. This is a population estimate, not an
+    /// individually validated endurance curve.
     static let riegelExponent = 1.06
 
     /// Projected finish time (seconds) for `raceDistanceM`, from a 5k-equivalent pace (s/km).
-    /// Predictions running past ~3 h take the endurance tax (`DanielsPaces.enduranceCorrected`):
-    /// Riegel's exponent, like the Daniels curve, ignores glycogen, impact damage, and the long
-    /// day — without the tax a 50K predicts barely slower than marathon pace, which no one runs.
-    static func finishTimeS(raceDistanceM: Double, p5kSPerKm: Double) -> Double? {
-        guard raceDistanceM > 0, p5kSPerKm > 0 else { return nil }
+    /// Ultra distances retain the existing duration correction. Surface, elevation, fueling and
+    /// individual endurance are not modeled here, so this should remain a provisional estimate.
+    static func finishTimeS(raceDistanceM: Double, p5kSPerKm: Double,
+                            exponent: Double = riegelExponent) -> Double? {
+        guard raceDistanceM.isFinite, p5kSPerKm.isFinite, raceDistanceM > 0, p5kSPerKm > 0 else { return nil }
+        guard exponent.isFinite, AthleteStateEngine.riegelExponentBounds.contains(exponent) else { return nil }
         let t5kS = p5kSPerKm * 5.0
-        return DanielsPaces.enduranceCorrected(raceTimeS: t5kS * pow(raceDistanceM / 5000.0, riegelExponent))
+        let predicted = t5kS * pow(raceDistanceM / 5000.0, exponent)
+        // Road-distance predictions invert the benchmark seed. A marathon result must
+        // round-trip to itself, rather than receiving an extra duration penalty.
+        let result = raceDistanceM > 42_195
+            ? DanielsPaces.enduranceCorrected(raceTimeS: predicted) : predicted
+        return result.isFinite && result > 0 ? result : nil
     }
 
     /// Projected average race pace (s/km).

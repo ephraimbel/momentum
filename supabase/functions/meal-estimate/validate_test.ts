@@ -200,3 +200,64 @@ Deno.test("a photo's items are listed largest first; a sentence keeps the athlet
   assertEquals(text.ok, true);
   if (text.ok) assertEquals(text.value.items.map((i) => i.name), ["Toast", "Sausage", "Egg"]);
 });
+
+Deno.test("legible label calories and portion weights are preserved instead of rewritten", () => {
+  const result = validateEstimate({ items: [item({ name: "Fibre bar", nutrition_basis: "label",
+    grams: 53, kcal: 153, carbs_g: 30, protein_g: 10, fat_g: 5, fiber_g: 15 })], confidence: 0.8 });
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.value.items[0].kcal, 153);
+    assertEquals(result.value.items[0].grams, 53);
+    assertEquals(result.stats.reconciled, 0);
+  }
+});
+
+Deno.test("fibre energy is a range, not automatically four calories per gram", () => {
+  const result = validateEstimate({ items: [item({ name: "Fibre cereal", kcal: 150,
+    carbs_g: 45, protein_g: 8, fat_g: 3, fiber_g: 25 })], confidence: 0.6 });
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.value.items[0].kcal, 150);
+    assertEquals(result.stats.reconciled, 0);
+  }
+});
+
+Deno.test("impossible nutrient mass rejects the entire response", () => {
+  for (const changes of [{ grams: 10, protein_g: 50 }, { grams: 100, iron_mg: 200000 }]) {
+    assertEquals(validateEstimate({ items: [item(), item(changes)], confidence: 0.7 }),
+      { ok: false, error: "item" });
+  }
+  // Ordinary rounding on a small portion is tolerated.
+  const oil = item({ name: "Oil", grams: 14, kcal: 126, carbs_g: 0, protein_g: 0, fat_g: 14 });
+  assertEquals(validateEstimate({ items: [oil], confidence: 0.6 }).ok, true);
+});
+
+Deno.test("provider invented nutrition provenance is refused", () => {
+  assertEquals(validateEstimate({ items: [item({ nutrition_basis: "laboratory_verified" })], confidence: 0.9 }),
+    { ok: false, error: "item" });
+});
+
+Deno.test("chunked image requests cannot bypass the body ceiling", async () => {
+  const { BodyTooLarge, readBoundedJSON } = await import("./validate.ts");
+  let canceled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(new Uint8Array(32)); },
+    cancel() { canceled = true; },
+  });
+  let tooLarge = false;
+  try { await readBoundedJSON(new Request("https://example.com", { method: "POST", body }), 64); }
+  catch (error) { tooLarge = error instanceof BodyTooLarge; }
+  assertEquals(tooLarge, true);
+  assertEquals(canceled, true);
+});
+
+Deno.test("bounded JSON decodes UTF-8 split across network chunks", async () => {
+  const { readBoundedJSON } = await import("./validate.ts");
+  const bytes = new TextEncoder().encode(JSON.stringify({ text: "café" }));
+  const body = new ReadableStream<Uint8Array>({ start(controller) {
+    for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+    controller.close();
+  } });
+  const result = await readBoundedJSON(new Request("https://example.com", { method: "POST", body }), bytes.length);
+  assertEquals(result, { text: "café" });
+});

@@ -49,6 +49,7 @@ struct PlanBlueprint: Codable, Equatable, Sendable {
     /// and what the builder shows as "where you are".
     var weeklyRunVolumeM: Double?
     var longestRunM: Double?
+    var fitnessDeclaredAt: Date?
     var runningExperience: ExperienceLevel = .some
     var liftingExperience: ExperienceLevel = .some
     /// Carried for the shelf's story only: a self-coached plan retires under its own name. A
@@ -78,6 +79,7 @@ struct PlanBlueprint: Codable, Equatable, Sendable {
         muscleFocus = try c.decodeIfPresent([MuscleGroup].self, forKey: .muscleFocus) ?? []
         weeklyRunVolumeM = try c.decodeIfPresent(Double.self, forKey: .weeklyRunVolumeM)
         longestRunM = try c.decodeIfPresent(Double.self, forKey: .longestRunM)
+        fitnessDeclaredAt = try c.decodeIfPresent(Date.self, forKey: .fitnessDeclaredAt)
         runningExperience = try c.decodeIfPresent(ExperienceLevel.self, forKey: .runningExperience) ?? .some
         liftingExperience = try c.decodeIfPresent(ExperienceLevel.self, forKey: .liftingExperience) ?? .some
         isSelfCoached = try c.decodeIfPresent(Bool.self, forKey: .isSelfCoached) ?? false

@@ -248,6 +248,7 @@ struct PlanRevealView: View {
         }
         }
         }
+        .trackScreen(.planReveal)
     }
 
     private func sectionLabel(_ text: String) -> some View {
@@ -646,7 +647,7 @@ struct PlanRevealView: View {
                         outlookCell("\(s.hardDays)", "HARD DAYS / WK")
                     }
                 }
-                Text("Projected from your logged fitness. The work still has to happen.")
+                Text("Based on your starting profile and any result you entered. New running evidence refines the estimate.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
             }
             .padding(Theme.Space.md + 4)
@@ -661,29 +662,14 @@ struct PlanRevealView: View {
 
     private var outlookProjectionLine: String? {
         guard let p5k = profile?.plan?.p5kSPerKm, p5k > 0 else { return nil }
-        let weeks = planWeekCount
-        if vm.goal == .raceDistance, let r = vm.raceDistance {
-            let raceTimeS: Double? = {
-                guard let rr = vm.calibration.recentRun, abs(rr.distanceM - r.meters) < 100 else { return nil }
-                return rr.timeS
-            }()
-            guard let proj = PodiumOutlook.raceProjection(raceDistanceM: r.meters, p5kSPerKm: p5k,
-                                                          goalFinishTimeS: vm.goalFinishTimeS,
-                                                          experience: vm.experience, weeks: weeks,
-                                                          currentRaceTimeS: raceTimeS) else { return nil }
-            let now = PlanFeasibility.hms(proj.nowS)
-            let race = r.label.lowercased()
-            if let goalS = vm.goalFinishTimeS {
-                if proj.builtS <= goalS + 1 {
-                    return "Today's fitness runs a \(now) \(race). This block is built to get you to your \(PlanFeasibility.hms(goalS)) goal."
-                }
-                return "Today's fitness runs a \(now) \(race). This block drives you to \(PlanFeasibility.hms(proj.builtS)), real ground toward your \(PlanFeasibility.hms(goalS)) goal."
-            }
-            return "Today's fitness runs a \(now) \(race). This build is pointed at \(PlanFeasibility.hms(proj.builtS))."
+        let raceM = vm.goal == .raceDistance ? (vm.raceDistance?.meters ?? 5000) : 5000
+        guard let seconds = RacePredictor.finishTimeS(raceDistanceM: raceM, p5kSPerKm: p5k) else { return nil }
+        let race = vm.goal == .raceDistance ? (vm.raceDistance?.label.lowercased() ?? "5K") : "5K"
+        let estimate = "Your starting fitness estimate is \(PlanFeasibility.hms(seconds)) for \(race)."
+        if let goal = vm.goalFinishTimeS, vm.goal == .raceDistance {
+            return estimate + " Your goal is \(PlanFeasibility.hms(goal)). The plan builds toward it and adjusts to how you respond."
         }
-        guard let proj = PodiumOutlook.fiveKProjection(p5kSPerKm: p5k, experience: vm.experience,
-                                                       weeks: weeks) else { return nil }
-        return "Today you're a \(PlanFeasibility.hms(proj.nowS)) 5K runner. This block is built to move you toward \(PlanFeasibility.hms(proj.builtS))."
+        return estimate + " The plan builds from here; your training shows us when you're ready to progress."
     }
 
     private var peakWeekStats: (volumeM: Double, longestM: Double, hardDays: Int)? {
@@ -1423,7 +1409,7 @@ private struct AscentCurve: View, Animatable {
                 pathBeat("START", point: pts[0], visible: pathVisibility(at: 0, count: n),
                          width: w, chartHeight: h)
                 if peakIndex > 0, peakIndex < destinationIndex {
-                    peakCallout(point: pts[peakIndex], width: w)
+                    peakCallout(point: pts[peakIndex], destination: pts[destinationIndex], width: w)
                 }
                 let destination = pts[destinationIndex]
                 PlanGoalBeacon(progress: arrival, systemImage: destinationSystemImage)
@@ -1503,9 +1489,16 @@ private struct AscentCurve: View, Animatable {
 
     /// The peak's callout: a small raised pill above the highest week, popping in once the
     /// runner has crested it. It says what the peak IS, not just that it is one.
-    private func peakCallout(point: CGPoint, width: CGFloat) -> some View {
+    private func peakCallout(point: CGPoint, destination: CGPoint, width: CGFloat) -> some View {
         let show = calloutIn ? 1.0 : 0.0
         let halfWidth = min(70.0, max(38.0, Double(peakLabel.count) * 3.6 + 22))
+        let goalHalfWidth = min(92.0, max(49.0, Double(destinationLabel.count) * 3.7 + 22))
+        let x = min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth))
+        let goalX = min(max(destination.x, CGFloat(goalHalfWidth)), width - CGFloat(goalHalfWidth))
+        let y = max(14, point.y - 24)
+        let goalY = max(14, destination.y - 27)
+        let overlaps = abs(x - goalX) < CGFloat(halfWidth + goalHalfWidth + 6) && abs(y - goalY) < 30
+
         return HStack(spacing: 4) {
             Text("PEAK")
                 .font(.rounded(8, weight: .black)).tracking(0.8)
@@ -1517,8 +1510,7 @@ private struct AscentCurve: View, Animatable {
         .padding(.horizontal, 8).padding(.vertical, 5)
         .raised(Capsule())
         .fixedSize()
-        .position(x: min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth)),
-                  y: max(14, point.y - 24))
+        .position(x: x, y: overlaps ? goalY + 38 : y)
         .opacity(show)
         .scaleEffect(0.78 + 0.22 * show, anchor: .bottom)
         .animation(.spring(response: 0.5, dampingFraction: 0.72), value: calloutIn)

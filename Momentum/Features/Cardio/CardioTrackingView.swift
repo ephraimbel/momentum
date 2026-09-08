@@ -285,6 +285,7 @@ struct CardioTrackingView: View, Equatable {
             }
             Haptics.warm()   // the countdown's ticks are seconds away — wake the Taptic Engine now
         }
+        .trackScreen(.workoutRecorder)
     }
 
     /// A touch broke the follow lock. Every touch also rearms a short idle timer that quietly

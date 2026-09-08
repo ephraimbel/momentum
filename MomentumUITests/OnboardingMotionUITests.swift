@@ -1,8 +1,66 @@
 import XCTest
 
+/// XCUITest may call a partially covered control "hittable" even when its center is behind
+/// the fixed Continue bar. Scroll its tap target into the visible question viewport first.
+@MainActor
+private func revealOnboardingControl(_ element: XCUIElement, in app: XCUIApplication) {
+    XCTAssertTrue(element.waitForExistence(timeout: 15))
+    func bottomEdge() -> CGFloat {
+        let next = app.buttons["Continue"].firstMatch
+        let hasQuestionFooter = next.exists && element.label != "Continue"
+            && !app.navigationBars["Your recent result"].exists
+        return hasQuestionFooter ? next.frame.minY - 8 : app.frame.maxY
+    }
+    func visible() -> Bool {
+        guard element.isHittable else { return false }
+        return element.frame.midY + min(22, element.frame.height / 2) <= bottomEdge()
+    }
+    for _ in 0..<24 where !visible() {
+        let scroll = app.scrollViews.firstMatch
+        XCTAssertTrue(scroll.exists)
+        let top = max(app.frame.minY, scroll.frame.minY) + 12
+        let bottom = min(scroll.frame.maxY, bottomEdge()) - 12
+        let middle = (top + bottom) / 2
+        // Short, directional drags cannot fling a tall accessibility row past the viewport.
+        let distance = min(100, max(35, (bottom - top) / 3))
+        let delta = element.frame.midY < middle ? distance : -distance
+        let origin = app.coordinate(withNormalizedOffset: .zero)
+        origin.withOffset(CGVector(dx: app.frame.midX, dy: middle))
+            .press(forDuration: 0.05,
+                   thenDragTo: origin.withOffset(CGVector(dx: app.frame.midX, dy: middle + delta)))
+    }
+    XCTAssertTrue(visible())
+}
+
 /// Motion may acknowledge a choice, but must never swallow it, delay Continue, or hide a row.
 final class OnboardingMotionUITests: XCTestCase {
     override func setUp() { super.setUp(); continueAfterFailure = false }
+
+    @MainActor
+    func testReturningRunnerCanDescribeZeroRecentRunning() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-goal", "--ui-test-reduce-motion"]
+        app.launch()
+        let goal = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Stay consistent'")).firstMatch
+        XCTAssertTrue(goal.waitForExistence(timeout: 20))
+        goal.tap(); app.buttons["Continue"].tap()
+        let returning = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Returning after a break'")).firstMatch
+        XCTAssertTrue(returning.waitForExistence(timeout: 5))
+        returning.tap()
+        XCTAssertTrue(returning.isSelected)
+        capture(app, name: "returning-runner-background")
+        for _ in 0..<4 {
+            if app.staticTexts["How much are you running now?"].exists { break }
+            let next = app.buttons["Continue"]
+            XCTAssertTrue(next.waitForExistence(timeout: 5) && next.isEnabled)
+            next.tap()
+        }
+        let none = app.buttons["I haven't run in the last four weeks"]
+        XCTAssertTrue(none.waitForExistence(timeout: 5))
+        none.tap()
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        capture(app, name: "returning-runner-zero-recent-volume")
+    }
 
     @MainActor
     func testGalleryWelcomeFlowsIntoEditableProfile() {
@@ -96,7 +154,7 @@ final class OnboardingMotionUITests: XCTestCase {
             add(shot)
 
             app.buttons["Continue"].doubleTap()
-            XCTAssertTrue(app.staticTexts["What supports your running?"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Where are you with running?"].waitForExistence(timeout: 5))
             app.buttons["Back"].doubleTap()
             XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 5))
             XCTAssertTrue(goal.isSelected, "The choice must survive the return transition.")
@@ -197,4 +255,216 @@ final class OnboardingMotionUITests: XCTestCase {
         add(attachment)
     }
 
+}
+
+
+extension OnboardingMotionUITests {
+    @MainActor
+    func testTrainingBackgroundAndBenchmarkAreIndependent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-experience", "--ui-test-reduce-motion"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Where are you with running?"].waitForExistence(timeout: 20))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        capture(app, name: "running-background")
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Recent race or timed effort'")).firstMatch
+        revealOnboardingControl(result, in: app)
+        result.tap()
+        XCTAssertTrue(app.buttons["Marathon"].waitForExistence(timeout: 5))
+        app.buttons["Marathon"].tap()
+        XCTAssertFalse(app.buttons["onboarding.saveBenchmark"].isEnabled,
+                       "Choosing a distance must never save its placeholder time")
+        app.buttons["Cancel"].tap()
+        XCTAssertFalse(app.buttons["Continue"].isEnabled)
+        let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Running regularly'")).firstMatch
+        // Dismissing the optional sheet retains the question's scroll position.
+        for _ in 0..<5 where !background.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        revealOnboardingControl(background, in: app)
+        background.tap()
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        revealOnboardingControl(result, in: app)
+        result.tap()
+        app.buttons["5K"].tap()
+        app.buttons["onboarding.benchmarkTime"].tap()
+        let time = app.textFields["onboarding.benchmarkTime"]
+        XCTAssertTrue(time.waitForExistence(timeout: 5))
+        time.typeText("22:30")
+        XCTAssertTrue(app.buttons["onboarding.saveBenchmark"].isEnabled)
+        time.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5))
+        XCTAssertFalse(app.buttons["onboarding.saveBenchmark"].isEnabled)
+        time.typeText("22:30")
+        app.toolbars.buttons["Done"].tap()
+        capture(app, name: "benchmark-confirmation")
+        XCTAssertTrue(app.buttons["onboarding.saveBenchmark"].isEnabled)
+        app.buttons["onboarding.saveBenchmark"].tap()
+        XCTAssertTrue(app.buttons["Continue"].isEnabled)
+        capture(app, name: "running-background-with-result")
+    }
+}
+
+/// Uses real keyboard and scroll interactions on compact and large iPhone destinations.
+/// Large text uses the system preference, including the app's existing accessibility-size cap.
+final class NativePhoneOnboardingUITests: XCTestCase {
+    override func setUp() { super.setUp(); continueAfterFailure = false }
+
+    @MainActor
+    private func launch(_ arguments: [String], largeText: Bool = true) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--reset-auth", "--ui-test-reduce-motion"] + arguments
+        if largeText {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        }
+        app.launch()
+        return app
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        revealOnboardingControl(element, in: app)
+    }
+
+    @MainActor
+    private func capture(_ app: XCUIApplication, _ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testProfileKeyboardAndBackNavigationAtBothTextSizes() {
+        for large in [false, true] {
+            let app = launch(["--onboarding", "--onboarding-guest"], largeText: large)
+            let name = app.textFields["Your name"]
+            reveal(name, in: app)
+            name.tap(); name.typeText("Maya")
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            let next = app.buttons["Continue"]
+            XCTAssertTrue(next.isEnabled && next.isHittable)
+            XCTAssertLessThanOrEqual(next.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+            capture(app, "profile-keyboard-\(large ? "large" : "standard")")
+            next.tap()
+            XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 10))
+            app.buttons["Back"].tap()
+            XCTAssertTrue(name.waitForExistence(timeout: 5))
+            XCTAssertEqual(name.value as? String, "Maya")
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testDenseQuestionsRemainScrollableWithLargeText() {
+        let app = launch(["--onboarding", "--onboarding-guest", "--onboarding-injuries"])
+        let clear = app.buttons["No injuries, I'm all clear"]
+        reveal(clear, in: app)
+        XCTAssertLessThanOrEqual(clear.frame.maxY, app.buttons["Continue"].frame.minY + 1)
+        capture(app, "large-text-last-injury-choice")
+        clear.tap()
+        XCTAssertTrue(app.staticTexts["A few personal details."].waitForExistence(timeout: 5))
+        app.terminate()
+
+        let goalApp = launch(["--onboarding", "--onboarding-guest", "--onboarding-goal"])
+        let goal = goalApp.buttons.matching(NSPredicate(format: "label CONTAINS 'Become a stronger runner'")).firstMatch
+        reveal(goal, in: goalApp)
+        goal.tap()
+        XCTAssertTrue(goal.isSelected)
+        XCTAssertTrue(goalApp.buttons["Continue"].isHittable)
+        capture(goalApp, "large-text-goal-choice")
+        goalApp.buttons["Continue"].tap()
+        XCTAssertTrue(goalApp.staticTexts["Where are you with running?"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testBenchmarkKeyboardCommitsWithLargeText() {
+        let app = launch(["--onboarding", "--onboarding-guest", "--onboarding-experience"])
+        let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Running regularly'")).firstMatch
+        reveal(background, in: app); background.tap()
+        XCTAssertTrue(background.isSelected)
+        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Recent race or timed effort'")).firstMatch
+        reveal(result, in: app); result.tap()
+        let distance = app.buttons["onboarding.benchmarkDistance"]
+        reveal(distance, in: app); distance.tap()
+        app.buttons["Marathon"].tap()
+        XCTAssertTrue(distance.label.contains("Marathon"))
+        capture(app, "large-text-benchmark-distance")
+        distance.tap()
+        app.buttons["5K"].tap()
+        let value = app.buttons["onboarding.benchmarkTime"]
+        reveal(value, in: app); value.tap()
+        let input = app.textFields["onboarding.benchmarkTime"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.typeText("22:30")
+        let done = app.toolbars.buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5) && done.isHittable)
+        capture(app, "large-text-benchmark-keyboard")
+        done.tap()
+        let save = app.buttons["onboarding.saveBenchmark"]
+        reveal(save, in: app)
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Continue"].isEnabled && app.buttons["Continue"].isHittable)
+        capture(app, "large-text-saved-benchmark")
+    }
+
+    @MainActor
+    func testWelcomeAndGeneratedRevealWithLargeText() {
+        let app = launch([])
+        let start = app.buttons["welcome.gallery.start"]
+        reveal(start, in: app)
+        capture(app, "large-text-welcome")
+        start.tap()
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 10))
+        app.terminate()
+
+        let revealApp = launch(["--onboarding", "--onboarding-guest", "--onboarding-building", "--review-no-ask"])
+        let next = revealApp.buttons["onboarding.reveal.continue"]
+        XCTAssertTrue(next.waitForExistence(timeout: 30))
+        reveal(next, in: revealApp)
+        capture(revealApp, "large-text-plan-reveal")
+        next.tap()
+        XCTAssertTrue(revealApp.staticTexts["Help the next runner find momentum"].waitForExistence(timeout: 10))
+        reveal(revealApp.buttons["Continue"], in: revealApp)
+        capture(revealApp, "large-text-review-page")
+    }
+
+    @MainActor
+    func testPermissionActionsRemainOnscreenWithLargeText() {
+        let health = launch(["--onboarding", "--onboarding-guest", "--onboarding-health"])
+        let next = health.buttons["Continue"]
+        XCTAssertTrue(next.waitForExistence(timeout: 15) && next.isHittable)
+        XCTAssertLessThanOrEqual(next.frame.maxY, health.frame.maxY)
+        capture(health, "large-text-health-actions")
+        health.terminate()
+
+        let app = launch(["--onboarding", "--onboarding-guest", "--onboarding-notifications"])
+        let later = app.buttons["Maybe later"]
+        XCTAssertTrue(later.waitForExistence(timeout: 15) && later.isHittable)
+        XCTAssertLessThanOrEqual(later.frame.maxY, app.frame.maxY)
+        capture(app, "large-text-reminder-actions")
+        later.tap()
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Continue"].isHittable)
+        XCTAssertLessThanOrEqual(app.buttons["Continue"].frame.maxY, app.frame.maxY)
+        capture(app, "large-text-location-actions")
+    }
+}
+
+extension OnboardingMotionUITests {
+    @MainActor
+    func testRunnerTimeLimitsAreOptionalAndAccessible() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-session-runner", "--ui-test-reduce-motion"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["How much time do you have?"].waitForExistence(timeout: 20))
+        let limit = app.switches["Keep regular runs within this time"]
+        XCTAssertTrue(limit.exists)
+        XCTAssertEqual(limit.value as? String, "0")
+        limit.tap()
+        XCTAssertEqual(limit.value as? String, "1")
+        app.buttons["Long-run time limit (optional)"].tap()
+        capture(app, name: "runner-time-limits")
+        let next = app.buttons["Continue"]
+        XCTAssertTrue(next.isEnabled && next.isHittable)
+    }
 }

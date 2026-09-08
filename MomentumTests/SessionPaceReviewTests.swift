@@ -69,7 +69,7 @@ struct SessionPaceReviewTests {
                                   configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
     }
 
-    @Test func easingBumpsP5kTwoPercentAndRederivesFuturePaces() throws {
+    @Test func easingBumpsP5kAndSlowsExistingFutureTargets() throws {
         let container = try makeContainer()
         let ctx = container.mainContext
         let profile = UserProfile(); ctx.insert(profile)
@@ -98,7 +98,8 @@ struct SessionPaceReviewTests {
 
         #expect(updated == 1)                                    // history untouched
         #expect(abs(plan.p5kSPerKm - 306) < 0.01)                // +2%, bounded
-        #expect(abs((future.targetPaceSPerKm ?? 0) - PlanEngine.pace(.tempo, p5k: 306)) < 0.01)
+        #expect((future.targetPaceSPerKm ?? 0) >= PlanEngine.pace(.tempo, p5k: 300))
+        #expect((future.targetPaceSPerKm ?? 0) <= PlanEngine.pace(.tempo, p5k: 300) * 1.04)
         #expect(abs((past.targetPaceSPerKm ?? 0) - PlanEngine.pace(.intervals, p5k: 300)) < 0.01)
     }
 
@@ -110,5 +111,25 @@ struct SessionPaceReviewTests {
         try ctx.save()
         #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 0)
         #expect(abs(plan.p5kSPerKm - 300) < 0.01)                // p5k held — no silent drift
+    }
+}
+
+extension SessionPaceReviewTests {
+    @Test func crossSessionReviewUsesWorkRepsInsteadOfWarmupAverage() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let plan = TrainingPlan(); ctx.insert(plan)
+        for _ in 0..<2 {
+            let session = PlannedSession(); session.discipline = .running
+            session.runType = .intervals; session.status = .completed
+            session.targetPaceSPerKm = 300
+            let workout = Workout(); workout.type = .run; workout.durationS = 2760
+            let gps = GPSDetail(); gps.distanceM = 8000
+            gps.structuredRepsData = try JSONEncoder().encode([rep(1, achieved: 300), rep(2, achieved: 302)])
+            workout.gps = gps; session.completedWorkout = workout
+            ctx.insert(session); ctx.insert(workout); plan.sessions.append(session)
+        }
+        let result = PaceInsights.evaluate(PaceInsights.recentQualityRuns(plan))
+        #expect(result.verdict == .onPoint)
     }
 }

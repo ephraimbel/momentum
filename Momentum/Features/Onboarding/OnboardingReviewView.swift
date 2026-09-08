@@ -34,7 +34,7 @@ struct OnboardingReviewView: View {
     var onContinue: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        OnboardingHeroPage {
             Spacer(minLength: Theme.Space.md)
 
             // The app itself is what we're asking about, so the app's own mark is the hero — lit
@@ -59,7 +59,7 @@ struct OnboardingReviewView: View {
                 .onboardingEntrance(0.08)
 
             Spacer(minLength: Theme.Space.md)
-
+        } actions: {
             // Live on the first frame and gated on nothing. This is the invariant that keeps the
             // page out of the shape Apple rejected in 2026-07: the ask shares the screen, it never
             // owns the way forward.

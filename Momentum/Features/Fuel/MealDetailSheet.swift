@@ -136,6 +136,7 @@ struct MealDetailSheet: View {
         }
         .tint(Theme.Fuel.protein)
         .presentationDetents([.medium, .large], selection: $detent)
+        .trackScreen(.mealDetail)
     }
 
     private func scoreHero(_ verdict: HealthScore.Verdict) -> some View {

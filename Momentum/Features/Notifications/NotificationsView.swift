@@ -28,6 +28,7 @@ struct NotificationsView: View {
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
         .onAppear(perform: markAllRead)   // seeing the inbox clears the badge
+        .trackScreen(.notificationsInbox)
     }
 
     // MARK: Masthead — the app's page grammar (owner call 2026-08-20): the lowercase title

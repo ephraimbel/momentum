@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import ImageIO
 
 /// Disk cache for remote social images (post photos, avatars), keyed by **storage path** — not by
 /// signed URL, whose expiry is unrelated to the bytes' validity. Lives in Caches (purgeable by
@@ -10,37 +11,55 @@ actor RemoteImageCache {
 
     private let directory: URL
     private let byteLimit: Int
-    private var inflight: [String: Task<Data?, Never>] = [:]
+    private var inflight: [String: Task<(data: Data?, wrote: Bool), Never>] = [:]
     /// Directory enumeration is O(number of cached files). Doing it after every downloaded avatar
     /// made a 20-row page scan the same directory repeatedly; batch it while keeping overshoot small.
     private var writesSincePrune = 0
 
-    init(byteLimit: Int = 200 * 1024 * 1024) {
+    init(byteLimit: Int = 200 * 1024 * 1024, directory: URL? = nil) {
         self.byteLimit = byteLimit
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        directory = caches.appendingPathComponent("social-images", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.directory = directory ?? caches.appendingPathComponent("social-images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: self.directory, withIntermediateDirectories: true)
     }
 
     /// Cached bytes for `path`, fetching (and storing) via `fetch` on a miss. nil = miss + fetch
     /// failed — the caller renders without the image (route/glyph media fallback).
     func data(for path: String, fetch: @escaping @Sendable () async -> Data?) async -> Data? {
+        if let running = inflight[path] { return await running.value.data }
         let file = fileURL(for: path)
-        if let cached = await Self.readAndTouch(file) { return cached }
-        if let running = inflight[path] { return await running.value }
-        let task = Task<Data?, Never> { await fetch() }
-        inflight[path] = task
-        let fetched = await task.value
-        inflight[path] = nil
-        if let fetched {
+        // Register before the disk read, and hold ownership through the atomic write. Otherwise
+        // simultaneous avatar requests can all miss disk and start duplicate downloads.
+        let task = Task<(data: Data?, wrote: Bool), Never> {
+            if let cached = await Self.readAndTouch(file) { return (cached, false) }
+            guard let fetched = await fetch(), Self.isImage(fetched) else { return (nil, false) }
             await Self.write(fetched, to: file)
+            return (fetched, true)
+        }
+        inflight[path] = task
+        let result = await task.value
+        inflight[path] = nil
+        if result.wrote, let data = result.data {
             writesSincePrune += 1
-            if writesSincePrune >= 12 || fetched.count >= byteLimit / 10 {
+            if writesSincePrune >= 12 || data.count >= byteLimit / 10 {
                 writesSincePrune = 0
                 await Self.prune(directory: directory, byteLimit: byteLimit)
             }
         }
-        return fetched
+        return result.data
+    }
+
+    /// Reject expired signed-URL error documents and corrupt legacy cache entries. ImageIO reads
+    /// metadata without allocating a full-resolution bitmap; display decoding remains off-main.
+    nonisolated private static func isImage(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber
+        else { return false }
+        return width.intValue > 0 && height.intValue > 0
     }
 
     private func fileURL(for path: String) -> URL {
@@ -52,6 +71,10 @@ actor RemoteImageCache {
     nonisolated private static func readAndTouch(_ file: URL) async -> Data? {
         await Task.detached(priority: .utility) {
             guard let cached = try? Data(contentsOf: file, options: .mappedIfSafe) else { return nil }
+            guard Self.isImage(cached) else {
+                try? FileManager.default.removeItem(at: file)
+                return nil
+            }
             try? FileManager.default.setAttributes(
                 [.modificationDate: Date()], ofItemAtPath: file.path)
             return cached

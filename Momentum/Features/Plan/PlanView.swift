@@ -39,6 +39,7 @@ struct PlanView: View {
     @State private var addDay = Date()
     @State private var editing: EditingSession?
     @State private var adjusted = false
+    @State private var propagatedPlanSignature: Int?
     @State private var pendingStart: PlannedSession?     // start after the detail sheet dismisses
     /// Created on first cardio start, not at init: this view is constructed on every RootView
     /// body pass (the TabView content builder runs eagerly), and a `CLLocationManager` per pass
@@ -249,7 +250,15 @@ struct PlanView: View {
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
             // The global recorder can cover a still-mounted Plan tab. Never rebuild analytics
             // for every persisted GPS sample underneath it; refresh once when it closes.
-            if isVisible, router.workoutLaunch == nil { rebuildDerived() }
+            if isVisible, router.workoutLaunch == nil {
+                rebuildDerived()
+                let signature = PlanAdjustmentService.signature(of: plan)
+                if propagatedPlanSignature != signature, let profile = profiles.first {
+                    propagatedPlanSignature = signature
+                    PlanAdjustmentService.propagate(profile: profile, workouts: workouts,
+                                                    notifications: services.notifications)
+                }
+            }
         }
         .onChange(of: router.workoutLaunch == nil) { _, recorderClosed in
             if recorderClosed, isVisible { rebuildDerived() }
@@ -450,7 +459,7 @@ struct PlanView: View {
     /// auto-adapt, rebuild-week, recalibration). Completed sessions keep their workout links.
     private func goSelfCoached() {
         guard let plan else { return }
-        withAnimation(Motion.standard) {
+        let saved = PlanMutation.attempt(in: context, fallback: false) {
             let upcoming = plan.sessions.filter { $0.status != .completed && $0.completedWorkout == nil }
             plan.sessions.removeAll { s in upcoming.contains { $0.id == s.id } }
             upcoming.forEach(context.delete)
@@ -458,8 +467,9 @@ struct PlanView: View {
             plan.weekPhases = []                 // no macrocycle claim on weeks we didn't write
             plan.pendingP5kSPerKm = nil          // no banked recalibration evidence to apply later
             plan.pendingP5kAt = nil
-            try? context.save()
+            return true
         }
+        guard saved else { return }
         rebuildDerived()
         Haptics.success()
         // Reminders, the widget and the wrist describe sessions that no longer exist.
@@ -473,14 +483,17 @@ struct PlanView: View {
     /// paces conservatively until a real run calibrates nothing (self-coached never recalibrates).
     private func startSelfCoached() {
         guard let profile = profiles.first, profile.plan == nil else { return }
-        let plan = TrainingPlan()
-        plan.isSelfCoached = true
-        plan.goal = profile.goal
-        plan.disciplines = profile.disciplines
-        plan.blockStart = Calendar.current.startOfDay(for: Date())
-        context.insert(plan)
-        profile.plan = plan
-        try? context.save()
+        let saved = PlanMutation.attempt(in: context, fallback: false) {
+            let plan = TrainingPlan()
+            plan.isSelfCoached = true
+            plan.goal = profile.goal
+            plan.disciplines = profile.disciplines
+            plan.blockStart = Calendar.current.startOfDay(for: Date())
+            context.insert(plan)
+            profile.plan = plan
+            return true
+        }
+        guard saved else { return }
         rebuildDerived()
         Haptics.success()
     }
@@ -597,7 +610,9 @@ struct PlanView: View {
                 if coachsReadModel.hasRacePrediction, let plan, let raceM = profiles.first?.raceDistanceM {
                     RacePredictionCard(raceDistanceM: raceM,
                                        raceDate: profiles.first?.raceDate ?? plan.raceDate,
-                                       p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit)
+                                       p5kSPerKm: plan.p5kSPerKm, distanceUnit: distanceUnit,
+                                       exponent: PlanAthleteStateRecord.fetch(planID: plan.id, in: context)?.riegelExponent ?? RacePredictor.riegelExponent,
+                                       evidenceNote: raceEvidenceNote(plan))
                 }
                 if let result = coachsReadModel.paceResult {
                     PaceInsightCard(result: result)
@@ -606,6 +621,19 @@ struct PlanView: View {
                 hybridCard
             }
         }
+    }
+
+    private func raceEvidenceNote(_ plan: TrainingPlan) -> String {
+        if let observed = plan.lastRecalibratedAt {
+            return "Paces last calibrated from a logged effort on \(observed.formatted(date: .abbreviated, time: .omitted))."
+        }
+        if let preferences = profiles.first?.planPreferences, preferences.benchmarkTimeS != nil {
+            if let date = preferences.benchmarkPerformedAt {
+                return "Starting estimate from your result on \(date.formatted(date: .abbreviated, time: .omitted)); it may differ from today's fitness."
+            }
+            return "Starting estimate from your entered result. Its date is unknown."
+        }
+        return "Provisional estimate from your starting profile. Logged efforts help refine it."
     }
 
     // MARK: Moving a session (drag on the board, or the Move menu)
@@ -632,7 +660,7 @@ struct PlanView: View {
     /// a finished day is a record of what happened, not a plan.
     private func shiftDisplayedWeek(by days: Int) {
         let cal = Calendar.current
-        let movable = weekSessions.filter { $0.status != .completed }
+        let movable = weekSessions.filter { $0.status != .completed && !PlanCoaching.isFixedDate($0) }
         guard !movable.isEmpty else {
             ToastCenter.shared.show(icon: "calendar", line: "Nothing to move this week")
             return
@@ -646,10 +674,12 @@ struct PlanView: View {
             paywall.present(for: .fullPlan)
             return
         }
-        withAnimation(reduceMotion ? nil : Motion.standard) {
+        guard PlanMutation.edit(in: context, {
             PlanCoaching.reschedule(movable.compactMap { session in
                 cal.date(byAdding: .day, value: days, to: session.date).map { (session, $0) }
             }, in: context)
+        }) else { return }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
             moveNote = nil
             rebuildDerived(refreshPlan: false)
         }
@@ -665,7 +695,7 @@ struct PlanView: View {
         guard !blocked.isEmpty else { return }
         let cal = Calendar.current
         let weekDays = days.map { cal.startOfDay(for: $0) }
-        let movable = weekSessions.filter { $0.status != .completed }
+        let movable = weekSessions.filter { $0.status != .completed && !PlanCoaching.isFixedDate($0) }
         let indexed: [(id: UUID, dayIndex: Int)] = movable.compactMap { session in
             guard let index = weekDays.firstIndex(of: cal.startOfDay(for: session.date)) else { return nil }
             return (session.id, index)
@@ -679,11 +709,13 @@ struct PlanView: View {
                 line: strandedCount > 0 ? "No free days left to move to" : "Nothing planned on those days")
             return
         }
-        withAnimation(reduceMotion ? nil : Motion.standard) {
+        guard PlanMutation.edit(in: context, {
             PlanCoaching.reschedule(movable.compactMap { session in
                 guard let index = placements[session.id], index < weekDays.count else { return nil }
                 return (session, weekDays[index])
             }, in: context)
+        }) else { return }
+        withAnimation(reduceMotion ? nil : Motion.standard) {
             moveNote = nil
             rebuildDerived(refreshPlan: false)
         }
@@ -771,8 +803,8 @@ struct PlanView: View {
         // Read the landing spot BEFORE the move, so the moved session is not counted as its own
         // neighbour, then write the note against the week as it will actually be.
         let advice = placementNote(for: session, landingOn: day)
+        guard PlanMutation.edit(in: context, { PlanCoaching.reschedule(session, to: day, in: context) }) else { return }
         withAnimation(reduceMotion ? nil : Motion.standard) {
-            PlanCoaching.reschedule(session, to: day, in: context)
             // A move changes neither the session count nor the displayed week, so the week map's
             // signature does not flip on its own — rebuild explicitly or the board keeps drawing
             // the session on the day it left.
@@ -792,8 +824,8 @@ struct PlanView: View {
               let source = plan?.sessions.first(where: { $0.id == sessionID }),
               Calendar.current.startOfDay(for: source.date) != Calendar.current.startOfDay(for: target.date)
         else { return false }
+        guard PlanMutation.edit(in: context, { PlanCoaching.swapDays(source, target, in: context) }) else { return false }
         withAnimation(reduceMotion ? nil : Motion.standard) {
-            PlanCoaching.swapDays(source, target, in: context)
             rebuildDerived(refreshPlan: false)
             // A swap moves two sessions and leaves no single "here is where it landed" to annotate.
             moveNote = nil
@@ -821,10 +853,13 @@ struct PlanView: View {
     }
 
     private func delete(_ session: PlannedSession) {
-        withAnimation(Motion.standard) {
+        let saved = PlanMutation.attempt(in: context, fallback: false) {
+            plan?.sessions.removeAll { $0.id == session.id }
             context.delete(session)
-            try? context.save()
+            return true
         }
+        guard saved else { return }
+        rebuildDerived()
         Haptics.light()
     }
 
@@ -1943,7 +1978,9 @@ struct PlanView: View {
                         Label("Start", systemImage: "play.fill")
                     }
                 }
-                Button { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context); Haptics.success() } label: {
+                Button {
+                    if PlanMutation.edit(in: context, { PlanCoaching.setCompletion(session, done: session.status != .completed, in: context) }) { Haptics.success() }
+                } label: {
                     Label(session.status == .completed ? "Mark not done" : "Mark done",
                           systemImage: session.status == .completed ? "arrow.uturn.left" : "checkmark")
                 }
@@ -2031,8 +2068,9 @@ struct PlanView: View {
 
     private func checkButton(_ session: PlannedSession, done: Bool) -> some View {
         Button {
-            if done { Haptics.selection() } else { Haptics.success() }
-            PlanCoaching.setCompletion(session, done: !done, in: context)
+            if PlanMutation.edit(in: context, { PlanCoaching.setCompletion(session, done: !done, in: context) }) {
+                if done { Haptics.selection() } else { Haptics.success() }
+            }
         } label: {
             Image(systemName: done ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 22, weight: .semibold))

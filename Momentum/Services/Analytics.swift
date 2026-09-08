@@ -1,5 +1,6 @@
 import Foundation
 import os
+import UIKit
 
 /// The privacy-preserving analytics event taxonomy (PRD §13.5). Event names are the exact strings
 /// from the PRD; payloads carry **only** non-PII dimensions (discipline string, counts, latency in
@@ -60,6 +61,19 @@ enum AnalyticsEvent: Equatable {
     /// only honest way to know whether a notification earns its place or nags.
     case notificationOpened(family: String, routed: Bool)
 
+    /// A screen entry. `sequence` is this screen's one-based position inside `session`, so a path
+    /// ("today → plan → today, then gone") reconstructs without server-side guesswork about where
+    /// one visit ends and the next begins. `screen` is always an `AppScreen` raw value — a closed
+    /// vocabulary, never a free string, because a screen split across three spellings averages away
+    /// the very drop it was added to find.
+    case screenViewed(screen: String, session: String, sequence: Int)
+    /// A session closed. **`last_screen` is the drop-off signal**: the screen the athlete was
+    /// looking at when they put the phone down. Its distribution over all sessions is the map of
+    /// where people quit, and its value on an install's final session is where they churned.
+    /// `reason` separates leaving (`background`) from the app dying underneath them (`abandoned`) —
+    /// a screen with a high abandoned share is a crash to fix, not copy to rewrite.
+    case sessionEnded(lastScreen: String, views: Int, durationS: Int, reason: String, session: String)
+
     /// The canonical event name (PRD §13.5).
     var name: String {
         switch self {
@@ -87,6 +101,8 @@ enum AnalyticsEvent: Equatable {
         case .appDiagnostics:    "app_diagnostics"
         case .appPerformance:    "app_performance"
         case .notificationOpened:"notification_opened"
+        case .screenViewed:      "screen_view"
+        case .sessionEnded:      "session_end"
         }
     }
 
@@ -122,6 +138,11 @@ enum AnalyticsEvent: Equatable {
         case .appPerformance(let launch, let hang): ["launch_ms": String(launch),
                                                     "hang_ms": String(hang)]
         case .notificationOpened(let family, let routed): ["family": family, "routed": String(routed)]
+        case .screenViewed(let screen, let session, let sequence):
+            ["screen": screen, "session": session, "seq": String(sequence)]
+        case .sessionEnded(let last, let views, let durationS, let reason, let session):
+            ["last_screen": last, "views": String(views), "duration_s": String(durationS),
+             "reason": reason, "session": session]
         }
     }
 }
@@ -150,6 +171,8 @@ final class AnalyticsService: AnalyticsServing {
     private let logger = Logger(subsystem: "com.ephraimbel.momentum.app", category: "analytics")
     private let northStar: NorthStarTracker
     private let sink: AnalyticsSink?
+    private var pendingEnqueue: Task<Void, Never>?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     init(northStar: NorthStarTracker = NorthStarTracker(), sink: AnalyticsSink? = AnalyticsSink()) {
         self.northStar = northStar
@@ -180,7 +203,11 @@ final class AnalyticsService: AnalyticsServing {
 
         if let sink {
             let name = event.name, parameters = event.parameters
-            Task { await sink.enqueue(name: name, params: parameters) }
+            let occurredAt = Date(), previous = pendingEnqueue
+            pendingEnqueue = Task {
+                await previous?.value
+                await sink.enqueue(name: name, params: parameters, at: occurredAt)
+            }
         }
     }
 
@@ -188,7 +215,25 @@ final class AnalyticsService: AnalyticsServing {
     /// to get a session's events off the device.
     func flush() {
         guard let sink else { return }
-        Task { await sink.flush() }
+        // Give the queued session end time to persist and attempt delivery before suspension.
+        // This is bounded by iOS; offline events remain in the persisted queue.
+        if backgroundTask == .invalid {
+            backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "analytics.flush") { [weak self] in
+                self?.finishBackgroundTask()
+            }
+        }
+        let pending = pendingEnqueue
+        Task {
+            await pending?.value
+            await sink.flush()
+            finishBackgroundTask()
+        }
+    }
+
+    private func finishBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
     }
 
     func northStarStatus() -> NorthStarFunnel.Status { northStar.status() }

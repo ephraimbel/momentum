@@ -13,7 +13,9 @@ enum CheckpointResult {
     }
 
     nonisolated static func read(workout: Workout, testDistanceM: Double) -> Reading? {
-        guard let gps = workout.gps, gps.distanceM > 0, workout.durationS > 0, testDistanceM > 0 else { return nil }
+        guard let gps = workout.gps, gps.distanceM.isFinite, workout.durationS.isFinite,
+              testDistanceM.isFinite, testDistanceM > 0,
+              gps.distanceM >= testDistanceM * 0.98, workout.durationS > 0 else { return nil }
         if gps.distanceM <= testDistanceM * 1.1 {
             return Reading(distanceM: gps.distanceM, timeS: workout.durationS)
         }
@@ -21,6 +23,7 @@ enum CheckpointResult {
         if let t = CardioMetrics.fastestWindow(points, distanceM: testDistanceM), t > 0 {
             return Reading(distanceM: testDistanceM, timeS: t)
         }
-        return Reading(distanceM: gps.distanceM, timeS: workout.durationS)
+        // A longer recording without a readable test window is not a measured checkpoint.
+        return nil
     }
 }

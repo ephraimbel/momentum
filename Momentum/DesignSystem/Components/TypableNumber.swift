@@ -17,6 +17,8 @@ struct TypableNumber: View {
     /// UI-test handle, applied to both faces (the numeral Button and the editing TextField) — a
     /// TextField's XCUITest label is its placeholder only while empty, so tests need an identifier.
     var axID: String? = nil
+    /// Forms requiring an explicit answer can invalidate a value when the input is cleared.
+    var commitsEmptyInput = false
     /// Called with the raw typed text on commit; parse, clamp, and store there.
     var commit: (String) -> Void
 
@@ -52,7 +54,7 @@ struct TypableNumber: View {
                     // the full text, so the last one always wins with the complete entry.
                     .onChange(of: text) { _, now in
                         let typed = now.trimmingCharacters(in: .whitespaces)
-                        if !typed.isEmpty { commit(typed) }
+                        if commitsEmptyInput || !typed.isEmpty { commit(typed) }
                     }
                     .onAppear {
                         text = ""
@@ -82,7 +84,7 @@ struct TypableNumber: View {
 
     private func commitAndClose() {
         let typed = text.trimmingCharacters(in: .whitespaces)
-        if !typed.isEmpty { commit(typed) }
+        if commitsEmptyInput || !typed.isEmpty { commit(typed) }
         editing = false
     }
 }

@@ -52,7 +52,8 @@ actor AnalyticsSink {
     private let queueKey = "com.momentum.analytics.queue"
 
     private var queue: [Envelope]
-    private var isFlushing = false
+    private var flushTask: Task<Void, Never>?
+    private var retryAfter: Date?
 
     init(defaults: UserDefaults = .standard,
          session: URLSession = .shared,
@@ -83,20 +84,28 @@ actor AnalyticsSink {
                               appVersion: appVersion, build: build, platform: "ios",
                               occurredAt: date))
         trimAndPersist()
-        if queue.count >= Self.batchSize { await flush() }
+        if queue.count >= Self.batchSize { Task { await flush() } }
     }
 
     /// Send everything buffered. Called on a full batch, on backgrounding, and at launch for
     /// whatever the last run left behind.
     func flush() async {
         guard Self.egressAllowed else { return }
-        guard !isFlushing, !queue.isEmpty, let endpoint, let anonKey else { return }
-        isFlushing = true
-        defer { isFlushing = false }
+        if let flushTask { await flushTask.value; return }
+        if let retryAfter, Date() < retryAfter { return }
+        let task = Task { await self.drain() }
+        flushTask = task
+        await task.value
+        flushTask = nil
+    }
 
-        let batch = queue
+    private func drain() async {
+        guard let endpoint, let anonKey else { return }
+        while !queue.isEmpty {
+
+        let batch = Array(queue.prefix(Self.batchSize))
         do {
-            var request = URLRequest(url: endpoint)
+            var request = URLRequest(url: endpoint, timeoutInterval: 15)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(anonKey, forHTTPHeaderField: "apikey")
@@ -114,15 +123,28 @@ actor AnalyticsSink {
 
             let (_, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
-            // 2xx: sent. 4xx: the server will never accept this batch — drop it rather than retry
-            // forever and block every later event behind it. 5xx/offline: keep and retry.
-            guard (200..<300).contains(http.statusCode) || (400..<500).contains(http.statusCode) else { return }
+            // Throttling, authentication and server failures can recover. Avoid one failed request
+            // per screen while offline or rate-limited; only permanent payload errors are dropped.
+            guard Self.shouldRemoveBatch(status: http.statusCode) else {
+                let seconds = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 30
+                retryAfter = Date().addingTimeInterval(min(3600, max(30, seconds)))
+                return
+            }
 
-            queue.removeFirst(min(batch.count, queue.count))
+            // Enqueues can trim the queue while the actor awaits the network. Removing by count
+            // would then delete NEW, unsent events. Remove only the envelopes actually sent.
+            queue.removeAll { batch.contains($0) }
             persist()
         } catch {
             // Offline or transient — the batch stays queued for the next flush.
+            retryAfter = Date().addingTimeInterval(30)
+            return
         }
+        }
+    }
+
+    static func shouldRemoveBatch(status: Int) -> Bool {
+        (200..<300).contains(status) || ([400, 404, 405, 413, 422].contains(status))
     }
 
     /// Drop the oldest events past the cap, then write the queue through so a termination between

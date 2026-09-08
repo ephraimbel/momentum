@@ -253,7 +253,9 @@ struct LegacyRoadPolicyAdapter: RunningPolicy {
             daysPerWeek: days,
             intensity: inputs.intensity,
             currentRaceTimeS: currentRaceTime,
-            targetWeeklyVolumeM: inputs.targetWeeklyVolumeM
+            targetWeeklyVolumeM: inputs.targetWeeklyVolumeM,
+            regularRunLimitS: inputs.regularRunLimitS,
+            longRunLimitS: inputs.longRunLimitS
         )
         let verdict: RunningFeasibilityVerdict = switch legacy.verdict {
         case .onTrack: .onTrack

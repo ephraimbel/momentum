@@ -8,6 +8,7 @@ import SwiftData
 /// Plan behaves identically (PRD §9). Attach via `.workoutRunner(launch:)`.
 struct WorkoutRunner: ViewModifier {
     @Binding var launch: TodayLaunch?
+    @State private var showRecoveryCheck = false
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
@@ -93,6 +94,14 @@ struct WorkoutRunner: ViewModifier {
             // Award unlocks queue behind this cover (RootView pauses the presenter on it) — without
             // the hold, the first save's award choreography played invisibly UNDER the rating card's
             // dimmed backdrop and was spent before the athlete ever saw it.
+            .alert("Check your recovery first", isPresented: $showRecoveryCheck) {
+                Button("OK", role: .cancel) {}
+            } message: { Text("This planned session is on hold while you recover. Open the recovery check-in from Today or Plan for your next step.") }
+            .onChange(of: launch?.id, initial: true) { _, _ in
+                if let session = launch?.plannedSession, !PlanCoaching.canStartPlannedSession(session, profile: profiles.first) {
+                    launch = nil; showRecoveryCheck = true
+                }
+            }
             .onChange(of: showRatingPrompt) { _, visible in router.ratingPromptVisible = visible }
             .onChange(of: launch != nil) { _, up in
                 if up {
@@ -139,7 +148,7 @@ struct WorkoutRunner: ViewModifier {
     @ViewBuilder
     private var runnerOverlay: some View {
         ZStack {
-            if let launch {
+            if let launch, launch.plannedSession.map({ PlanCoaching.canStartPlannedSession($0, profile: profiles.first) }) ?? true {
                 ZStack {
                     Theme.background.ignoresSafeArea()
                     if summary == nil || liveUnderlay {
@@ -358,6 +367,7 @@ enum WorkoutCompletion {
     /// reminder rescheduling.
     static func adapt(_ workout: Workout, plan: TrainingPlan?, profile: UserProfile?,
                       unit: DistanceUnit, services: Services, in context: ModelContext) {
+        IllnessResponse.record(workout, profile: profile, in: context)
         // Protective adaptation first (load change corroborated by session response, ≤1×/week,
         // never auto-increases load) —
         // then pace recalibration only when the plan was NOT just eased. The old order could

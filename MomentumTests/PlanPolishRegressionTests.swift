@@ -81,7 +81,7 @@ struct PlanPolishRegressionTests {
         // The proposal says so before the pause is applied (a paused plan cannot be paused again).
         let p = PlanAdjustmentService.proposal(.pausePlan(days: 7), title: "Pause", request: "away",
                                                profile: profile, workouts: [], today: today, in: ctx)
-        #expect(p.lines.contains { $0.contains("after race day") })
+        #expect(p.lines.contains { $0.contains("no room to move") })
         PlanCoaching.pause(plan, days: 7, from: today, in: ctx)
         #expect(cal.startOfDay(for: session.date) == cal.date(byAdding: .day, value: -2, to: raceDay)!,
                 "a session that would land after the race stays where it is")

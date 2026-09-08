@@ -180,6 +180,7 @@ struct YourPlansView: View {
         }
         .nestedPaywallHost()
         .onAppear { PerfMark.end("your-plans-open") }
+        .trackScreen(.yourPlans)
     }
 
     // MARK: - Sections

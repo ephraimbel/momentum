@@ -24,6 +24,8 @@ final class OnboardingViewModel {
     }
     var goal: Goal = .generalFitness
     var experience: ExperienceLevel = .some          // running / general
+    var runningBackgroundChosen = false
+    var returningRunner = false
     /// Past injury areas — the plan starts protective around these (ENDURANCE-FOCUS §8.2). Empty → none.
     var injuryAreas: Set<InjuryArea> = []
     var liftExperience: ExperienceLevel = .some      // used when hybrid (run + lift)
@@ -33,6 +35,9 @@ final class OnboardingViewModel {
     var daysPerWeekChosen = false
     var equipment: Equipment = .fullGym
     var sessionMinutes: Int = 45
+    var limitRegularRunTime = false
+    var longRunLimitMinutes: Int?
+    var benchmarkPerformedAt: Date?
     var hasRace = false
     var raceDate: Date = Calendar.current.date(byAdding: .weekOfYear, value: 8, to: Date()) ?? Date()
     var reason: String = "health"
@@ -91,7 +96,7 @@ final class OnboardingViewModel {
                    String(describing: raceDistance), "\(goalHours):\(goalMinutes)",
                    "\(weeklyRunVolumeM ?? -1)", "\(targetWeeklyRunVolumeM ?? -1)", "\(hasRace):\(weeksToRace ?? -1)",
                    String(describing: experience), "\(injuryAreas.count)",
-                   "\(plannedRunDays)", String(describing: intensity)].joined(separator: "|")
+                   "\(plannedRunDays)", "\(limitRegularRunTime):\(sessionMinutes):\(longRunLimitMinutes ?? -1)", String(describing: intensity)].joined(separator: "|")
         if let c = feasibilityCache, c.key == key { return c.value }
         let value = computeFeasibility()
         feasibilityCache = (key, value)
@@ -120,7 +125,9 @@ final class OnboardingViewModel {
             daysPerWeek: plannedRunDays,
             intensity: intensity,   // the banner reacts to how hard they choose to push
             currentRaceTimeS: raceTimeS,
-            targetWeeklyVolumeM: targetWeeklyRunVolumeM)
+            targetWeeklyVolumeM: targetWeeklyRunVolumeM,
+            regularRunLimitS: limitRegularRunTime ? Double(sessionMinutes * 60) : nil,
+            longRunLimitS: longRunLimitMinutes.map { Double($0 * 60) })
     }
     // Race goal finish time (race goals) — held as h/m for the picker; 0/0 → no target.
     var goalHours = 0
@@ -204,8 +211,57 @@ final class OnboardingViewModel {
 
     /// Opens the days step on the recommendation unless the athlete already chose.
     func applyRecommendedDaysIfUntouched() {
-        guard !daysPerWeekChosen else { return }
+        guard !daysPerWeekChosen, !restoredAtOrPast(.days) else { return }
         daysPerWeek = recommendedDays
+    }
+
+    /// Training history and race speed are separate answers. A benchmark never picks a level.
+    func chooseRunningBackground(_ level: ExperienceLevel) {
+        returningRunner = false
+        experience = level
+        runningBackgroundChosen = true
+        if calibrationMode != .time {
+            paceFeel = level == .new ? .newRunner : level == .some ? .easyJogger : .regular
+            calibrationMode = .feel
+        }
+    }
+
+    /// A returning athlete still supplies their actual recent mileage. Previous experience
+    /// does not resurrect their old peak, and a break does not hide the baseline questions.
+    func chooseReturningBackground() {
+        chooseRunningBackground(.some)
+        returningRunner = true
+    }
+
+    /// Accept common clock entry without silently discarding malformed components.
+    static func benchmarkSeconds(_ raw: String, benchmark: RunBenchmark) -> Double? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ".", with: ":")
+        let tokens = value.split(separator: ":", omittingEmptySubsequences: false)
+        guard !tokens.isEmpty, tokens.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }
+        let parts = tokens.compactMap { Int($0) }
+        guard parts.count == tokens.count, parts.allSatisfy({ (0...999_999).contains($0) }) else { return nil }
+        var candidates: [Double] = []
+        switch parts.count {
+        case 1:
+            let n = parts[0]
+            if n >= 10_000, (n / 100) % 100 < 60, n % 100 < 60 {
+                candidates.append(Double(n / 10_000 * 3600 + (n / 100) % 100 * 60 + n % 100))
+            }
+            if n >= 100, n % 100 < 60 {
+                candidates.append(Double(n / 100 * 60 + n % 100))
+                candidates.append(Double(n / 100 * 3600 + n % 100 * 60))
+            }
+            candidates.append(Double(n) * 60)
+            candidates.append(Double(n) * 3600)
+        case 2:
+            guard parts[1] < 60 else { return nil }
+            candidates = [Double(parts[0] * 60 + parts[1]), Double(parts[0] * 3600 + parts[1] * 60)]
+        case 3:
+            guard parts[1] < 60, parts[2] < 60 else { return nil }
+            candidates = [Double(parts[0] * 3600 + parts[1] * 60 + parts[2])]
+        default: return nil
+        }
+        return candidates.first { benchmark.range.contains($0) }
     }
 
     var plannedRunDays: Int {
@@ -242,7 +298,7 @@ final class OnboardingViewModel {
         // name and username first, distance units in the header, race time with race setup, preferred
         // days with frequency, and lifting split with equipment. Profile styling stays in Profile.
         let ordered: [Step] = [
-            .name, .goal, .disciplines, .race, .experience, .runVolume, .injuries, .metrics,
+            .name, .goal, .experience, .disciplines, .race, .runVolume, .injuries, .metrics,
             .muscleFocus, .days, .session, .equipment, .hybridFocus, .health, .intensity,
             .notifications, .primers, .building, .reveal, .review, .account,
         ]
@@ -333,7 +389,7 @@ final class OnboardingViewModel {
         // the athlete never saw, let alone chose (found in the 2026-08-28 bug sweep — the screen
         // showed no selection with Continue enabled).
         case .goal: return goal != .generalFitness
-        case .experience: return calibrationMode == .time || (calibrationMode == .feel && paceFeel != nil)
+        case .experience: return runningBackgroundChosen || paceFeel != nil
         default: return true
         }
     }
@@ -471,7 +527,10 @@ final class OnboardingViewModel {
 
     /// Create the profile + plan. Returns the persisted profile.
     @discardableResult
-    func finish(in context: ModelContext) -> UserProfile {
+    func finish(in context: ModelContext) throws -> UserProfile {
+        let previousAutosave = context.autosaveEnabled
+        context.autosaveEnabled = false
+        defer { context.autosaveEnabled = previousAutosave }
         let profile = UserProfile()
         let chosen = Array(disciplines)
         // Identity from onboarding fills the profile (no more blank "Athlete").
@@ -537,8 +596,25 @@ final class OnboardingViewModel {
         }
         profile.reason = reason
         context.insert(profile)
+        let preferences = PlanPreferencesRecord.upsert(profileID: profile.id, in: context)
+        preferences.regularRunLimitS = limitRegularRunTime ? Double(sessionMinutes * 60) : nil
+        preferences.longRunLimitS = longRunLimitMinutes.map { Double($0 * 60) }
+        if calibrationMode == .time {
+            preferences.benchmarkDistanceM = benchmark.meters
+            preferences.benchmarkTimeS = recentRunSeconds
+            preferences.benchmarkPerformedAt = benchmarkPerformedAt
+            preferences.benchmarkRecordedAt = Date()
+        }
         // Build the plan (shared day budget + cross-training) — same path as the edit-settings rebuild.
-        PlanService.rebuild(for: profile, calibration: calibration, startDate: PlanService.firstPlanStart(), in: context)
+        do {
+            _ = try PlanService.stageRebuild(for: profile, calibration: calibration,
+                                           startDate: PlanService.firstPlanStart(), in: context)
+            _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
         // A catalog race picked during onboarding names the season after its occasion.
         if racing, let raceName = plannedRaceName, profile.plan?.name.isEmpty != false {
             profile.plan?.name = raceName

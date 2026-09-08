@@ -113,4 +113,24 @@ struct FuelEstimatorTests {
         #expect(!FuelEstimator.isValid(estimate))
         guard case .declined = FuelEstimator.outcome(for: estimate) else { Issue.record("expected declined"); return }
     }
+    @Test func aSecondResponseCannotReplaceAnAlreadyResolvedMeal() throws {
+        let first = try decode(#"{"items":[\#(banana)],"confidence":0.8,"note":"First"}"#)
+        let late = try decode(#"{"items":[\#(banana.replacingOccurrences(of: "105", with: "120"))],"confidence":0.7,"note":"Late"}"#)
+        let meal = Meal()
+        FuelEstimator.apply(first, to: meal)
+        let savedItems = meal.itemsData
+        FuelEstimator.apply(late, to: meal)
+        #expect(meal.kcal == 105)
+        #expect(meal.itemsData == savedItems)
+        #expect(meal.note == "First")
+    }
+
+    @Test func contradictoryRejectionNeverBecomesNutrition() throws {
+        let result = try decode(#"{"items":[\#(banana)],"confidence":0.8,"note":"","reason":"unreadable"}"#)
+        #expect(!FuelEstimator.isValid(result))
+        guard case .declined = FuelEstimator.outcome(for: result) else {
+            Issue.record("Conflicting food and refusal must be declined"); return
+        }
+    }
+
 }

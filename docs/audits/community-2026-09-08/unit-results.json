@@ -1,0 +1,49 @@
+{
+  "totalTestCount": 2287,
+  "passedTests": 2281,
+  "failedTests": 5,
+  "skippedTests": 1,
+  "result": "Failed",
+  "testFailures": [
+    {
+      "failureText": "Test crashed with signal trap.",
+      "targetName": "MomentumTests",
+      "testIdentifier": 1216,
+      "testIdentifierString": "PlanContinuityTests/concurrentPlansRequireChoiceAndKeepIllnessInBothDirections()",
+      "testIdentifierURL": "test://com.apple.xcode/Momentum/MomentumTests/PlanContinuityTests/concurrentPlansRequireChoiceAndKeepIllnessInBothDirections()",
+      "testName": "concurrentPlansRequireChoiceAndKeepIllnessInBothDirections()"
+    },
+    {
+      "failureText": "Test crashed with signal trap.",
+      "targetName": "MomentumTests",
+      "testIdentifier": 1224,
+      "testIdentifierString": "PlanContinuityTests/failedRestoreSaveRollsBackOriginalPlanAndWorkouts()",
+      "testIdentifierURL": "test://com.apple.xcode/Momentum/MomentumTests/PlanContinuityTests/failedRestoreSaveRollsBackOriginalPlanAndWorkouts()",
+      "testName": "failedRestoreSaveRollsBackOriginalPlanAndWorkouts()"
+    },
+    {
+      "failureText": "Expectation failed: (actualIDs.count \u2192 36) == (expectedIDs.count \u2192 35)",
+      "targetName": "MomentumTests",
+      "testIdentifier": 1784,
+      "testIdentifierString": "RunningSchemaMigrationSpikeTests/latestSchemaRegistryContainsEveryProductionModelExactlyOnce()",
+      "testIdentifierURL": "test://com.apple.xcode/Momentum/MomentumTests/RunningSchemaMigrationSpikeTests/latestSchemaRegistryContainsEveryProductionModelExactlyOnce()",
+      "testName": "latestSchemaRegistryContainsEveryProductionModelExactlyOnce()"
+    },
+    {
+      "failureText": "Expectation failed: (sig \u2192 266.44599437713623) < (200 \u2192 200.0)",
+      "targetName": "MomentumTests",
+      "testIdentifier": 974,
+      "testIdentifierString": "NewFlowsBenchmarkTests/manageProposalThatRebuildsThePlan()",
+      "testIdentifierURL": "test://com.apple.xcode/Momentum/MomentumTests/NewFlowsBenchmarkTests/manageProposalThatRebuildsThePlan()",
+      "testName": "manageProposalThatRebuildsThePlan()"
+    },
+    {
+      "failureText": "Test crashed with signal trap.",
+      "targetName": "MomentumTests",
+      "testIdentifier": 1211,
+      "testIdentifierString": "PlanContinuityTests/snapshotRetainsLocalWorkoutSamplesAndDoesNotDuplicateEvidence()",
+      "testIdentifierURL": "test://com.apple.xcode/Momentum/MomentumTests/PlanContinuityTests/snapshotRetainsLocalWorkoutSamplesAndDoesNotDuplicateEvidence()",
+      "testName": "snapshotRetainsLocalWorkoutSamplesAndDoesNotDuplicateEvidence()"
+    }
+  ]
+}

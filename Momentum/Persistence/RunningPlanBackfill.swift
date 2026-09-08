@@ -423,7 +423,7 @@ enum RunningPlanBackfill {
 
         guard changed, shouldSave else { return report }
         try beforeSave?()
-        try context.save()
+        try PlanMutation.save(context)
         report.didSave = true
         return report
     }

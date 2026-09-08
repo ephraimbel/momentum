@@ -83,7 +83,7 @@ struct CoachInfoCardsTests {
         session.discipline = .running
         session.runType = .intervals
         session.status = .planned
-        session.targetDistanceM = 5_000
+        session.targetDistanceM = 6_000 // room for all six reps, warm-up, recoveries and cooldown
         session.targetPaceSPerKm = 280
         session.intervals = "6x400m @ I"
         ctx.insert(session)

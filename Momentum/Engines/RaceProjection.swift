@@ -68,7 +68,7 @@ enum RaceProjection {
                       calendar: Calendar = .current) -> Projection? {
         guard let plan else { return nil }
         let remaining = plan.sessions
-            .filter { $0.status == .planned && $0.completedWorkout == nil }
+            .filter { ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil }
             .map { (date: $0.date, estLoad: PlannedLoad.estimate($0)) }
         return build(workouts: workouts, raceDate: plan.raceDate, plannedLoads: remaining,
                      now: now, calendar: calendar)

@@ -36,25 +36,53 @@ struct CommunityContentAuditTests {
     }
 
     @Test func workoutTitlesNeverSitOverAStreetMap() {
-        // "Track night" / "Tempo" / "8×400" over a downtown street loop is the loudest fake tell —
-        // structured sessions must be mapless, and so must every trail title.
-        let workoutWords = ["track", "tempo", "×", "repeats", "fartlek", "hill", "interval",
+        // "Track night" / "Tempo" / "8×400" over a downtown street loop is the loudest fake tell:
+        // structured sessions stay mapless. A TRAIL title may now carry a map — but only trail
+        // geometry. Before 2026-09-07 none was bundled and the rule was simply "trail titles are
+        // mapless"; the rule it stood in for was always "a title must not contradict the ground
+        // under it", and that is what is asserted here.
+        let workoutWords = ["track", "tempo", "×", "repeats", "fartlek", "interval",
                             "speed", "strides", "1k", "400", "800"]
         let trailWords = ["trail", "ridge", "singletrack", "dirt", "woods", "switchback",
                           "vert", "fire road", "creek"]
+        let trailPrints = trailFingerprints()
         for item in todaysWall() where item.routeLatLon != nil {
-            let t = item.title.lowercased()
+            // "Singletrack miles" is a TRAIL title that happens to contain "track". It only became
+            // visible here once trail runs started drawing maps (2026-09-07); before that no trail
+            // title ever reached this loop. The word this list is hunting is the track session.
+            let t = item.title.lowercased().replacingOccurrences(of: "singletrack", with: "trail")
             #expect(!workoutWords.contains(where: t.contains),
                     "workout title '\(item.title)' carries a street map")
-            #expect(!trailWords.contains(where: t.contains),
-                    "trail title '\(item.title)' carries a street map")
+            if trailWords.contains(where: t.contains) {
+                #expect(trailPrints.contains(fingerprint(item.routeLatLon!)),
+                        "trail title '\(item.title)' carries a STREET loop, not a trail one")
+            }
         }
     }
 
-    @Test func trailRunsCarryClimbAndTrailPace() {
+    /// The fingerprints of every bundled loop anchored on green space.
+    private func trailFingerprints() -> Set<Int> {
+        var out: Set<Int> = []
+        for city in CommunityRoutes.auditCities {
+            for loop in CommunityRoutes.auditPools(city: city).trail {
+                out.insert(fingerprint(loop.pts))
+            }
+        }
+        return out
+    }
+
+    @Test func mappedTrailRunsDoNotInventElevation() {
+        let trailPrints = trailFingerprints()
         for item in todaysWall() where item.type == .trailRun {
-            #expect(item.routeLatLon == nil, "no bundled trail geometry exists — trail posts are mapless")
-            #expect(item.statLine.contains("ft"), "trail stat '\(item.statLine)' should carry climb")
+            if item.routeLatLon != nil {
+                #expect(!item.statLine.contains("ft"), "bundled routes have no elevation samples")
+            }
+            // A trail run draws trail geometry or nothing. It must never take a street loop: the
+            // metros with no bundled park loops keep the honest mapless card.
+            if let pts = item.routeLatLon {
+                #expect(trailPrints.contains(fingerprint(pts)),
+                        "a trail run is drawing a street loop")
+            }
         }
     }
 
@@ -72,8 +100,17 @@ struct CommunityContentAuditTests {
     }
 
     @Test func everyRouteFollowsBundledStreetGeometry() {
-        // Over-water/over-rooftop routes are structurally impossible: every routed post's polyline
-        // must be one of the bundled Directions-fetched street loops, point-for-point.
+        // Every routed post's polyline must be one of the bundled Directions-fetched loops,
+        // point-for-point — no synthesized shape ever reaches a tile.
+        //
+        // **This does NOT prove a route is on land, and the comment here used to say it did.**
+        // That claim ("over-water routes are structurally impossible") was believed for a month
+        // while 425 of the 967 shipped loops carried straight chords over 500 m and seventeen of
+        // the forty worst were drawn across San Francisco Bay, Lake Michigan and Sydney Harbour.
+        // The test was right and the reasoning was wrong: it only ever said the drawn shape equals
+        // a BUNDLED shape, and the bundled shape was the thing that was broken. What the bundle
+        // itself has to satisfy lives in `CommunityRouteRealismTests`, and the empirical check
+        // against the live water layer is `scripts/audit_community_routes.py`.
         var bundled: Set<Int> = []
         for city in CommunityRoutes.auditCities {
             for loop in CommunityRoutes.auditLoops(city: city) {

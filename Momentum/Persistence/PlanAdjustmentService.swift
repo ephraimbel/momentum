@@ -1,6 +1,89 @@
 import Foundation
 import SwiftData
 
+/// A synchronous transaction on the caller's SwiftData executor. Nested engine saves are staged;
+/// the plan, evidence ledger and inbox receipt commit together. Live surfaces run only afterward.
+enum PlanMutation {
+    private final class Scope: @unchecked Sendable {
+        let contextID: ObjectIdentifier
+        var effects: [() -> Void] = []
+        init(_ context: ModelContext) { contextID = ObjectIdentifier(context) }
+    }
+    @TaskLocal private static var scope: Scope?
+    static let failureNotification = Notification.Name("Momentum.planMutationFailed")
+
+    static func isStaging(_ context: ModelContext) -> Bool {
+        scope?.contextID == ObjectIdentifier(context)
+    }
+
+    static func save(_ context: ModelContext) throws {
+        if !isStaging(context) { try context.save() }
+    }
+
+    static func afterCommit(in context: ModelContext, _ effect: @escaping () -> Void) {
+        if isStaging(context), let scope { scope.effects.append(effect) }
+        else { effect() }
+    }
+
+    @MainActor
+    static func perform<T>(in context: ModelContext,
+                           commit: (ModelContext) throws -> Void = { try $0.save() },
+                           _ changes: () throws -> T) throws -> T {
+        if isStaging(context) { return try changes() }
+        // Preserve already-pending workout samples/other edits before creating a rollback boundary.
+        if context.hasChanges { try context.save() }
+        let autosave = context.autosaveEnabled
+        let previousUndo = context.undoManager
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        context.autosaveEnabled = false
+        context.undoManager = undo
+        undo.beginUndoGrouping()
+        defer {
+            undo.removeAllActions()
+            context.undoManager = previousUndo
+            context.autosaveEnabled = autosave
+        }
+        let transaction = Scope(context)
+        do {
+            let result = try $scope.withValue(transaction) {
+                let result = try changes()
+                try RunPrescriptionBudget.enforcePreferences(in: context)
+                try InjuryResponse.enforce(in: context)
+                try IllnessResponse.enforce(in: context)
+                context.processPendingChanges()
+                if undo.groupingLevel > 0 { undo.endUndoGrouping() }
+                try commit(context)
+                return result
+            }
+            transaction.effects.forEach { $0() }
+            return result
+        } catch {
+            context.processPendingChanges()
+            if undo.groupingLevel > 0 { undo.endUndoGrouping() }
+            // SwiftData rollback discards inserts, but may leave already-observed model values
+            // cached. Undo restores those values on the same instances before discarding storage edits.
+            if undo.canUndo { undo.undo() }
+            context.rollback()
+            throw error
+        }
+    }
+
+    @MainActor
+    static func edit(in context: ModelContext, _ changes: () -> Void) -> Bool {
+        attempt(in: context, fallback: false) { changes(); return true }
+    }
+
+    @MainActor
+    static func attempt<T>(in context: ModelContext, fallback: T, _ changes: () throws -> T) -> T {
+        do { return try perform(in: context, changes) }
+        catch {
+            NotificationCenter.default.post(name: failureNotification, object: nil)
+            return fallback
+        }
+    }
+}
+
 /// The one action layer behind Manage plan (2026-09-07, docs/PLAN-AND-FUEL-UPGRADE.md §2.3). Every
 /// adjustment is a `CoachIntent` applied through `CoachActions`, exactly as the coach chat applies
 /// it, so there is one adaptation engine and one throttle. What this adds is the proposal the
@@ -42,6 +125,8 @@ enum PlanAdjustmentService {
         /// Why it cannot be applied right now; nil when available.
         let blocked: String?
         let signature: Int
+        /// The date, athlete settings and completed training can change independently of the plan.
+        let contextSignature: Int
         var isAvailable: Bool { blocked == nil }
     }
 
@@ -61,17 +146,33 @@ enum PlanAdjustmentService {
         var h = Hasher()
         guard let plan else { h.combine(0); return h.finalize() }
         h.combine(plan.id)
+        h.combine(plan.goal.rawValue)
+        h.combine(plan.raceDate)
+        h.combine(plan.goalRacePaceSPerKm)
+        h.combine(plan.blockStart)
+        h.combine(plan.weekPhases)
+        h.combine(plan.pendingP5kSPerKm)
+        h.combine(plan.pendingP5kAt)
+        let coachingState = plan.coachingState
+        h.combine(coachingState?.pendingP5kWorkoutID)
+        for (key, value) in (coachingState?.paceEvidenceDates ?? [:]).sorted(by: { $0.key < $1.key }) { h.combine(key); h.combine(value) }
         h.combine(plan.p5kSPerKm)
         h.combine(plan.lastAdaptedAt)
         h.combine(plan.lastPaceEasedAt)
         h.combine(plan.lastRecalibratedAt)
         h.combine(plan.pausedUntil)
+        for (key, value) in (coachingState?.pauseShiftedDates ?? [:]).sorted(by: { $0.key < $1.key }) { h.combine(key); h.combine(value) }
         h.combine(plan.isSelfCoached)
-        for s in plan.sessions.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+        // Read each persistent identifier once instead of faulting it in every sort comparison.
+        let orderedSessions = plan.sessions.map { (key: $0.id.uuidString, session: $0) }
+            .sorted { $0.key < $1.key }
+        for (_, s) in orderedSessions {
             h.combine(s.id)
             h.combine(calendar.startOfDay(for: s.date))
             h.combine(s.status.rawValue)
             h.combine(s.discipline.rawValue)
+            h.combine(s.sportType)
+            h.combine(s.completedWorkout?.id)
             h.combine(s.targetDistanceM)
             h.combine(s.targetDurationS)
             h.combine(s.targetPaceSPerKm)
@@ -83,8 +184,48 @@ enum PlanAdjustmentService {
             // Only a strength session carries targets; reading the relationship on a run is a
             // fault for nothing.
             if s.discipline == .strength {
-                h.combine(s.strengthTargets.map { "\($0.order)|\($0.exercise?.name ?? "")|\($0.targetSets)" }.sorted())
+                h.combine(s.strengthTargets.map {
+                    "\($0.order)|\($0.exercise?.name ?? "")|\($0.targetSets)|\($0.targetRepLow)|\($0.targetRepHigh)|\($0.targetRPE ?? -1)|\($0.targetPctRM ?? -1)|\($0.progression)"
+                }.sorted())
             }
+        }
+        return h.finalize()
+    }
+
+    private static func contextSignature(profile: UserProfile, workouts: [Workout], today: Date,
+                                         distanceUnit: DistanceUnit, calendar: Calendar) -> Int {
+        var h = Hasher()
+        h.combine(profile.id)
+        h.combine(calendar.startOfDay(for: today))
+        h.combine(calendar.timeZone.identifier)
+        h.combine(calendar.firstWeekday)
+        h.combine(distanceUnit.rawValue)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        // Data's Hashable implementation may sample bytes. Hash every byte so fields in the
+        // middle of the blueprint (such as availability) participate in this fingerprint.
+        if let encoded = try? encoder.encode(PlanBlueprint(profile: profile).sanitized()) {
+            h.combine(encoded.count)
+            for byte in encoded { h.combine(byte) }
+        }
+        h.combine(profile.injuryHistory.sorted())
+        h.combine(profile.activeInjuryArea)
+        h.combine(profile.activeInjurySeverity)
+        h.combine(profile.activeInjuryUntil)
+        // Athlete-wide recovery belongs to the context fingerprint. Looking up the profile
+        // from every plan signature forced unrelated relationship work during view refreshes.
+        let continuity = profile.continuity
+        h.combine(continuity?.illnessData)
+        h.combine(continuity?.trainingEvidenceFrom)
+        h.combine(profile.crossTraining.sorted())
+        for workout in workouts.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            h.combine(workout.id)
+            h.combine(workout.type.rawValue)
+            h.combine(workout.startedAt)
+            h.combine(workout.durationS)
+            h.combine(workout.gps?.distanceM)
+            h.combine(workout.perceivedEffort)
+            h.combine(workout.planFitRaw)
         }
         return h.finalize()
     }
@@ -118,7 +259,9 @@ enum PlanAdjustmentService {
             explanation: explanation(intent, profile: profile),
             outlookChange: outlookChange(intent, profile: profile, today: today, calendar: calendar),
             blocked: blocked,
-            signature: signature(of: plan, calendar: calendar))
+            signature: signature(of: plan, calendar: calendar),
+            contextSignature: contextSignature(profile: profile, workouts: workouts, today: today,
+                                               distanceUnit: distanceUnit, calendar: calendar))
     }
 
     /// The sessions an intent can touch, the way the engine selects them.
@@ -164,8 +307,10 @@ enum PlanAdjustmentService {
         case .injuryReport(_, let severity):
             let until = calendar.date(byAdding: .day, value: severity.windowDays, to: todayStart) ?? todayStart
             return span(open.filter { $0.date <= until })
-        case .pausePlan, .resumePlan:
-            return span(open.filter { !PlanCoaching.isFixedDate($0) })
+        case .pausePlan(let days):
+            return span(PlanCoaching.pausePlacements(plan, days: days, from: today, calendar: calendar).map(\.session))
+        case .resumePlan:
+            return span(PlanCoaching.resumePlacements(plan, from: today, calendar: calendar).map(\.session))
         case .changeGoal, .changeRace, .changeDays, .changeSessionLength, .changeEquipment, .renewBlock, .addTuneUp:
             return span(open)
         case .navigate, .explainPlan, .weekRecap, .racePlan, .showMemory, .racePredictor, .todayBriefing,
@@ -245,25 +390,21 @@ enum PlanAdjustmentService {
                 return "\(day) \(before) \(km(s.targetDistanceM ?? 0)) → \(after) \(km(landed))"
             }
         case .pausePlan(let days):
-            let movable = openSessions(plan, from: today, calendar: calendar)
-                .filter { !PlanCoaching.isFixedDate($0) }
-                .sorted { $0.date < $1.date }
-            var lines: [String] = movable.prefix(2).compactMap { s in
-                guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { return nil }
+            let moves = PlanCoaching.pausePlacements(plan, days: days, from: today, calendar: calendar)
+            var lines = moves.sorted { $0.date < $1.date }.prefix(2).map { move in
+                let s = move.session
                 let title = s.discipline == .strength ? (s.strengthLabel ?? "Strength") : (s.runType?.planTitle ?? "Run")
-                return "\(title): \(s.date.formatted(.dateTime.weekday(.abbreviated).day())) → \(moved.formatted(.dateTime.weekday(.abbreviated).day()))"
+                return "\(title): \(s.date.formatted(.dateTime.weekday(.abbreviated).day())) → \(move.date.formatted(.dateTime.weekday(.abbreviated).day()))"
             }
-            // The engine leaves a session where it is rather than push it past race day; say so.
-            if let race = plan.raceDate {
-                let raceDay = calendar.startOfDay(for: race)
-                let stranded = movable.filter {
-                    calendar.date(byAdding: .day, value: days, to: $0.date).map { calendar.startOfDay(for: $0) > raceDay } ?? false
-                }.count
-                if stranded > 0 {
-                    lines.append("\(stranded) session\(stranded == 1 ? "" : "s") would land after race day, so \(stranded == 1 ? "it stays" : "they stay") where \(stranded == 1 ? "it is" : "they are")")
-                }
-            }
+            let unchanged = openSessions(plan, from: today, calendar: calendar)
+                .filter { !PlanCoaching.isFixedDate($0) }.count - moves.count
+            if unchanged > 0 { lines.append("\(unchanged) sessions have no room to move and stay on their dates") }
             return lines
+        case .resumePlan:
+            return PlanCoaching.resumePlacements(plan, from: today, calendar: calendar).prefix(2).map { move in
+                let title = move.session.discipline == .strength ? (move.session.strengthLabel ?? "Strength") : (move.session.runType?.planTitle ?? "Run")
+                return "\(title): \(move.session.date.formatted(.dateTime.weekday(.abbreviated).day())) → \(move.date.formatted(.dateTime.weekday(.abbreviated).day()))"
+            }
         case .moveSession(let id, let to):
             // The day it lands on may already hold a session: say so, since a move stacks rather
             // than swaps (the board's drag onto a session is the swap).
@@ -284,7 +425,7 @@ enum PlanAdjustmentService {
         case .changeDays:
             return "The week is rebuilt from today around the days you can train. Completed sessions and your paces stay; the weekly ramp is still governed, so more days never means a jump in load. This week's adjustments are not carried into the rebuilt weeks."
         case .changeSessionLength:
-            return "Sessions are re-sized to the time you have. Runs that would not fit are capped to it; the long run keeps its place in the week."
+            return "Your usual session time helps size the rebuilt weeks. Current mileage can call for longer sessions; check the preview, and long runs are planned separately."
         case .changeEquipment:
             return "Strength days are rebuilt with exercises you can actually do. Running days are rebuilt the same way they were."
         case .changeGoal:
@@ -302,13 +443,13 @@ enum PlanAdjustmentService {
         case .bumpLoad:
             return "Upcoming sessions rise about 10%. The coach only offers this when your completed load has earned it, and it counts as the week's structural change."
         case .easePaces:
-            return "Target paces ease about 2% on future runs. Past runs and your fitness estimate are untouched; sharpening evidence starts fresh."
+            return "Future targets ease about 2%, and the pace-based fitness estimate adjusts with them. Past runs stay unchanged; sharpening evidence starts fresh."
         case .injuryReport:
             return "Training around a sore spot removes what aggravates it and gates the way back. Never a diagnosis; anything sharp, swollen or worsening is a question for a professional."
         case .pausePlan:
-            return "Everything upcoming shifts later by the same number of days. Race day never moves, so a pause inside a race build tightens the runway; the coach says so when you are back."
+            return "Sessions with room to move shift later. Fixed races, occupied dates and recovery space stay protected. The preview identifies sessions that must stay on their dates."
         case .resumePlan:
-            return "Sessions pull back to meet you today. Ease into the first one."
+            return "Ends the pause and moves eligible sessions earlier where there is room. Fixed races, recovery space and dates you changed yourself stay protected. Check your next session before returning."
         case .renewBlock:
             return profile.plan?.raceDate == nil
                 ? "This block closes and the next is built from what you actually ran in the last four weeks, not from what was planned. The block review lands in your inbox."
@@ -361,6 +502,7 @@ enum PlanAdjustmentService {
     /// athlete taps, in plain words.
     static func blocked(_ intent: CoachIntent, profile: UserProfile, workouts: [Workout], today: Date,
                         calendar: Calendar = .current) -> String? {
+        if let reason = IllnessResponse.blocked(intent, profile: profile) { return reason }
         guard let plan = profile.plan else { return "There is no current plan to adjust. Create one from Your plans." }
         if plan.isSelfCoached {
             switch intent {
@@ -436,7 +578,9 @@ enum PlanAdjustmentService {
                       distanceUnit: DistanceUnit = .metric, in context: ModelContext,
                       calendar: Calendar = .current) -> ApplyResult {
         let current = signature(of: profile.plan, calendar: calendar)
-        guard current == proposal.signature else {
+        guard current == proposal.signature,
+              contextSignature(profile: profile, workouts: workouts, today: today,
+                               distanceUnit: distanceUnit, calendar: calendar) == proposal.contextSignature else {
             return .stale(self.proposal(proposal.intent, title: proposal.title, request: proposal.request,
                                         profile: profile, workouts: workouts, today: today,
                                         distanceUnit: distanceUnit, in: context, calendar: calendar))
@@ -445,19 +589,24 @@ enum PlanAdjustmentService {
             return .declined(blocked)
         }
         let undo = CoachUndo.capture(profile)
-        switch CoachActions.apply(proposal.intent, profile: profile, workouts: workouts, today: today,
-                                  in: context, calendar: calendar) {
-        case .applied(let receipt):
-            CoachUndo.makeSoleUndoPoint(in: context)
-            try? context.save()
+        do {
+            let receipt: CoachActions.Receipt = try PlanMutation.perform(in: context) {
+                switch CoachActions.apply(proposal.intent, profile: profile, workouts: workouts, today: today,
+                                          in: context, calendar: calendar) {
+                case .applied(let receipt):
+                    CoachUndo.makeSoleUndoPoint(in: context)
+                    return receipt
+                case .declined(let reason): throw ApplyFailure.declined(reason)
+                case .navigate: throw ApplyFailure.declined("That action opens a page instead of changing your plan.")
+                }
+            }
             propagate(profile: profile, workouts: workouts, notifications: notifications, calendar: calendar)
             return .applied(receipt, undo: undo)
-        case .declined(let reason):
-            return .declined(reason)
-        case .navigate:
-            return .declined("That one opens a page rather than changing the plan.")
-        }
+        } catch ApplyFailure.declined(let reason) { return .declined(reason) }
+        catch { return .declined("Your change could not be saved. Your previous plan is still here. Please try again.") }
     }
+
+    private enum ApplyFailure: Error { case declined(String) }
 
     /// Roll the plan back to the state captured before an apply. The same restore the coach chat
     /// trusts; it also returns the week's adaptation budget.
@@ -466,7 +615,6 @@ enum PlanAdjustmentService {
                      notifications: NotificationServing, in context: ModelContext,
                      calendar: Calendar = .current) -> Bool {
         guard CoachUndo.restore(json, profile: profile, in: context) else { return false }
-        try? context.save()
         propagate(profile: profile, workouts: workouts, notifications: notifications, calendar: calendar)
         return true
     }
@@ -484,6 +632,53 @@ enum PlanAdjustmentService {
             guard !profile.isDeleted, profile.modelContext != nil else { return }
             WidgetBridge.publish(profile: profile, workouts: workouts,
                                  stats: ProfileStats(workouts: workouts, plan: profile.plan, calendar: calendar))
+        }
+    }
+}
+
+/// A library replacement keeps the scheduled session's identity, date and dose envelope.
+/// It cannot rewrite history, replace a fixed race, or turn an easy slot into quality work.
+@MainActor
+enum PlanSessionReplacement {
+    struct Failure: LocalizedError { let message: String; var errorDescription: String? { message } }
+
+    static func blocked(_ session: PlannedSession, by prescription: WorkoutLibrary.Prescription,
+                        in plan: TrainingPlan) -> String? {
+        guard plan.sessions.contains(where: { $0.id == session.id }),
+              session.status == .planned || session.status == .moved,
+              session.completedWorkout == nil, session.discipline == .running,
+              session.runType != .race else { return "Only an upcoming training run can be replaced." }
+        if session.runType == .long && prescription.runType != .long {
+            return "Keep this week's long-run slot. Choose a long-run workout."
+        }
+        if prescription.runType == .long && session.runType != .long {
+            return "Choose the existing long-run slot for this workout."
+        }
+        if prescription.runType.isQuality && session.runType?.isQuality != true && session.runType != .long {
+            return "Keep this easy day easy. Choose a quality session to replace with this workout."
+        }
+        return nil
+    }
+
+    static func prescription(_ proposed: WorkoutLibrary.Prescription, replacing session: PlannedSession,
+                             plan: TrainingPlan, profile: UserProfile?, unit: DistanceUnit) -> WorkoutLibrary.Prescription {
+        var value = proposed
+        if let distance = session.targetDistanceM { value.targetDistanceM = min(value.targetDistanceM ?? distance, distance) }
+        if let duration = session.targetDurationS { value.targetDurationS = min(value.targetDurationS ?? duration, duration) }
+        return value.fitting(plan: plan, profile: profile, unit: unit)
+    }
+
+    static func apply(_ proposed: WorkoutLibrary.Prescription, replacing session: PlannedSession,
+                      plan: TrainingPlan, profile: UserProfile?, unit: DistanceUnit, in context: ModelContext,
+                      commit: (ModelContext) throws -> Void = { try $0.save() }) throws {
+        try PlanMutation.perform(in: context, commit: commit) {
+            if let reason = blocked(session, by: proposed, in: plan) { throw Failure(message: reason) }
+            let rx = prescription(proposed, replacing: session, plan: plan, profile: profile, unit: unit)
+            session.runType = rx.runType; session.intervals = rx.intervals
+            session.targetDistanceM = rx.targetDistanceM; session.targetDurationS = rx.targetDurationS
+            session.targetPaceSPerKm = rx.targetPaceSPerKm
+            session.rationale = "Replaced within this session's training budget. " + rx.rationale
+            _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
         }
     }
 }

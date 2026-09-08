@@ -53,3 +53,100 @@ final class PlanAthleteStateRecord {
         if let record = fetch(planID: planID, in: context) { context.delete(record) }
     }
 }
+
+/// V6 bookkeeping lives outside the released TrainingPlan graph so older schemas keep their
+/// checksums. Scalar plan IDs only; writes participate in the caller's save/rollback transaction.
+@Model
+final class PlanCoachingStateRecord {
+    @Attribute(.unique) var id: UUID = UUID()
+    var planID: UUID = UUID()
+    var pauseShiftedDates: [String: Date] = [:]
+    var pendingP5kWorkoutID: UUID?
+    var paceEvidenceDates: [String: Date] = [:]
+
+    init(planID: UUID) { id = planID; self.planID = planID }
+
+    static func fetch(planID: UUID, in context: ModelContext) -> PlanCoachingStateRecord? {
+        var query = FetchDescriptor<PlanCoachingStateRecord>(predicate: #Predicate { $0.planID == planID })
+        query.fetchLimit = 1
+        return (try? context.fetch(query))?.first
+    }
+
+    static func upsert(planID: UUID, in context: ModelContext) -> PlanCoachingStateRecord {
+        if let record = fetch(planID: planID, in: context) { return record }
+        let record = PlanCoachingStateRecord(planID: planID)
+        context.insert(record)
+        return record
+    }
+}
+
+extension TrainingPlan {
+    /// Read-only lookup. Creating a plan or taking a signature never inserts bookkeeping rows.
+    var coachingState: PlanCoachingStateRecord? {
+        modelContext.flatMap { PlanCoachingStateRecord.fetch(planID: id, in: $0) }
+    }
+}
+
+/// V7: explicit athlete preferences, separate from the released profile schema.
+@Model
+final class PlanPreferencesRecord {
+    @Attribute(.unique) var id: UUID = UUID()
+    var profileID: UUID = UUID()
+    var regularRunLimitS: Double?
+    var longRunLimitS: Double?
+    var benchmarkDistanceM: Double?
+    var benchmarkTimeS: Double?
+    var benchmarkPerformedAt: Date?
+    var benchmarkRecordedAt: Date?
+
+    init(profileID: UUID) { id = profileID; self.profileID = profileID }
+
+    static func fetch(profileID: UUID, in context: ModelContext) -> PlanPreferencesRecord? {
+        var query = FetchDescriptor<PlanPreferencesRecord>(predicate: #Predicate { $0.profileID == profileID })
+        query.fetchLimit = 1
+        return (try? context.fetch(query))?.first
+    }
+    static func upsert(profileID: UUID, in context: ModelContext) -> PlanPreferencesRecord {
+        if let record = fetch(profileID: profileID, in: context) { return record }
+        let record = PlanPreferencesRecord(profileID: profileID)
+        context.insert(record)
+        return record
+    }
+}
+
+extension UserProfile {
+    var planPreferences: PlanPreferencesRecord? {
+        modelContext.flatMap { PlanPreferencesRecord.fetch(profileID: id, in: $0) }
+    }
+}
+
+/// V9: dates explicit current-fitness answers without changing the released profile shape.
+@Model
+final class PlanFitnessDeclarationRecord {
+    @Attribute(.unique) var id: UUID = UUID()
+    var profileID: UUID = UUID()
+    var declaredAt: Date = Date()
+    init(profileID: UUID, declaredAt: Date) {
+        id = profileID; self.profileID = profileID; self.declaredAt = declaredAt
+    }
+    static func fetch(profileID: UUID, in context: ModelContext) -> PlanFitnessDeclarationRecord? {
+        guard context.container.schema.entities.contains(where: { $0.name == "PlanFitnessDeclarationRecord" }) else { return nil }
+        var query = FetchDescriptor<PlanFitnessDeclarationRecord>(predicate: #Predicate { $0.profileID == profileID })
+        query.fetchLimit = 1
+        return (try? context.fetch(query))?.first
+    }
+    static func set(_ date: Date?, for profile: UserProfile, in context: ModelContext) {
+        guard context.container.schema.entities.contains(where: { $0.name == "PlanFitnessDeclarationRecord" }) else { return }
+        let existing = fetch(profileID: profile.id, in: context)
+        if let date {
+            if let existing { existing.declaredAt = date }
+            else { context.insert(PlanFitnessDeclarationRecord(profileID: profile.id, declaredAt: date)) }
+        } else if let existing { context.delete(existing) }
+    }
+}
+
+extension UserProfile {
+    var fitnessDeclaredAt: Date? {
+        modelContext.flatMap { PlanFitnessDeclarationRecord.fetch(profileID: id, in: $0)?.declaredAt }
+    }
+}

@@ -36,6 +36,8 @@ struct PlanSettingsSheet: View {
     @State private var strengthSplit: StrengthSplitStyle
     @State private var days: Int
     @State private var minutes: Int
+    @State private var limitRegularTime: Bool
+    @State private var longRunMinutes: Int?
     @State private var equipment: Equipment
     @State private var showRacePicker = false
     @State private var saveFailed = false
@@ -76,6 +78,8 @@ struct PlanSettingsSheet: View {
         _strengthSplit = State(initialValue: StrengthSplitStyle(rawValue: profile.strengthSplit) ?? .coach)
         _days = State(initialValue: profile.daysPerWeek)
         _minutes = State(initialValue: profile.sessionMinutes)
+        _limitRegularTime = State(initialValue: profile.planPreferences?.regularRunLimitS != nil)
+        _longRunMinutes = State(initialValue: profile.planPreferences?.longRunLimitS.map { Int($0 / 60) })
         _equipment = State(initialValue: profile.equipment)
         // Do not flash a months-old onboarding peak while the bounded background query runs. The
         // empty-evidence snapshot preserves fresh declarations and applies the conservative returning
@@ -85,6 +89,8 @@ struct PlanSettingsSheet: View {
             declaredWeeklyM: profile.weeklyRunVolumeM,
             declaredLongestM: profile.longestRunM,
             profileCreatedAt: profile.createdAt,
+            trainingEvidenceFrom: profile.continuity?.trainingEvidenceFrom,
+            declaredAt: profile.fitnessDeclaredAt,
             endingAt: Date(),
             calendar: .current
         )
@@ -115,6 +121,8 @@ struct PlanSettingsSheet: View {
     private var structural: Bool {
         goal != profile.goal || days != profile.daysPerWeek
             || minutes != profile.sessionMinutes || equipment != profile.equipment
+            || (limitRegularTime ? Double(minutes * 60) : nil) != profile.planPreferences?.regularRunLimitS
+            || longRunMinutes.map { Double($0 * 60) } != profile.planPreferences?.longRunLimitS
             || newRaceDistanceM != profile.raceDistanceM
             || newRaceDate != profile.raceDate.map { Calendar.current.startOfDay(for: $0) }
             || newGoalFinishTimeS != profile.goalFinishTimeS
@@ -182,7 +190,9 @@ struct PlanSettingsSheet: View {
                                       injuryProne: !profile.injuryHistory.isEmpty,
                                       daysPerWeek: days,   // the BUFFERED picker value — verdict updates live
                                       intensity: intensity,
-                                      targetWeeklyVolumeM: targetWeekly)
+                                      targetWeeklyVolumeM: targetWeekly,
+                                      regularRunLimitS: limitRegularTime ? Double(minutes * 60) : nil,
+                                      longRunLimitS: longRunMinutes.map { Double($0 * 60) })
     }
 
     private var recommendedIntensity: PlanIntensity {
@@ -286,6 +296,7 @@ struct PlanSettingsSheet: View {
             }
         }
         .presentationBackground(Theme.background)
+        .trackScreen(.planSettings)
     }
 
     // MARK: Sections
@@ -753,6 +764,15 @@ struct PlanSettingsSheet: View {
     private var sessionSection: some View {
         section("SESSION LENGTH") {
             segmented([30, 45, 60, 75], current: minutes, label: { "\($0)m" }) { minutes = $0 }
+            Toggle("Keep regular runs within this time", isOn: $limitRegularTime)
+            Picker("Long-run time limit", selection: $longRunMinutes) {
+                Text("Coach chooses").tag(Int?.none)
+                ForEach([30, 45, 60, 75, 90, 120, 150, 180], id: \.self) { value in
+                    Text("\(value) min").tag(Optional(value))
+                }
+            }
+            Text("Limits include warm-up and recovery at the planned effort. Race day is separate.")
+                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
         }
     }
 
@@ -779,6 +799,8 @@ struct PlanSettingsSheet: View {
             declaredWeeklyM: profile.weeklyRunVolumeM,
             declaredLongestM: profile.longestRunM,
             profileCreatedAt: profile.createdAt,
+            trainingEvidenceFrom: profile.continuity?.trainingEvidenceFrom,
+            declaredAt: profile.fitnessDeclaredAt,
             endingAt: now
         ), !Task.isCancelled else { return }
         baselineUsesLoggedRuns = snapshot.usesLoggedRuns
@@ -915,6 +937,9 @@ struct PlanSettingsSheet: View {
             profile.goal = goal
             profile.daysPerWeek = days
             profile.sessionMinutes = minutes
+            let preferences = PlanPreferencesRecord.upsert(profileID: profile.id, in: context)
+            preferences.regularRunLimitS = limitRegularTime ? Double(minutes * 60) : nil
+            preferences.longRunLimitS = longRunMinutes.map { Double($0 * 60) }
             profile.equipment = equipment
             profile.raceDistanceM = newRaceDistanceM
             profile.raceDate = newRaceDate

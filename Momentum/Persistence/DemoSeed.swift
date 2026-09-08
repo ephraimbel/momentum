@@ -122,6 +122,10 @@ enum DemoSeed {
             try? context.delete(model: PlannedSession.self);     try? context.delete(model: TrainingPlan.self)
             try? context.delete(model: PlanMetadataRecord.self); try? context.delete(model: RunningEventRecord.self)
             try? context.delete(model: PlanAthleteStateRecord.self)
+            try? context.delete(model: PlanCoachingStateRecord.self)
+            try? context.delete(model: PlanPreferencesRecord.self)
+            try? context.delete(model: PlanContinuityRecord.self)
+            try? context.delete(model: PlanFitnessDeclarationRecord.self)
             try? context.delete(model: PlanShelfRecord.self)
             try? context.delete(model: RunningSeasonRecord.self); try? context.delete(model: PlanDecisionRecord.self)
             try? context.delete(model: MemoryNote.self);         try? context.delete(model: FitnessSnapshot.self)
@@ -795,15 +799,13 @@ enum DemoSeed {
     }
 
     /// Map a real bundled loop (repeated `laps` times for long runs) into timed `LocationSample`s.
-    /// `dense: false` downsamples to ~24 points — enough for a route silhouette, cheap to seed en masse.
-    private static func samplesFromLoop(_ loop: CommunityRoutes.Loop, laps: Int, start: Date,
-                                        durationS: Double, speedMS: Double, dense: Bool) -> [LocationSample] {
+    ///
+    /// Keep every routed vertex, including on long/multiple-lap demos. Raising an index-decimation
+    /// cap from 24 to 200 only hid the same bug on longer routes; it still cut street corners.
+    static func samplesFromLoop(_ loop: CommunityRoutes.Loop, laps: Int, start: Date,
+                                durationS: Double, speedMS: Double, dense _: Bool) -> [LocationSample] {
         var pts: [[Double]] = []
         for _ in 0..<max(1, laps) { pts.append(contentsOf: loop.pts) }
-        if !dense, pts.count > 24 {
-            let step = pts.count / 24
-            pts = stride(from: 0, to: pts.count, by: max(1, step)).map { pts[$0] }
-        }
         guard pts.count > 1 else { return [] }
         var out: [LocationSample] = []
         let last = Double(pts.count - 1)

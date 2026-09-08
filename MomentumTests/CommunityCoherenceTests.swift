@@ -39,7 +39,10 @@ struct CommunityCoherenceTests {
     private func ledger(_ a: CommunityAthlete) -> [CommunitySession] {
         CommunityLedger.sessions(handle: a.handle, primary: a.primaryType,
                                  city: a.routeCity,
-                                 count: a.totalWorkouts, clock: clock, lead: a.ledgerLead)
+                                 count: a.totalWorkouts, clock: clock,
+                                 // Their own neighbourhood's loops — the pool the app resolves.
+                                 // Omitting it folds a DIFFERENT career and the grid stops matching.
+                                 home: a.homeCoordinate, lead: a.ledgerLead)
     }
 
     /// "5.7 mi · 44:31" → 5.7. nil when the tile prints no distance.

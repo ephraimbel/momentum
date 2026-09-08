@@ -1,95 +1,400 @@
 #!/usr/bin/env python3
-"""Fetch REAL street-following loop routes for the seeded Momentum community.
+"""Fetch REAL street- and trail-following loops for the seeded Momentum community.
 
-The community feed's sample posts used to draw geometric loops that cut across buildings —
-instantly fake. This script asks the Mapbox Directions API (walking/cycling profiles) for real
-loops around each seed city's center and writes them to
-`Momentum/Resources/CommunityRoutes.json`, which `CommunityRoutes.swift` loads at runtime.
-Deterministic at runtime (the app just picks among bundled variants); network happens only here.
+What changed on 2026-09-07 and why
+----------------------------------
+Two defects were visible on the wall and both were baked into this file's output, not into the app.
+
+**1. Runners crossed water.** The old fetch downsampled every route to 90 points by keeping every
+Nth vertex. On a long loop that replaces real bridge and shoreline geometry with straight chords
+kilometres long, and the chord goes where the road did not: a San Francisco ride drew an 8.8 km
+line from Sausalito across the Golden Gate, a New York ride cut the Hudson, a Chicago run left the
+lakefront and went out into Lake Michigan. 425 of 967 shipped loops carried a chord over 500 m.
+Now the geometry is simplified by Douglas-Peucker (5 m), which bounds removed vertices to within 5 m of the retained segment. This limits distortion;
+it does not prove road access or exclude water. Ferries are
+excluded from routing, and any chord over 800 m has its interior sampled against Mapbox's own
+water layer before the loop is allowed into the bundle.
+
+**2. Everyone ran downtown.** Every loop in a metro started at that metro's one downtown pin, so
+all ~44 seeded athletes of a metro traced the same city-centre streets - including the 65% of them
+who say they live in a suburb or a commuter town. Now loops are anchored on the REAL places the
+athletes actually claim (`CommunityPlaces.json`, 2,990 towns), spread across each metro by
+farthest-point sampling, and each loop ships the anchor it was drawn from so the app can hand an
+athlete a loop that starts near their own home.
+
+Three kinds ship: `run` (walking profile - sidewalks, paths, greenways), `ride` (cycling), and
+`trail` (walking loops anchored on parks and green space, so a trail run finally has trail geometry
+instead of being drawn mapless or on a city block).
+
+Output shape:
+    { "Austin, TX": {
+        "run":   [ {"km": 8.1, "c": [30.5052, -97.8203], "b": "<base64>"}, ... ],
+        "ride":  [ ... ],
+        "trail": [ ... ] }, ... }
+
+`c` is the anchor (lat, lon) the loop was drawn around - parsed at launch with `km`, so the app can
+pick a nearby loop without decoding any geometry. `b` is the v2 wire format described in
+`community_routes_lib.py`; it must stay the exact inverse of `CommunityRoutes.decode`.
 
 Usage:
-    python3 scripts/fetch_community_routes.py            # token read from Secrets.xcconfig
+    python3 scripts/fetch_community_routes.py                    # everything, ~1 h
+    python3 scripts/fetch_community_routes.py --cities "Austin, TX|London"
+    python3 scripts/fetch_community_routes.py --anchors 8 --workers 6
     MBX_TOKEN=pk.xxx python3 scripts/fetch_community_routes.py
-
-Output shape — LENGTH-FIRST, geometry as one opaque string per loop:
-    { "Austin, TX": { "run":  [ {"km": 4.1, "b": "<base64>"}, ... ],
-                      "ride": [ {"km": 21.7, "b": "<base64>"} ] }, ... }
-
-`b` is base64 of little-endian int32 pairs, each value = degrees x 10,000 — exactly the 4-decimal
-rounding below, so the round trip through `CommunityRoutes.decode` is bit-exact. The old shape wrote
-each loop as a JSON array of `[lat, lon]` arrays; parsing the file then meant building 86,887 point
-arrays (108 ms) on the first `loopKms` call, when all the session ledger wanted was 967 lengths.
-Now the launch parse is 967 numbers plus 967 strings and a polyline is decoded only when something
-draws it. Keep the two halves in one file: `km` has to be there for every city at launch, and
-splitting geometry into a second bundled resource would need an `xcodegen` regeneration for a 3 ms
-gain (measured).
 """
-import base64
+import argparse
+import hashlib
 import json
 import math
 import os
+import random
 import re
-import struct
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from community_routes_lib import (SIMPLIFY_M, encode, haversine, length_km, longest_chord_m,
+                                  offset, quantize, simplify)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "Momentum", "Resources", "CommunityRoutes.json")
+PLACES = os.path.join(ROOT, "Momentum", "Resources", "CommunityPlaces.json")
+GEN = os.path.join(ROOT, "Momentum", "Features", "Social", "CommunityGenerator.swift")
 
-# Keep in sync with CommunityGenerator.usCities / worldCities + CommunityDirectory.featured.
-US_CITIES = [
-    ("Austin, TX", 30.27, -97.74), ("New York, NY", 40.78, -73.97), ("Los Angeles, CA", 34.05, -118.24),
-    ("Chicago, IL", 41.88, -87.63), ("Denver, CO", 39.74, -104.99), ("Seattle, WA", 47.62, -122.31),
-    ("Boston, MA", 42.34, -71.10), ("San Francisco, CA", 37.77, -122.42), ("Portland, OR", 45.52, -122.64),
-    ("Miami, FL", 25.77, -80.25), ("Boulder, CO", 40.01, -105.27), ("San Diego, CA", 32.75, -117.13),
-    ("Dallas, TX", 32.78, -96.80), ("Houston, TX", 29.76, -95.37), ("Atlanta, GA", 33.75, -84.39),
-    ("Phoenix, AZ", 33.45, -112.07), ("Philadelphia, PA", 39.95, -75.17), ("Minneapolis, MN", 44.98, -93.27),
-    ("Nashville, TN", 36.16, -86.78), ("Charlotte, NC", 35.23, -80.84), ("Salt Lake City, UT", 40.76, -111.89),
-    ("Washington, DC", 38.91, -77.04), ("San Antonio, TX", 29.42, -98.49), ("Sacramento, CA", 38.58, -121.49),
-    ("Columbus, OH", 39.96, -83.00), ("Indianapolis, IN", 39.77, -86.16), ("Kansas City, MO", 39.10, -94.58),
-    ("Raleigh, NC", 35.78, -78.64), ("Pittsburgh, PA", 40.44, -79.996), ("Milwaukee, WI", 43.04, -87.91),
-    ("Tampa, FL", 27.97, -82.44), ("Orlando, FL", 28.54, -81.38), ("Las Vegas, NV", 36.17, -115.14),
-    ("Madison, WI", 43.07, -89.40), ("Richmond, VA", 37.54, -77.44), ("Asheville, NC", 35.60, -82.55),
-    ("Boise, ID", 43.62, -116.21), ("Bend, OR", 44.06, -121.31), ("Fort Collins, CO", 40.59, -105.08),
-    ("Ann Arbor, MI", 42.28, -83.74), ("Brooklyn, NY", 40.68, -73.94), ("Oakland, CA", 37.80, -122.27),
-    ("St. Louis, MO", 38.63, -90.20), ("Cincinnati, OH", 39.10, -84.51), ("New Orleans, LA", 29.96, -90.09),
-]
-WORLD_CITIES = [
-    ("London", 51.51, -0.13), ("Toronto", 43.66, -79.40), ("Sydney", -33.89, 151.20), ("Berlin", 52.52, 13.40),
-    ("Paris", 48.86, 2.35), ("Vancouver", 49.25, -123.10), ("Melbourne", -37.81, 144.96), ("Dublin", 53.35, -6.26),
-    ("Amsterdam", 52.37, 4.90), ("Madrid", 40.42, -3.70), ("Tokyo", 35.68, 139.69), ("Auckland", -36.89, 174.76),
-    ("Stockholm", 59.35, 18.04), ("Mexico City", 19.43, -99.13), ("Barcelona", 41.41, 2.16), ("Munich", 48.14, 11.58),
-    ("Calgary", 51.05, -114.07), ("Cape Town", -33.96, 18.47), ("Singapore", 1.35, 103.82), ("Oslo", 59.93, 10.76),
-]
-CITIES = US_CITIES + WORLD_CITIES
+# Run distances, in km, that an endurance community actually posts. Each anchor takes a rotating
+# slice, so the loops within walking distance of one athlete still span an easy day to a long one.
+RUN_MENU = [3.2, 5.0, 6.4, 8.0, 10.0, 12.9, 16.1, 21.1]
+RIDE_MENU = [16.0, 24.0, 35.0, 52.0]
+TRAIL_MENU = [5.5, 8.5, 12.0, 16.0]
 
-# Loop variants to fetch per city: (kind, profile, target loop length km, bearing offset deg).
-# The original four lead the list so existing slot indices keep resolving to the same loops;
-# everything after is ADDED variety. Three run loops per city was the ceiling on how varied the
-# wall could ever look: a city's mapped runs could only ever be three distances, so strangers
-# drew identical traces and the distances clustered (2026-08-29). Targets are spread across the
-# real range an endurance community actually runs, and bearings are scattered so neighbouring
-# loops don't retrace one another's streets.
-VARIANTS = [
-    ("run", "walking", 3.0, 15),
-    ("run", "walking", 5.5, 200),
-    ("run", "walking", 8.5, 95),
-    ("ride", "cycling", 20.0, 320),
-    ("run", "walking", 2.0, 40),
-    ("run", "walking", 4.2, 250),
-    ("run", "walking", 6.8, 110),
-    ("run", "walking", 7.6, 330),
-    ("run", "walking", 10.5, 300),
-    ("run", "walking", 12.9, 165),
-    ("run", "walking", 16.1, 25),
-    ("run", "walking", 21.1, 275),
-    ("ride", "cycling", 12.0, 60),
-    ("ride", "cycling", 32.0, 140),
-    ("ride", "cycling", 48.0, 235),
-]
+RUNS_PER_ANCHOR = 4
+ANCHOR_RADIUS_KM = 50      # anchors come from the inhabited ring, not an empty county an hour out
+MAX_START_SNAP_M = 1_000    # a start more than a walk away is not the requested anchor
+MAX_PARK_KM = 40           # a trail loop has to be somewhere the metro's athletes could get to
+MIN_ANCHOR_GAP_KM = 2.5    # two anchors closer than this would draw the same streets
+# The in-line water guard, deliberately set to catch only the extreme case.
+#
+# After Douglas-Peucker a routed path bends with the road every few metres, so a chord this long is
+# rare — the regenerated bundle's longest is about 2.4 km — and a check at this threshold costs
+# almost nothing. It used to run at 700 m, which stalled every worker: the sampling is serial
+# inside a loop, so each loop paid several rate-limited round trips before the next one could
+# start, and a full run went from forty minutes to several hours.
+#
+# **`scripts/audit_community_routes.py` is the real check** and it is stronger than anything worth
+# doing in line: it samples every chord over 400 m of the FINISHED bundle at 200 m spacing against
+# the live water layer, and exits non-zero if any loop is drawn on water. Run it after every
+# regeneration.
+CHORD_WATER_CHECK_M = 2_500
+WATER_SAMPLE_M = 800
+LENGTH_TOLERANCE = 0.28    # a loop this far off its target is a different session; refetch
+NEAR_DUPLICATE_KM = 0.6    # two loops this close in length, from one anchor, are one loop twice
+MIN_POINTS = 24
 
+
+# MARK: - Mapbox
+
+class Mapbox:
+    """Directions, Tilequery and POI search, with one shared throttle and retries."""
+
+    # Mapbox rate-limits per endpoint, not per token, so one shared throttle would have to run at
+    # the slowest endpoint's ceiling and waste the others. Directions is the tight one.
+    LIMITS = {"directions": 4.5, "tilequery": 9.0, "search": 7.0}
+
+    def __init__(self, token, scale=1.0):
+        self.token = token
+        self._gaps = {k: 1.0 / (v * scale) for k, v in self.LIMITS.items()}
+        self._lock = threading.Lock()
+        self._next = {k: 0.0 for k in self.LIMITS}
+        self.calls = 0
+
+    def _get(self, url, timeout=40, tries=4, lane="directions"):
+        for attempt in range(tries):
+            with self._lock:
+                now = time.monotonic()
+                wait = max(0.0, self._next[lane] - now)
+                self._next[lane] = max(now, self._next[lane]) + self._gaps[lane]
+                self.calls += 1
+            if wait:
+                time.sleep(wait)
+            try:
+                with urllib.request.urlopen(url, timeout=timeout) as resp:
+                    return json.load(resp)
+            except Exception as e:  # noqa: BLE001 - transient network/429; back off and retry
+                if attempt == tries - 1:
+                    return {"__error__": str(e)[:120]}
+                # A 429 says the token is over its per-minute ceiling; anything else is transient.
+                # Backing off longer on a 429 is cheaper than hammering into more of them.
+                code = getattr(e, "code", 0)
+                time.sleep((3.0 if code == 429 else 1.0) * (attempt + 1))
+        return None
+
+    def directions(self, profile, coords, continue_straight=False):
+        """A routed path through `coords` [(lat, lon)]. Returns (points, road_km) or None."""
+        path = ";".join(f"{lo:.5f},{la:.5f}" for la, lo in coords)
+        qs = urllib.parse.urlencode({
+            "geometries": "geojson", "overview": "full", "steps": "true",
+            "continue_straight": "true" if continue_straight else "false",
+            # A ferry leg is a real routing answer and a genuinely over-water polyline. Never.
+            "exclude": "ferry",
+            "access_token": self.token,
+        })
+        data = self._get(f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{path}?{qs}")
+        if not data or data.get("code") != "Ok" or not data.get("routes"):
+            return None
+        route = data["routes"][0]
+        # Exclusions are best-effort: an island waypoint can still return a ferry with code=Ok.
+        # Inspect the returned transport modes, not just the requested exclusion. Missing steps
+        # are unknown, so fail closed rather than silently accepting unauditable geometry.
+        legs = route.get("legs", [])
+        if not legs or any(not leg.get("steps") for leg in legs):
+            return None
+        if any(step.get("mode") not in ("walking", "cycling")
+               for leg in legs for step in leg["steps"]):
+            return None
+        if any(note.get("type") == "violation"
+               for container in [route] + legs for note in container.get("notifications", [])):
+            return None
+        pts = [(la, lo) for lo, la in route["geometry"]["coordinates"]]
+        return (pts, route["distance"] / 1000) if len(pts) >= 2 else None
+
+    def is_water(self, lat, lon):
+        """Does this coordinate land inside Mapbox's own `water` polygons? That is the same data the
+        app's basemap paints blue, so a hit means the drawn line is literally over water on OUR map."""
+        url = ("https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/tilequery/"
+               f"{lon:.5f},{lat:.5f}.json?radius=0&limit=5&layers=water&dedupe"
+               f"&access_token={self.token}")
+        data = self._get(url, timeout=25, lane="tilequery")
+        if not data or "__error__" in data or not isinstance(data.get("features"), list):
+            return None                      # unknown: the caller rejects the candidate
+        return len(data.get("features", [])) > 0
+
+    # Green space, by category rather than by name. Searching the word "park" in the geocoder
+    # returns Park Avenue and Parkway Drive; the category endpoint returns actual parks. These four
+    # are the ones that answer worldwide (`hiking_trail` and `national_park` return nothing).
+    GREEN = ("nature_reserve", "trailhead", "forest", "park")
+
+    def parks(self, lat, lon, limit=6):
+        """Named green space near a coordinate - what a trail loop is drawn around. Ordered wild
+        first, so a metro's trail runs prefer a nature reserve over a downtown square."""
+        out = []
+        for category in self.GREEN:
+            qs = urllib.parse.urlencode({
+                "proximity": f"{lon:.4f},{lat:.4f}", "limit": limit,
+                "language": "en", "access_token": self.token,
+            })
+            data = self._get(f"https://api.mapbox.com/search/searchbox/v1/category/{category}?{qs}",
+                             lane="search")
+            for f in (data or {}).get("features", []):
+                coords = (f.get("geometry") or {}).get("coordinates")
+                if not coords or len(coords) != 2:
+                    continue
+                out.append({"n": (f.get("properties") or {}).get("name") or category,
+                            "lat": coords[1], "lon": coords[0]})
+        # Within reach of the anchor, and not on top of a park already collected. The category
+        # search answers by proximity but keeps going when a metro has few results, and without the
+        # ceiling it returned a "Dublin" trailhead 151 km away and a "Kansas City" one at 122 km.
+        keep = []
+        for p in out:
+            if haversine((lat, lon), (p["lat"], p["lon"])) > MAX_PARK_KM * 1000:
+                continue
+            if all(haversine((p["lat"], p["lon"]), (q["lat"], q["lon"])) > 400 for q in keep):
+                keep.append(p)
+        return keep
+
+
+# MARK: - Anchors
+
+def metro_centres():
+    """Each metro's own coordinate, parsed out of the generator's city list - the same trick
+    `fetch_community_places.py` uses, so the two scripts cannot drift from the app."""
+    src = open(GEN, encoding="utf-8").read()
+    start = src.index("private static let usCities")
+    end = src.index("private static let disciplines", start)
+    found = re.findall(r'\("([^"]+)",\s*(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\)', src[start:end])
+    return {n: (float(la), float(lo)) for n, la, lo in found}
+
+
+def core_name(metro):
+    """"Austin, TX" -> "Austin". The same rule `CommunityPlaces.coreName` uses in the app, because
+    the core is where a third of a metro's athletes live (`CommunityPlaces.weights` floors it at
+    35%) and the anchors have to agree with that or the biggest share of loops lands in the wrong
+    town."""
+    return metro.split(",")[0].strip()
+
+
+def anchors_for(places, count, metro, centre=None):
+    """Where a metro's loops start.
+
+    The core city first (a third of the metro's athletes live there), then farthest-point sampling
+    over the towns inside the inhabited ring: each new anchor is the town furthest from every anchor
+    chosen so far, so a handful of them still covers the whole metro instead of clustering in the
+    two biggest suburbs. Deterministic - no RNG - so a rerun redraws the same places.
+
+    The core is found BY NAME, not by taking the highest-weight entry: `w` counts grid samples, so
+    it measures area rather than people, and the fattest entry is often an exurb. Seeding from it
+    put Sydney's biggest share of loops in Blue Mountains National Park 78 km out, Tokyo's in
+    Ichihara 43 km out, and Boston's in Winthrop.
+
+    Ten metros carry no place named after themselves at all - the geocoder answers Berlin with
+    "Mitte" and Tokyo with "Shibuya-ku", which is how their residents really speak - so those fall
+    back to the town nearest the metro's own coordinate rather than to the fattest entry.
+    """
+    if not places:
+        return []
+    wanted = core_name(metro)
+    core = next((p for p in places if p["n"] == wanted), None)
+    if core is None and centre:
+        core = min(places, key=lambda p: haversine(centre, (p["lat"], p["lon"])))
+    if core is None:
+        core = places[0]
+    origin = (core["lat"], core["lon"])
+    pool = [p for p in places
+            if p is not core and haversine(origin, (p["lat"], p["lon"])) <= ANCHOR_RADIUS_KM * 1000]
+    chosen = [core]
+    while len(chosen) < count and pool:
+        best, best_gap = None, -1.0
+        for p in pool:
+            gap = min(haversine((p["lat"], p["lon"]), (c["lat"], c["lon"])) for c in chosen)
+            if gap > best_gap:
+                best, best_gap = p, gap
+        if best is None or best_gap < MIN_ANCHOR_GAP_KM * 1000:
+            break
+        chosen.append(best)
+        pool.remove(best)
+    return chosen
+
+
+# MARK: - One loop
+
+def _waypoints(lat, lon, radius_m, bearing, shape):
+    """The waypoint ring a loop is routed through. Three shapes, because real routes have shapes:
+    a triangle circuit, a rounder four-point circuit, and an out-and-back, which is what most
+    people actually run from their own front door."""
+    if shape == "out":
+        far = offset(lat, lon, bearing, radius_m * 1.6)
+        return [(lat, lon), far, (lat, lon)], True
+    angles = (0, 120, 240) if shape == "tri" else (0, 90, 180, 270)
+    ring = [offset(lat, lon, bearing + a, radius_m) for a in angles]
+    return [(lat, lon)] + ring + [(lat, lon)], False
+
+
+def fetch_loop(mb, profile, lat, lon, target_km, bearing, shape, report):
+    """One loop near (lat, lon) of about `target_km`, as the shape that will ship.
+
+    Iterates the ring radius toward the target: a straight-line radius cannot predict how far the
+    road network actually goes, and the old fetch's single guess is why a 30 km ride target shipped
+    as a 69 km loop. Then simplifies, and refuses the loop if any long chord crosses water.
+    """
+    radius = target_km * 1000 / 6.0
+    best = None
+    for _ in range(4):
+        coords, straight = _waypoints(lat, lon, radius, bearing, shape)
+        res = mb.directions(profile, coords, continue_straight=straight)
+        if not res:
+            return None
+        pts = simplify(quantize(res[0]), SIMPLIFY_M)
+        if len(pts) < MIN_POINTS:
+            return None
+        km = length_km(pts)
+        if best is None or abs(km - target_km) < abs(best[1] - target_km):
+            best = (pts, km)
+        if abs(km - target_km) / target_km <= 0.12:
+            break
+        radius *= max(0.3, min(2.5, target_km / max(km, 0.2)))
+    pts, km = best
+    if haversine((lat, lon), pts[0]) > MAX_START_SNAP_M:
+        report["failed"] += 1
+        return None
+    if abs(km - target_km) / target_km > LENGTH_TOLERANCE:
+        report["off_target"] += 1
+        return None
+    wet = water_crossing(mb, pts, report)
+    if wet is not False:
+        report["wet"] += int(wet is True)
+        return None
+    return {"km": round(km, 2), "c": [round(lat, 5), round(lon, 5)], "b": encode(pts)}
+
+
+def water_crossing(mb, pts, report):
+    """True when a long chord of this polyline is drawn over water.
+
+    A cheap early rejection of gross crossings, not an exhaustive water check. Short segments
+    can also cross water. The separate audit reports its sampled coverage and reviews mapped
+    road evidence; an unknown query here rejects the candidate rather than admitting it silently.
+    """
+    for a, b in zip(pts, pts[1:]):
+        span = haversine(a, b)
+        if span < CHORD_WATER_CHECK_M:
+            continue
+        steps = max(1, int(span // WATER_SAMPLE_M))
+        for s in range(1, steps + 1):
+            t = s / (steps + 1)
+            verdict = mb.is_water(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+            report["water_calls"] += 1
+            if verdict is None:
+                report["water_unknown"] += 1
+                return None
+            elif verdict:
+                return True
+    return False
+
+
+# MARK: - One metro
+
+def build_metro(mb, metro, places, anchor_count, report, centre=None):
+    entry = {"run": [], "ride": [], "trail": []}
+    picks = anchors_for(places, anchor_count, metro, centre)
+    for i, anchor in enumerate(picks):
+        la, lo = anchor["lat"], anchor["lon"]
+        near = []
+        # The core city holds roughly a third of a metro's athletes (`CommunityPlaces.weights`),
+        # so it carries a bigger share of the loops - otherwise fifteen people in one downtown
+        # would trade four routes between them while a commuter town of one had four to itself.
+        variants = RUNS_PER_ANCHOR + (3 if i == 0 else 0)
+        for v in range(variants):
+            target = RUN_MENU[(i * RUNS_PER_ANCHOR + v) % len(RUN_MENU)]
+            bearing = (i * 137 + v * 53) % 360
+            shape = ("tri", "quad", "out")[(i + v) % 3]
+            loop = fetch_loop(mb, "walking", la, lo, target, bearing, shape, report)
+            if not loop:
+                report["failed"] += 1
+                continue
+            # Two loops of the same length from one doorstep read as the same run posted twice.
+            if any(abs(loop["km"] - k) < NEAR_DUPLICATE_KM for k in near):
+                report["duplicate"] += 1
+                continue
+            near.append(loop["km"])
+            entry["run"].append(loop)
+        if i % 2 == 0:                      # rides start from every other anchor and cover ground
+            target = RIDE_MENU[(i // 2) % len(RIDE_MENU)]
+            loop = fetch_loop(mb, "cycling", la, lo, target, (i * 97 + 40) % 360, "tri", report)
+            if loop:
+                entry["ride"].append(loop)
+            else:
+                report["failed"] += 1
+    # Trails: green space anywhere in the metro, not only downtown.
+    seen = []
+    for i, anchor in enumerate(picks[:5]):
+        for park in mb.parks(anchor["lat"], anchor["lon"], limit=6):
+            if any(haversine((park["lat"], park["lon"]), s) < 2500 for s in seen):
+                continue
+            seen.append((park["lat"], park["lon"]))
+            target = TRAIL_MENU[len(entry["trail"]) % len(TRAIL_MENU)]
+            loop = fetch_loop(mb, "walking", park["lat"], park["lon"], target,
+                              (len(entry["trail"]) * 71) % 360, "out", report)
+            if loop:
+                entry["trail"].append(loop)
+            if len(entry["trail"]) >= 5:
+                break
+        if len(entry["trail"]) >= 5:
+            break
+    return entry
+
+
+# MARK: - Driver
 
 def token():
     t = os.environ.get("MBX_TOKEN")
@@ -102,95 +407,110 @@ def token():
     return m.group(1)
 
 
-def offset(lat, lon, bearing_deg, meters):
-    """Destination point at bearing/distance (spherical approximation)."""
-    b = math.radians(bearing_deg)
-    dlat = meters * math.cos(b) / 111_320.0
-    dlon = meters * math.sin(b) / (111_320.0 * math.cos(math.radians(lat)))
-    return lat + dlat, lon + dlon
+def eligible_anchor(loop, places, kind):
+    """Reproducible post-fetch gate, also applied to metros preserved by --merge."""
+    from community_routes_lib import decode
+    points = decode(loop["b"])
+    if len(points) < 2 or haversine(loop["c"], points[0]) > MAX_START_SNAP_M:
+        return False
+    if kind == "trail":
+        return min(haversine(loop["c"], (p["lat"], p["lon"])) for p in places) <= MAX_PARK_KM * 1000
+    return True
 
 
-def fetch_loop(tok, profile, lat, lon, target_km, bearing0):
-    """A closed loop via 3 waypoints around the center. Directions snaps to real streets/paths."""
-    r = target_km * 1000 / 6.0  # rough radius so the snapped perimeter lands near target
-    coords = [(lat, lon)]
-    coords += [offset(lat, lon, bearing0 + a, r) for a in (0, 120, 240)]
-    coords += [(lat, lon)]
-    path = ";".join(f"{lo:.5f},{la:.5f}" for la, lo in coords)  # Mapbox wants lon,lat
-    qs = urllib.parse.urlencode({
-        "geometries": "geojson", "overview": "full", "steps": "false",
-        "continue_straight": "false", "access_token": tok,
-    })
-    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{path}?{qs}"
-    with urllib.request.urlopen(url, timeout=30) as resp:
-        data = json.load(resp)
-    if data.get("code") != "Ok" or not data.get("routes"):
-        return None
-    route = data["routes"][0]
-    # 4 decimals is ~11 m, invisible at any size a route is drawn, and it deliberately matches the
-    # quantization CommunityView.mediaSignature uses to fingerprint a route shape.
-    pts = [[round(la, 4), round(lo, 4)] for lo, la in route["geometry"]["coordinates"]]
-    # Downsample long geometries; keep endpoints.
-    cap = 90
-    if len(pts) > cap:
-        step = (len(pts) - 1) / (cap - 1)
-        pts = [pts[round(i * step)] for i in range(cap)]
-    # MEASURE THE SHIPPED SHAPE, never `route["distance"]`. The API returns the road-network
-    # length, but downsampling cuts chords across every curve, so the polyline we actually ship is
-    # SHORTER — by a median of 1.05 km and up to 18 km on a winding loop. Storing the road distance
-    # meant a tile printed a number longer than the shape drawn beneath it, which is the exact
-    # class of "the number contradicts the picture" defect this community was cleaned up to remove
-    # (2026-08-29). `CommunityContentAuditTests.mapsAndStatsAgree` pins the two within 0.3 mi, and
-    # this must use the same flat-earth sum as `CommunityRoutes.lengthKm` so they agree bit for bit.
-    return {"km": round(drawn_km(pts), 2), "b": encode(pts)}
-
-
-def encode(pts):
-    """Polyline -> base64 of little-endian int32 pairs at 1e-4 degrees (lossless at 4 decimals).
-
-    Must stay the exact inverse of `CommunityRoutes.decode`. Anything that changes the packing here
-    changes every drawn route in the app, so change both sides together or not at all.
-    """
-    raw = bytearray()
-    for la, lo in pts:
-        raw += struct.pack("<ii", int(round(la * 10000)), int(round(lo * 10000)))
-    return base64.b64encode(bytes(raw)).decode()
-
-
-def drawn_km(pts):
-    """Length of the polyline AS SHIPPED (same formula as CommunityRoutes.lengthKm)."""
-    m = 0.0
-    for (la1, lo1), (la2, lo2) in zip(pts, pts[1:]):
-        mlat = (la2 - la1) * 111132.0
-        mlon = (lo2 - lo1) * 111320.0 * math.cos(la1 * math.pi / 180)
-        m += math.sqrt(mlat * mlat + mlon * mlon)
-    return m / 1000
+def save(out, path, places):
+    """Atomic install; geographic gates and reviewed exclusions survive every regeneration."""
+    exclusion_path = os.path.join(ROOT, "scripts", "data", "community_route_exclusions.json")
+    excluded = set()
+    if os.path.exists(exclusion_path):
+        excluded = {item["route_id"] for item in json.load(open(exclusion_path))["excluded"]}
+    ordered = {city: {kind: [loop for loop in loops
+                            if eligible_anchor(loop, places[city], kind)
+                            and hashlib.sha256(loop["b"].encode()).hexdigest() not in excluded]
+                      for kind, loops in out[city].items()} for city in places if city in out}
+    if any(not kinds.get("run") for kinds in ordered.values()):
+        raise ValueError("Geographic gates/exclusions would empty a metro's running pool")
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(ordered, f, separators=(",", ":"))
+    os.replace(tmp, path)
+    return ordered
 
 
 def main():
-    tok = token()
-    out, failures = {}, []
-    for i, (name, lat, lon) in enumerate(CITIES):
-        entry = {"run": [], "ride": []}
-        for kind, profile, target, bearing in VARIANTS:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cities", default="", help="metro keys separated by | (default: all)")
+    ap.add_argument("--anchors", type=int, default=10)
+    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--rate", type=float, default=1.0,
+                    help="multiplier on the per-endpoint rate limits (1.0 = Mapbox's published caps)")
+    ap.add_argument("--out", default=OUT)
+    ap.add_argument("--merge", action="store_true", help="keep unselected metros; selected metros are re-fetched")
+    args = ap.parse_args()
+
+    places = json.load(open(PLACES))
+    metros = [c.strip() for c in args.cities.split("|") if c.strip()] or list(places.keys())
+    missing = [m for m in metros if m not in places]
+    if missing:
+        sys.exit(f"unknown metros: {missing}")
+
+    centres = metro_centres()
+    mb = Mapbox(token(), scale=args.rate)
+    report = {"failed": 0, "wet": 0, "off_target": 0, "duplicate": 0,
+              "water_calls": 0, "water_unknown": 0}
+    out, lock = ({}, threading.Lock())
+    if args.merge and os.path.exists(args.out):
+        out = json.load(open(args.out))
+    started = time.time()
+    done = [0]
+    failures = []
+
+    def work(metro):
+        local_report = {key: 0 for key in report}
+        entry = build_metro(mb, metro, places[metro], args.anchors, local_report, centres.get(metro))
+        if not entry["run"]:
+            raise RuntimeError("No run routes returned; keeping the previous metro")
+        with lock:
+            for key, count in local_report.items():
+                report[key] += count
+            out[metro] = entry
+            done[0] += 1
+            print(f"[{done[0]}/{len(metros)}] {metro}: {len(entry['run'])} run, "
+                  f"{len(entry['ride'])} ride, {len(entry['trail'])} trail "
+                  f"({time.time() - started:.0f}s, {mb.calls} calls)", flush=True)
+            # Written after every metro: this run takes the better part of an hour and losing all
+            # of it to one network hiccup at minute fifty is not a trade worth making. Re-running
+            # with --merge preserves unselected metros and replaces the explicitly selected ones.
+            save(out, args.out, places)
+
+    queue = list(metros)
+    def loop_worker():
+        while True:
+            with lock:
+                if not queue:
+                    return
+                metro = queue.pop(0)
             try:
-                loop = fetch_loop(tok, profile, lat, lon, target, bearing)
-            except Exception as e:  # noqa: BLE001 — a single city variant failing is fine
-                loop = None
-                print(f"  ! {name} {kind} {target}km: {e}", file=sys.stderr)
-            if loop and len(loop["b"]) > 110 and loop["km"] > 0.8:   # >10 points once decoded
-                entry[kind].append(loop)
-            else:
-                failures.append(f"{name} {kind} {target}km")
-            time.sleep(0.12)  # stay well under rate limits
-        out[name] = entry
-        print(f"[{i + 1}/{len(CITIES)}] {name}: {len(entry['run'])} run, {len(entry['ride'])} ride")
-    with open(OUT, "w") as f:
-        json.dump(out, f, separators=(",", ":"))
-    size = os.path.getsize(OUT) / 1024
-    print(f"\nwrote {OUT} ({size:.0f} KB); {len(failures)} variant failures")
-    if failures:
-        print("failed variants:", ", ".join(failures[:10]), "…" if len(failures) > 10 else "")
+                work(metro)
+            except Exception as e:  # noqa: BLE001 - one metro failing must not lose the rest
+                with lock:
+                    failures.append(metro)
+                print(f"  ! {metro}: fetch failed ({type(e).__name__}); prior data retained", file=sys.stderr, flush=True)
+
+    threads = [threading.Thread(target=loop_worker, daemon=True) for _ in range(args.workers)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+
+    ordered = save(out, args.out, places)
+    loops = sum(len(v) for e in ordered.values() for v in e.values())
+    size = os.path.getsize(args.out) / 1024
+    print(f"\nwrote {args.out}: {len(ordered)} metros, {loops} loops, {size:.0f} KB")
+    print(f"mapbox calls {mb.calls} in {time.time() - started:.0f}s; "
+          f"rejected: {report['failed']} (wet {report['wet']}, off-target {report['off_target']}, "
+          f"duplicate {report['duplicate']}); "
+          f"water samples {report['water_calls']} ({report['water_unknown']} unknown)")
+    if failures or report["water_unknown"]:
+        sys.exit("Incomplete fetch; review failed metros and unknown water queries before shipping")
 
 
 if __name__ == "__main__":

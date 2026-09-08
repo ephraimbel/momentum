@@ -87,7 +87,7 @@ enum CommunityLedgerMemo {
                 handle: athlete.handle, primary: athlete.primaryType,
                 city: athlete.routeCity,
                 count: athlete.totalWorkouts, clock: CommunityDirectory.seedClock,
-                lead: athlete.ledgerLead, detail: false)
+                home: athlete.homeCoordinate, lead: athlete.ledgerLead, detail: false)
             lock.lock()
             defer { lock.unlock() }
             if cache[athlete.handle] == nil {
@@ -128,6 +128,11 @@ enum CommunityLedger {
     /// `CommunityRoutes` key ("Austin, TX", never "Austin").
     static let fallbackCity = "Austin, TX"
 
+    /// Where an athlete actually lives, so their sessions draw loops from their own neighbourhood
+    /// rather than their metro's downtown (2026-09-07). Optional throughout: a caller that does not
+    /// know a home gets the metro's whole pool, exactly as before.
+    typealias Home = (lat: Double, lon: Double)
+
     /// The calendar facts a walk needs, resolved once. `Calendar` lookups are the single most
     /// expensive thing in the fold (the directory folds ~2,900 careers at launch), and every one
     /// of them can be derived by integer arithmetic from these four.
@@ -166,7 +171,7 @@ enum CommunityLedger {
     /// value the walk already emitted — the rng is consumed in emission order — so a prefix is
     /// bit-identical to the same prefix of the full walk.
     static func walk(handle: String, primary: WorkoutType, city: String, count: Int,
-                     clock: Clock, lead: CommunitySession? = nil,
+                     clock: Clock, home: Home? = nil, lead: CommunitySession? = nil,
                      _ body: (CommunitySession) -> Bool) {
         guard count > 0 else { return }
         var rng = SeededRNG(seed("ledger:\(handle)"))
@@ -203,8 +208,13 @@ enum CommunityLedger {
         let peak = peakHour(chronotype: chronotype, handle: handle)
         let peakAlt = peakHour(chronotype: 9 - chronotype, handle: handle)
 
-        let runKms = CommunityRoutes.loopKms(city: city, discipline: .run)
-        let rideKms = CommunityRoutes.loopKms(city: city, discipline: .ride)
+        // Their OWN corner of the metro: loops anchored near where they say they live. Resolved
+        // once per athlete, and `CommunityGenerator.post` resolves the identical pool from the same
+        // (city, home) pair, so the index a session stores still names the geometry a tile draws.
+        let pools = CommunityRoutes.pools(city: city, near: home)
+        let runKms = pools.kms(for: .run)
+        let rideKms = pools.kms(for: .ride)
+        let trailKms = pools.kms(for: .trailRun)
         // The city's longest FEW loops, not just the single longest. Taking one fixed loop meant
         // every long run in a city drew the identical trace, and the long-day away-chance was
         // pushed to 60 to hide that. The bundled pool is 11 run loops per city now (was 3, with
@@ -255,7 +265,7 @@ enum CommunityLedger {
             let forced = walked > forceAfter
             if forced || rng.double(0, 1) < p {
                 if let s = session(day: day, isLong: isLongDay, clock: clock, primary: primary,
-                                   cross: cross, runKms: runKms, rideKms: rideKms,
+                                   cross: cross, runKms: runKms, rideKms: rideKms, trailKms: trailKms,
                                    longRunPool: longRunPool, lastPool: &lastPool,
                                    volumeFactor: volumeFactor, tilt: tilt, longScale: longScale,
                                    chronotype: chronotype, peakHour: peak,
@@ -267,7 +277,7 @@ enum CommunityLedger {
                     // high-volume athletes actually log.
                     if doubles, emitted < count, rng.int(0...9) == 0,
                        let extra = session(day: day, isLong: false, clock: clock, primary: primary,
-                                           cross: cross, runKms: runKms, rideKms: rideKms,
+                                           cross: cross, runKms: runKms, rideKms: rideKms, trailKms: trailKms,
                                            longRunPool: longRunPool, lastPool: &lastPool,
                                            volumeFactor: volumeFactor * 0.7, tilt: tilt,
                                            longScale: longScale, chronotype: 9 - chronotype,
@@ -289,7 +299,7 @@ enum CommunityLedger {
     /// community should look like at 6am.
     private static func session(day: Int, isLong: Bool, clock: Clock, primary: WorkoutType,
                                 cross: [WorkoutType], runKms: [Double], rideKms: [Double],
-                                longRunPool: [Int], lastPool: inout Int,
+                                trailKms: [Double], longRunPool: [Int], lastPool: inout Int,
                                 volumeFactor: Double, tilt: Double, longScale: Double,
                                 chronotype: Int, peakHour peak: Double,
                                 runPace: Double, trailPace: Double, ridePace: Double,
@@ -345,9 +355,18 @@ enum CommunityLedger {
         // solves that directly, so this can come down to something honest.
         let awayChance = isLong ? 14 : everydayAwayChance
         let away = type.isGPS && !structured && rng.int(0...99) < awayChance
-        // Trail runs never map (no bundled trail geometry exists) and structured nights never map.
-        let pool = type == .ride ? rideKms : runKms
-        let mappable = type.isGPS && type != .trailRun && !structured && !away && !pool.isEmpty
+        // Structured nights never map (a track session is laps, not a loop). Trail runs used to be
+        // in that sentence too, for the honest reason that no trail geometry was bundled — so the
+        // one sport a running community posts from actual nature drew nothing at all. The
+        // 2026-09-07 regeneration anchors real loops on parks and nature reserves, so a trail run
+        // maps when its metro has them and stays mapless when it does not.
+        let pool: [Double]
+        switch CommunityRoutes.kind(of: type) {
+        case .ride: pool = rideKms
+        case .trail: pool = trailKms
+        case .run: pool = runKms
+        }
+        let mappable = type.isGPS && !structured && !away && !pool.isEmpty
 
         var distanceM = 0.0
         var routePool: Int?
@@ -418,7 +437,7 @@ enum CommunityLedger {
     /// pass that fills an athlete's stored totals needs neither, and skipping them keeps generating
     /// ~2,900 careers off the cold-start budget.
     static func lifetime(handle: String, primary: WorkoutType, city: String, count: Int,
-                         clock: Clock, lead: CommunitySession? = nil,
+                         clock: Clock, home: Home? = nil, lead: CommunitySession? = nil,
                          detail: Bool = true) -> CommunityLifetime {
         var out = CommunityLifetime()
         var days = Set<Int>()
@@ -431,7 +450,7 @@ enum CommunityLedger {
         // A pinned lead IS the wall card — the featured eight's curated post is their newest
         // session by construction and never has to qualify.
         let pinned = lead != nil
-        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, lead: lead) { s in
+        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, home: home, lead: lead) { s in
             if out.leadSession == nil,
                (pinned && out.sessions == 0)
                    || isLead(s, primary: primary, handle: handle, index: out.sessions) {
@@ -473,12 +492,12 @@ enum CommunityLedger {
     /// still went all the way to the end, so opening a veteran's profile paid their whole career
     /// to show thirty tiles.
     static func sessions(handle: String, primary: WorkoutType, city: String, count: Int,
-                         clock: Clock, lead: CommunitySession? = nil,
+                         clock: Clock, home: Home? = nil, lead: CommunitySession? = nil,
                          limit: Int = .max) -> [CommunitySession] {
         guard limit > 0 else { return [] }
         var out: [CommunitySession] = []
         out.reserveCapacity(Swift.min(limit, count))
-        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, lead: lead) { s in
+        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, home: home, lead: lead) { s in
             out.append(s)
             return out.count < limit
         }
@@ -496,14 +515,14 @@ enum CommunityLedger {
     /// `lifetime(...).leadSession` / `.leadIndex` would, including the fallback: a career with no
     /// qualifying session leads with its newest entry.
     static func lead(handle: String, primary: WorkoutType, city: String, count: Int,
-                     clock: Clock, lead pinned: CommunitySession? = nil)
+                     clock: Clock, home: Home? = nil, lead pinned: CommunitySession? = nil)
     -> (session: CommunitySession, index: Int)? {
         var newest: CommunitySession?
         var hit: (session: CommunitySession, index: Int)?
         var index = 0
         // Same rule as the fold: a pinned lead IS the card, and never has to qualify.
         let isPinned = pinned != nil
-        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, lead: pinned) { s in
+        walk(handle: handle, primary: primary, city: city, count: count, clock: clock, home: home, lead: pinned) { s in
             if newest == nil { newest = s }
             if (isPinned && index == 0)
                 || isLead(s, primary: primary, handle: handle, index: index) {

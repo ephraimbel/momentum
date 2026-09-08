@@ -29,6 +29,7 @@ struct TimedTrackingView: View {
             vm = model
             if !reduceMotion { withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { pulse = true } }
         }
+        .trackScreen(.workoutRecorder)
     }
 
     private func content(_ vm: TimedTrackingViewModel) -> some View {

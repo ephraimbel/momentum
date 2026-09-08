@@ -411,12 +411,13 @@ private struct CommunityPostPage: View {
     @Environment(ModerationStore.self) private var moderation
     @Environment(PaywallController.self) private var paywall
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @State private var showHint = false
     @State private var confirmingReport = false
     /// Whether THIS post's route is bookmarked — read once on appear, flipped locally on toggle
     /// (a per-page @Query over all saved routes would re-fire on every save anywhere).
     @State private var routeSaved = false
+    @State private var routeSaveFailed = false
     /// The double-tap heart, mid-flight.
     @State private var burst = false
     /// Shared route pages use the same explorable Mapbox canvas as the owner's profile. The page
@@ -895,6 +896,9 @@ private struct CommunityPostPage: View {
             q.fetchLimit = 1
             routeSaved = ((try? modelContext.fetch(q)) ?? []).isEmpty == false
         }
+        .alert("Couldn't update your saved posts", isPresented: $routeSaveFailed) {
+            Button("OK", role: .cancel) { }
+        } message: { Text("Please try again. Your previous saved state is unchanged.") }
         .accessibilityLabel(routeSaved ? "Saved. Tap to remove."
                             : (item.hasRenderableRoute ? "Save this route" : "Save this post"))
     }
@@ -902,24 +906,27 @@ private struct CommunityPostPage: View {
     private func toggleSaved() {
         let id = item.id
         let q = FetchDescriptor<SavedRoute>(predicate: #Predicate { $0.postID == id })
-        let existing = (try? modelContext.fetch(q)) ?? []
-        if existing.isEmpty {
-            // Routeless posts save too (the rail is identical everywhere) — they keep the post,
-            // carried by sport rather than a polyline.
-            let pts = item.sanitizedRouteLatLon ?? []
-            let km = pts.isEmpty ? 0 : item.distanceKm
-            modelContext.insert(SavedRoute(postID: id, title: item.title,
-                                           authorName: item.authorName, authorHandle: item.authorHandle,
-                                           city: item.location, km: km, pts: pts, mapStyle: item.mapStyle,
-                                           sport: item.type))
-            routeSaved = true
-            Haptics.success()
-        } else {
-            existing.forEach { modelContext.delete($0) }
-            routeSaved = false
-            Haptics.light()
+        do {
+            let existing = try modelContext.fetch(q)
+            if existing.isEmpty {
+                // Routeless posts save too (the rail is identical everywhere) — they keep the post,
+                // carried by sport rather than a polyline.
+                let pts = item.sanitizedRouteLatLon ?? []
+                let km = pts.isEmpty ? 0 : item.distanceKm
+                modelContext.insert(SavedRoute(postID: id, title: item.title,
+                                               authorName: item.authorName, authorHandle: item.authorHandle,
+                                               city: item.location, km: km, pts: pts, mapStyle: item.mapStyle,
+                                               sport: item.type))
+            } else {
+                existing.forEach { modelContext.delete($0) }
+            }
+            try modelContext.save()
+            routeSaved = existing.isEmpty
+            if routeSaved { Haptics.success() } else { Haptics.light() }
+        } catch {
+            modelContext.rollback()
+            routeSaveFailed = true
         }
-        try? modelContext.save()
     }
 
     /// Visible comment count. Badged community posts: seeded + the viewer's own, minus
@@ -1012,17 +1019,24 @@ private struct CommunityPageMedia: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var snapshot: UIImage?
+    @State private var snapshotIdentity: String?
 
     var body: some View {
         GeometryReader { geo in
             // Already rendered? Draw it on frame one. The pager's `LazyVStack` throws a page's
             // `@State` away as it leaves, so swiping back up used to show the grey silhouette
             // again and crossfade a map that had been in hand the whole time (2026-08-29).
+            let size = geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size
+            let identity = "\(item.id)-\(item.renderSignature)-\(colorScheme)-\(size)-\(interactive)"
             let cached = FeedRouteSnapshots.cachedImage(
                 post: item.id, style: item.mapStyle, scheme: colorScheme,
-                size: geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size,
+                size: size,
                 endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
-            let map = snapshot ?? cached
+            let fullMap = (snapshotIdentity == identity ? snapshot : nil) ?? cached
+            // The same map the athlete just tapped stays visible until the detailed view is ready.
+            let tile = FeedRouteSnapshots.cachedImage(post: item.id, style: item.mapStyle,
+                scheme: colorScheme, size: FeedTileMedia.tileSize, routeWidth: FeedTileMedia.tileRouteWidth)
+            let map = fullMap ?? tile
             Group {
                 if let muscles = item.muscles, muscles.values.contains(where: { $0 > 0 }) {
                     ZStack {
@@ -1065,19 +1079,23 @@ private struct CommunityPageMedia: View {
                     }
                 }
             }
-            .animation(.easeOut(duration: 0.25), value: map != nil)
-            .task(id: "\(item.id)-\(colorScheme == .dark)") {
-                guard !interactive, let coords, coords.count > 1, map == nil else { return }
+            .animation(.easeOut(duration: 0.2), value: fullMap != nil)
+            .task(id: identity) {
+                snapshot = nil
+                snapshotIdentity = identity
+                guard !interactive, let coords, coords.count > 1, cached == nil else { return }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
                 #endif
                 // The page being looked at retries for as long as it's on screen — the reading
                 // view's rule; a transient tile hiccup must not strand a full-bleed silhouette.
                 while !Task.isCancelled, snapshot == nil {
-                    snapshot = await FeedRouteSnapshots.image(
+                    let rendered = await FeedRouteSnapshots.image(
                         post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
-                        size: geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size,
+                        size: size,
                         urgent: true, endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
+                    guard !Task.isCancelled else { return }
+                    snapshot = rendered
                     if snapshot == nil { try? await Task.sleep(for: .seconds(2)) }
                 }
             }

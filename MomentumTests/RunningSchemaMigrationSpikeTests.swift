@@ -50,6 +50,10 @@ struct RunningSchemaMigrationSpikeTests {
             PlanDecisionRecord.self,
             PlanAthleteStateRecord.self,
             PlanShelfRecord.self,
+            PlanCoachingStateRecord.self,
+            PlanPreferencesRecord.self,
+            PlanContinuityRecord.self,
+            PlanFitnessDeclarationRecord.self,
         ]
         let actualIDs = PersistenceController.models.map { ObjectIdentifier($0) }
         let expectedIDs = expected.map { ObjectIdentifier($0) }
@@ -78,7 +82,7 @@ struct RunningSchemaMigrationSpikeTests {
 
         let storeURL = directory.appendingPathComponent("V1.store")
         try FileManager.default.copyItem(at: fixtureURL, to: storeURL)
-        let schema = Schema(versionedSchema: SchemaV5.self)
+        let schema = Schema(versionedSchema: SchemaV9.self)
         let configuration = ModelConfiguration(
             "ArchivedRunningSchemaV1",
             schema: schema,
@@ -153,6 +157,79 @@ struct RunningSchemaMigrationSpikeTests {
         try assertArchivedBuild36Graph(in: finalContainer, expectsBackfill: true)
     }
 
+    @Test func v5PlanMigratesToLatestAndCoachingEvidenceSurvivesReopening() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("V5.store")
+        let planID = UUID(), workoutID = UUID(), sessionID = UUID()
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        do {
+            let schema = Schema(versionedSchema: SchemaV5.self)
+            let store = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: url)])
+            let plan = TrainingPlan(); plan.id = planID; plan.name = "Existing athlete"
+            plan.pausedUntil = date; plan.pendingP5kAt = date; plan.pendingP5kSPerKm = 300
+            store.mainContext.insert(plan)
+            try store.mainContext.save()
+        }
+        do {
+            let schema = Schema(versionedSchema: SchemaV9.self)
+            let store = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                           configurations: [ModelConfiguration(schema: schema, url: url)])
+            let plan = try #require(try store.mainContext.fetch(FetchDescriptor<TrainingPlan>()).first)
+            #expect(plan.id == planID && plan.name == "Existing athlete")
+            #expect(plan.pausedUntil == date && plan.pendingP5kSPerKm == 300)
+            #expect(plan.coachingState == nil)
+            let record = PlanCoachingStateRecord.upsert(planID: planID, in: store.mainContext)
+            record.pendingP5kWorkoutID = workoutID
+            record.paceEvidenceDates = [workoutID.uuidString: date]
+            record.pauseShiftedDates = [sessionID.uuidString: date]
+            try store.mainContext.save()
+        }
+        let schema = Schema(versionedSchema: SchemaV9.self)
+        let reopened = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                          configurations: [ModelConfiguration(schema: schema, url: url)])
+        let record = try #require(PlanCoachingStateRecord.fetch(planID: planID, in: reopened.mainContext))
+        #expect(record.pendingP5kWorkoutID == workoutID)
+        #expect(record.paceEvidenceDates == [workoutID.uuidString: date])
+        #expect(record.pauseShiftedDates == [sessionID.uuidString: date])
+    }
+
+    @Test func v6StoreAddsOptionalPreferencesWithoutRewritingPlanOrProfile() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("v6.store"), profileID = UUID(), planID = UUID()
+        do {
+            let schema = Schema(versionedSchema: SchemaV6.self)
+            let c = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: url)])
+            let p = UserProfile(), plan = TrainingPlan()
+            p.id = profileID; plan.id = planID; plan.name = "Keep my race"
+            c.mainContext.insert(p); c.mainContext.insert(plan); p.plan = plan
+            try c.mainContext.save()
+        }
+        do {
+            let schema = Schema(versionedSchema: SchemaV7.self)
+            let c = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                      configurations: [ModelConfiguration(schema: schema, url: url)])
+            let p = try #require(try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first)
+            #expect(p.id == profileID && p.plan?.id == planID)
+            #expect(p.planPreferences == nil)
+            let record = PlanPreferencesRecord.upsert(profileID: p.id, in: c.mainContext)
+            record.regularRunLimitS = 1800; record.longRunLimitS = 5400
+            record.benchmarkTimeS = 1500; record.benchmarkDistanceM = 5000
+            record.benchmarkPerformedAt = Date(timeIntervalSince1970: 1_700_000_000)
+            try c.mainContext.save()
+        }
+        let schema = Schema(versionedSchema: SchemaV7.self)
+        let c = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                                  configurations: [ModelConfiguration(schema: schema, url: url)])
+        let p = try #require(try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first)
+        #expect(p.plan?.name == "Keep my race")
+        #expect(p.planPreferences?.regularRunLimitS == 1800 && p.planPreferences?.longRunLimitS == 5400)
+        #expect(p.planPreferences?.benchmarkPerformedAt == Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
     @Test func additiveSidecarsMigrateARealV1StoreWithoutDamagingTrainingHistory() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("momentum-running-migration-\(UUID().uuidString)",
@@ -163,7 +240,7 @@ struct RunningSchemaMigrationSpikeTests {
         let storeURL = directory.appendingPathComponent("V1.store")
         let ids = try writeV1Fixture(to: storeURL)
 
-        let schema = Schema(versionedSchema: SchemaV5.self)
+        let schema = Schema(versionedSchema: SchemaV9.self)
         let configuration = ModelConfiguration(
             "RunningMigrationSpike",
             schema: schema,

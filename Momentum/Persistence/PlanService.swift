@@ -17,7 +17,7 @@ enum PlanFitnessEvidence {
     static let establishedFallbackWeeklyM = 8_000.0
 
     private static func usableDistance(_ value: Double?) -> Double? {
-        guard let value, value.isFinite, value > 0 else { return nil }
+        guard let value, value.isFinite, value >= 0 else { return nil }
         return value
     }
 
@@ -53,14 +53,31 @@ enum PlanFitnessEvidence {
                          declaredWeeklyM: Double?,
                          declaredLongestM: Double?,
                          profileCreatedAt: Date,
+                         trainingEvidenceFrom: Date? = nil,
+                         declaredAt: Date? = nil,
                          endingAt end: Date,
                          calendar: Calendar) -> PlanFitnessSnapshot {
         let cutoff = calendar.date(byAdding: .day, value: -historyDays, to: end) ?? .distantPast
-        let recent = runs.filter {
+        var recent = runs.filter {
             $0.startedAt >= cutoff && $0.startedAt <= end
                 && $0.distanceM.isFinite && $0.distanceM > 0
         }
-        let declaredWeeklyM = usableDistance(declaredWeeklyM)
+        if let reset = trainingEvidenceFrom,
+           let expires = calendar.date(byAdding: .day, value: historyDays, to: reset), end < expires {
+            // Every consumer (generation, preview and settings) uses the same post-interruption
+            // window, including its untrained days. Pre-illness declarations cannot revive it.
+            let since = max(reset, calendar.date(byAdding: .day, value: -28, to: end) ?? end)
+            let returning = recent.filter { $0.startedAt >= since }
+            return PlanFitnessSnapshot(weeklyM: returning.reduce(0) { $0 + $1.distanceM } / 4,
+                longestM: returning.map(\.distanceM).max() ?? 0, usesLoggedRuns: !returning.isEmpty)
+        }
+        let declarationDate = declaredAt ?? profileCreatedAt
+        if let declaredAt {
+            // A new answer describes the runner now, including training recorded elsewhere.
+            // Older logs must not silently override an explicit return-to-running declaration.
+            recent = recent.filter { $0.startedAt >= declaredAt }
+        }
+        let declaredWeeklyM = declaredWeeklyM.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         let declaredLongestM = usableDistance(declaredLongestM)
         let observedWeekly = recentWeeklyRunVolumeM(
             recent,
@@ -68,16 +85,22 @@ enum PlanFitnessEvidence {
             weeks: 4,
             calendar: calendar
         )
-        let observedLongest = recent.map(\.distanceM).max()
-        let declarationsAreFresh = profileCreatedAt >= cutoff
+        let historyStart = calendar.date(byAdding: .day, value: -28, to: end) ?? end
+        let observedLongest = recent.filter { $0.startedAt >= historyStart }.map(\.distanceM).max()
+        let declarationsAreFresh = declarationDate >= cutoff
 
         let weekly: Double?
-        if let observedWeekly {
+        if declarationDate > historyStart, !recent.contains(where: { $0.startedAt < declarationDate }),
+           let declaredWeeklyM {
+            // Unobserved weeks before signup are not weeks of zero running.
+            weekly = max(declaredWeeklyM, observedWeekly ?? 0)
+        } else if let observedWeekly {
             weekly = observedWeekly
         } else if declarationsAreFresh {
             weekly = declaredWeeklyM
         } else {
-            let sparseAverage = recent.reduce(0) { $0 + $1.distanceM } / 4
+            let sparseAverage = recent.filter { $0.startedAt >= historyStart }
+                .reduce(0) { $0 + $1.distanceM } / 4
             let conservativeFallback = min(
                 declaredWeeklyM ?? establishedFallbackWeeklyM,
                 establishedFallbackWeeklyM
@@ -110,6 +133,8 @@ actor PlanFitnessWorker {
     func snapshot(declaredWeeklyM: Double?,
                   declaredLongestM: Double?,
                   profileCreatedAt: Date,
+                  trainingEvidenceFrom: Date? = nil,
+                  declaredAt: Date? = nil,
                   endingAt end: Date = Date(),
                   calendar: Calendar = .current) throws -> PlanFitnessSnapshot {
         let runs = try PlanService.runEvidence(endingAt: end, in: modelContext, calendar: calendar)
@@ -118,6 +143,8 @@ actor PlanFitnessWorker {
             declaredWeeklyM: declaredWeeklyM,
             declaredLongestM: declaredLongestM,
             profileCreatedAt: profileCreatedAt,
+            trainingEvidenceFrom: trainingEvidenceFrom,
+            declaredAt: declaredAt,
             endingAt: end,
             calendar: calendar
         )
@@ -170,6 +197,15 @@ enum PlanService {
                                 recoveryWeeks: Int = 0,
                                 tuneUps: [PlanRaceEvent]? = nil,
                                 in context: ModelContext) throws -> TrainingPlan {
+        if let result = calibration.recentRun {
+            guard result.distanceM.isFinite, result.timeS.isFinite,
+                  result.distanceM > 0, result.timeS > 0 else {
+                throw PlanPrescriptionValidation.Failure.invalidPrescription
+            }
+        }
+        if let estimate = calibration.estimatedP5kSPerKm, !estimate.isFinite || estimate <= 0 {
+            throw PlanPrescriptionValidation.Failure.invalidPrescription
+        }
         let catalogItems = catalog(in: context)
         var inputs = planInputs(from: profile, startDate: startDate)
         inputs.opensWithRun = !hasLoggedRun(on: startDate, in: context)
@@ -188,6 +224,11 @@ enum PlanService {
         let seeded = AthleteStateEngine.seed(calibration, with: state)
         let generated = PlanEngine.generate(profile: inputs, catalog: catalogItems,
                                             calibration: seeded, startDate: startDate)
+        let validation = LegacyPlanInvariantValidator.validate(generated, inputs: inputs,
+                                                               calibration: seeded, startDate: startDate)
+        guard validation.isValid else {
+            throw PlanPrescriptionValidation.Failure.trainingRules(validation.hardViolations.map(\.code))
+        }
         let replacedPlanID = profile.plan?.id
         let plan = try stagePersist(
             generated,
@@ -424,7 +465,7 @@ enum PlanService {
         let headline = "Tune-up done"
         CoachingEvent.record(kind: .recover, headline: headline, detail: detail,
                              on: today, in: context, calendar: calendar)
-        try? context.save()
+        try? PlanMutation.save(context)
         return headline
     }
 
@@ -545,7 +586,7 @@ enum PlanService {
         }
         CoachingEvent.record(kind: .recover, headline: headline, detail: detail,
                              on: today, in: context, calendar: calendar)
-        try? context.save()
+        try? PlanMutation.save(context)
         return headline
     }
 
@@ -619,6 +660,8 @@ enum PlanService {
             declaredWeeklyM: profile.weeklyRunVolumeM,
             declaredLongestM: profile.longestRunM,
             profileCreatedAt: profile.createdAt,
+            trainingEvidenceFrom: profile.continuity?.trainingEvidenceFrom,
+            declaredAt: profile.fitnessDeclaredAt,
             endingAt: date,
             calendar: calendar
         )
@@ -759,7 +802,9 @@ enum PlanService {
             injuryHistory: p.injuryHistory.compactMap(InjuryArea.init(rawValue:)),
             age: p.birthYear.map { max(0, calendar.component(.year, from: startDate) - $0) },
             distanceUnit: (DistanceUnit(rawValue: p.distanceUnit) ?? .auto).resolved(),
-            anchorWeekday: anchorWeekday)
+            anchorWeekday: anchorWeekday,
+            regularRunLimitS: p.planPreferences?.regularRunLimitS,
+            longRunLimitS: p.planPreferences?.longRunLimitS)
     }
 
     /// Generate a plan for a blueprint WITHOUT persisting anything (2026-09-07): the same
@@ -778,9 +823,11 @@ enum PlanService {
         let runs = (try? runEvidence(endingAt: startDate, in: context, calendar: calendar)) ?? []
         let snapshot = PlanFitnessEvidence.snapshot(
             runs: runs,
-            declaredWeeklyM: blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM,
-            declaredLongestM: blueprint.longestRunM ?? profile.longestRunM,
+            declaredWeeklyM: blueprint.fitnessDeclaredAt != nil ? blueprint.weeklyRunVolumeM : (blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM),
+            declaredLongestM: blueprint.fitnessDeclaredAt != nil ? blueprint.longestRunM : (blueprint.longestRunM ?? profile.longestRunM),
             profileCreatedAt: profile.createdAt,
+            trainingEvidenceFrom: profile.continuity?.trainingEvidenceFrom,
+            declaredAt: blueprint.fitnessDeclaredAt ?? profile.fitnessDeclaredAt,
             endingAt: startDate,
             calendar: calendar)
         inputs.currentWeeklyVolumeM = snapshot.weeklyM
@@ -818,6 +865,7 @@ enum PlanService {
     static func stagePersist(_ plan: GeneratedPlan, for profile: UserProfile,
                              startDate: Date, blockIndex: Int = 0, in context: ModelContext,
                              calendar: Calendar = .current) throws -> TrainingPlan {
+        try PlanPrescriptionValidation.validate(plan)
         // Replace any existing plan — but the athlete's name for it survives the rebuild.
         let existing = profile.plan
         let carriedName = existing?.name ?? ""
@@ -870,6 +918,15 @@ enum PlanService {
         if let existing {
             trainingPlan.lastAdaptedAt = existing.lastAdaptedAt
             trainingPlan.lastPaceEasedAt = existing.lastPaceEasedAt
+            trainingPlan.lastRecalibratedAt = existing.lastRecalibratedAt
+            trainingPlan.pendingP5kAt = existing.pendingP5kAt
+            trainingPlan.pendingP5kSPerKm = existing.pendingP5kSPerKm
+            if let oldState = existing.coachingState {
+                let state = PlanCoachingStateRecord.upsert(planID: trainingPlan.id, in: context)
+                state.pendingP5kWorkoutID = oldState.pendingP5kWorkoutID
+                state.paceEvidenceDates = oldState.paceEvidenceDates
+                context.delete(oldState)
+            }
             if let until = existing.pausedUntil, calendar.startOfDay(for: until) > calendar.startOfDay(for: startDate) {
                 trainingPlan.pausedUntil = until
             }
@@ -908,6 +965,16 @@ enum PlanService {
         let carriedClones = carriedDone.map(cloneCompletedSession)
         trainingPlan.sessions = sessions + carriedClones.map(\.session)
         context.insert(trainingPlan)
+        if let until = trainingPlan.pausedUntil {
+            let days = calendar.dateComponents([.day], from: anchor, to: calendar.startOfDay(for: until)).day ?? 0
+            let state = PlanCoachingStateRecord.upsert(planID: trainingPlan.id, in: context)
+            // New sessions have new IDs: reapply the remaining pause with the same placement
+            // policy and fresh provenance. Stage only; the outer transaction owns the save.
+            for move in PlanCoaching.pausePlacements(trainingPlan, days: days, from: anchor, calendar: calendar) {
+                state.pauseShiftedDates[move.session.id.uuidString] = move.date
+                move.session.date = move.date
+            }
+        }
         profile.plan = trainingPlan // direct old -> new; the UI never observes a nil plan
         for carried in carriedClones {
             if let workout = carried.workout {
@@ -924,6 +991,7 @@ enum PlanService {
             )
             context.delete(existing)
         }
+        try IllnessResponse.enforce(in: context)
         return trainingPlan
     }
 
@@ -1021,7 +1089,7 @@ enum PlanService {
             let replacement = try mutation()
             _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
             try hooks.beforeSave?()
-            try context.save()
+            try PlanMutation.save(context)
             return replacement
         } catch {
             context.rollback()

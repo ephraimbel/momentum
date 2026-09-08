@@ -37,6 +37,45 @@ struct SocialReactionsTests {
         #expect(ReactionStore(defaults: defaults).hasReacted(id))   // reloaded
     }
 
+    private final class DelayedReactionBackend: StubSocialBackend {
+        var writes: [Bool] = []
+        var reply: CheckedContinuation<Bool, Never>?
+        override var isAvailable: Bool { true }
+        override func setReaction(postID: UUID, reacted: Bool) async -> Bool {
+            writes.append(reacted)
+            return await withCheckedContinuation { reply = $0 }
+        }
+        func finish() {
+            let continuation = reply
+            reply = nil
+            continuation?.resume(returning: true)
+        }
+    }
+
+    @Test func rapidRetapAndRefreshSerializeTheLatestReaction() async {
+        let (store, suite) = freshStore()
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let backend = DelayedReactionBackend()
+        store.backend = backend
+        let id = UUID()
+        store.toggle(id)
+        for _ in 0..<1000 where backend.reply == nil { await Task.yield() }
+        #expect(backend.writes == [true])
+        store.toggle(id)
+        store.flushPending()
+        for _ in 0..<100 { await Task.yield() }
+        #expect(backend.writes == [true], "The un-react must wait for the first write")
+        #expect(!store.hasReacted(id))
+        backend.finish()
+        for _ in 0..<1000 where backend.reply == nil { await Task.yield() }
+        #expect(backend.writes == [true, false])
+        #expect(store.pending.contains(id.uuidString), "The older response cannot acknowledge the new tap")
+        backend.finish()
+        for _ in 0..<1000 where !store.pending.isEmpty { await Task.yield() }
+        #expect(store.pending.isEmpty)
+        #expect(!store.hasReacted(id))
+    }
+
     @Test func presenceStubReportsNoFabricatedCrowd() async {
         #expect(await StubPresenceService().refresh(appearOnMap: true) == 0)
         // Live service returns 0 until the Supabase realtime backend is configured (honest).

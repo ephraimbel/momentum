@@ -60,6 +60,9 @@ enum NotificationPlanner {
     static func payloads(for plan: TrainingPlan?, now: Date = Date(), hour: Int, minute: Int,
                          options: Options = Options(), calendar: Calendar = .current) -> [LocalNotificationPayload] {
         guard let plan else { return [] }
+        // A dated notification cannot know tomorrow's symptoms. Clear the ordinary training,
+        // race and catch-up schedule until the athlete completes their recovery check-in.
+        guard IllnessResponse.state(for: plan) == nil else { return [] }
         var out: [LocalNotificationPayload] = []
         if options.sessionReminders {
             out += sessionReminders(for: plan, now: now, hour: hour, minute: minute,

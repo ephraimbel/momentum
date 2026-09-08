@@ -269,6 +269,8 @@ enum RunningPlannerTestFixtures {
 
     /// Filled from the shipping legacy engine once and reviewed as a single versioned baseline.
     /// Updating a digest requires inspecting the classified semantic diff, not blind regeneration.
+    // Budget hardening: three quality-bearing personas now remove complete reps when the
+    // full warm-up/work/recovery/cooldown exceeds the final distance prescription.
     private static let expectedDigests: [String: String] = [
         "start.first-steps.3d": "f02048150ac3782ae5b048cf5649983d5059431d4791b28f72104d604ecdd5de",
         "start.first-5k.12w": "113b22202875a45f8287bb856d28fa6e4317d58358103be3d4a8f71a4620ebca",
@@ -288,15 +290,15 @@ enum RunningPlannerTestFixtures {
         "road.10k-strength-support": "9b1ad2b920f2c9d860dcdb76954ab80651fcb0fbbc602adaf2214970c71dc6ab",
         "half.first-finish": "f2b1008b6e210e3a451e5241754468b029b7d53fc9c5235adcac03c36ba2564d",
         "half.1h45": "65bf32f4bb0de160ee4c0080b235a3c92dc770aeba4575ec14e27e666b6a9788",
-        "half.1h25-podium": "e2003337094afb2ea64b61730c791c82052781d5a47f3d49ef3159a4ae2ec9cf",
-        "half.masters-2h": "223e47e12c22cd317cd093e51937f6f5fc1dde6876b91eda21b37ccf5490614e",
+        "half.1h25-podium": "d1a2e9d8ea6358def94ed3c8a2029abe86a0462ce3d6477547fd7cfc152fa1b3",
+        "half.masters-2h": "340f870921f55f553ca5d2972b46d54640675c92bb87b31b42152e1d1b336e82",
         "half.achilles-history": "ead0e1c2cc090f9cd3e490f41f20bd1e17405bb4badf2e3c98370efb7c7fb58f",
         "half.short-runway": "746667daba44ebeb0e7004079471337bb25ec8977fa873eac44d1b4ba322b80c",
         "half.imperial-hybrid": "84d6696bc4d691ad1e18ddf622a1e0d34f165c22c88e341719871c28cdfc4c41",
         "half.long-runway-cap": "5962f2b4404855b1e9d911cc076208cd2b4cea6fbb22bf32de1c7830ef53d005",
         "marathon.first-finish": "b6e877b1f2da6a655ec2d4a69eeb2c285bd7bc27ddb1a7af71a22d657f473c6c",
         "marathon.4h": "0e50e429ecbc6a9b58546511b60b18619b9642258a9c57bdbf41ba12d672c951",
-        "marathon.3h30": "a2e6b98aa01d7e5fcc48ebf04135b6844ed9e808bfd3993d9bff2c6a7802ec46",
+        "marathon.3h30": "0c5aad2cd59adac5f1debe45d1fee7ddf7c3d0e30378fbf8be9d2e85ddeaefa0",
         "marathon.2h50-podium": "6286f989292c190476dbde367975b47d569ea286bcc26719ba9e82b1a15a3136",
         "marathon.masters-4h15": "85683f3f42cb260c4bb3592923dd1f877990f30cb5c06261e76e829880881bae",
         "marathon.knee-history": "83a2f0b219695ca3cda61fdd667bae4dfab8b24d9483740715b984fb378f3efd",

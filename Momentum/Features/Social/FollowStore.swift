@@ -12,6 +12,8 @@ import Observation
 final class FollowStore {
     private static let key = "com.momentum.social.following"
     private static let pendingKey = "com.momentum.social.followingPending"
+    @ObservationIgnored private var pushing: Set<String> = []
+    @ObservationIgnored private(set) var intentRevision = 0
     private let defaults: UserDefaults
     private(set) var following: Set<String>
 
@@ -44,26 +46,30 @@ final class FollowStore {
 
     func toggle(_ handle: String) {
         guard !handle.isEmpty else { return }
-        let isFollowing: Bool
-        if following.contains(handle) { following.remove(handle); isFollowing = false }
-        else { following.insert(handle); isFollowing = true }
+        intentRevision &+= 1
+        if following.contains(handle) { following.remove(handle) }
+        else { following.insert(handle) }
         // Only REAL athletes can be pending: a seeded community handle has no server profile, so
         // its push can never succeed — marking it pending would keep it in the retry set forever
         // and fire a futile profile lookup on every feed refresh. `merge` protects seeded follows
         // unconditionally anyway (see `seedFollows`), so nothing is lost by leaving them out.
         if CommunityDirectory.athlete(handle: handle) == nil { pending.insert(handle) }
         persist()
-        Task { await push(handle, following: isFollowing) }
+        Task { await push(handle) }
     }
 
-    /// Push one intent and clear it from `pending` only on a confirmed write. A seeded community
-    /// athlete never confirms (there's no server profile), which is correct: `merge` keeps seeded
-    /// follows anyway, so the pending entry is harmless and self-limiting.
-    private func push(_ handle: String, following isFollowing: Bool) async {
-        guard let backend else { pending.remove(handle); persist(); return }   // local-only build
-        if await backend.setFollow(handle: handle, following: isFollowing) {
-            pending.remove(handle)
-            persist()
+    /// Serialize writes per real athlete; a later tap stays pending until its own state is sent.
+    /// Sample follows remain local and never require a server lookup.
+    private func push(_ handle: String) async {
+        guard pushing.insert(handle).inserted else { return }
+        defer { pushing.remove(handle) }
+        while pending.contains(handle) {
+            guard let backend else { pending.remove(handle); persist(); return }
+            let desired = following.contains(handle)
+            let confirmed = await backend.setFollow(handle: handle, following: desired)
+            guard desired == following.contains(handle) else { continue }
+            if confirmed { pending.remove(handle); persist() }
+            return
         }
     }
 
@@ -84,7 +90,7 @@ final class FollowStore {
         }
         // Retry whatever the server still hasn't taken (iterating a value-type snapshot).
         for handle in pending {
-            Task { await push(handle, following: following.contains(handle)) }
+            Task { await push(handle) }
         }
     }
 

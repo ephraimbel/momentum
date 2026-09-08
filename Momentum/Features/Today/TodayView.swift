@@ -244,12 +244,13 @@ struct TodayView: View {
         var h = Hasher()
         h.combine(plan?.persistentModelID)
         h.combine(plan?.sessions.count ?? 0)
+        h.combine(profiles.first?.continuity?.illnessData)
         h.combine(workouts.count)
         h.combine(Calendar.current.startOfDay(for: Date()))
         return h.finalize()
     }
     private func computePendingToday() -> PlannedSession? {
-        PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed }
+        PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed && PlanCoaching.canStartPlannedSession($0, profile: profiles.first) }
     }
     private func refreshPendingToday() {
         cachedPendingToday = computePendingToday()
@@ -2253,6 +2254,12 @@ enum TodayLaunch: Identifiable {
     case cardio(type: WorkoutType, goalMeters: Double?, planned: PlannedSession?, guideRoute: [GeoPoint])
     case strength(type: WorkoutType, planned: PlannedSession?)
     case timed(type: WorkoutType)
+    var plannedSession: PlannedSession? {
+        switch self {
+        case .cardio(_, _, let planned, _), .strength(_, let planned): planned
+        case .timed: nil
+        }
+    }
     var id: String {
         switch self {
         case let .cardio(t, _, p, _): "c-\(t.rawValue)-\(p?.id.uuidString ?? "free")"

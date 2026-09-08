@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import SwiftUI
 import UIKit
+import CryptoKit
 @testable import Momentum
 
 /// The community surfaces' **responsiveness contract** (2026-08-29 pass). Every test here pins a
@@ -212,13 +213,14 @@ struct CommunitySurfacePerfTests {
         }
     }
 
-    private func row(id: UUID = UUID(), title: String, handle: String) -> SocialSyncEngine.FeedRow {
+    private func row(id: UUID = UUID(), title: String, handle: String,
+                     photos: [String] = [], reacted: Bool = false) -> SocialSyncEngine.FeedRow {
         SocialSyncEngine.FeedRow(
             id: id, authorId: UUID(), authorName: handle.capitalized, authorHandle: handle,
             authorLocation: "Austin, TX", avatarPath: nil, workoutType: "run",
             startedAt: Date(), title: title, caption: nil, statLine: "5.0 mi · 42:00",
             prBadge: nil, muscles: nil, route: nil, mapStyle: "standard", aiRead: nil,
-            photoPaths: [], reactionCount: 0, viewerReacted: false, createdAt: Date())
+            photoPaths: photos, reactionCount: 0, viewerReacted: reacted, createdAt: Date())
     }
 
     /// A slow Everyone response must never overwrite a newer Following response. This is the exact
@@ -282,6 +284,180 @@ struct CommunitySurfacePerfTests {
         #expect(resolved.title == "Older workout")
         #expect(store.items.isEmpty)
         #expect(backend.pages.count == 1)
+    }
+
+    @Test func duplicateRemoteRowsHaveOneStableIdentityAcrossPages() async {
+        let backend = QueueFeedBackend()
+        let first = row(title: "First", handle: "maya")
+        let second = row(title: "Second", handle: "sam")
+        backend.pages = [
+            FeedPage(rows: [first, first], next: FeedCursor(created: first.createdAt, id: first.id)),
+            FeedPage(rows: [first, second, second], next: nil)
+        ]
+        let store = RemoteFeedStore()
+        store.backend = backend
+        await store.refresh(scope: .everyone)
+        #expect(store.items.map(\.id) == [first.id])
+        await store.loadMore(scope: .everyone)
+        #expect(store.items.map(\.id) == [first.id, second.id])
+        #expect(!store.isLoading)
+    }
+
+    private final class DelayedImageBackend: StubSocialBackend {
+        var rows: [SocialSyncEngine.FeedRow] = []
+        var signing: CheckedContinuation<[String: URL], Never>?
+        override var isAvailable: Bool { true }
+        override func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? {
+            FeedPage(rows: scope == .everyone ? rows : [], next: nil)
+        }
+        override func signedPhotoURLs(paths: [String]) async -> [String: URL] {
+            await withCheckedContinuation { signing = $0 }
+        }
+        func finish() { signing?.resume(returning: [:]); signing = nil }
+    }
+
+    @Test func supersededImageDownloadCannotMergeStaleReactions() async {
+        let suite = "remote.reactions.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backend = DelayedImageBackend()
+        let post = row(title: "Old page", handle: "maya", photos: ["photo"], reacted: true)
+        backend.rows = [post]
+        let store = RemoteFeedStore()
+        store.backend = backend
+        store.reactions = ReactionStore(defaults: defaults)
+        let old = Task { await store.refresh(scope: .everyone) }
+        for _ in 0..<1000 where backend.signing == nil { await Task.yield() }
+        #expect(backend.signing != nil)
+        await store.refresh(scope: .following)
+        backend.finish()
+        await old.value
+        #expect(store.items.isEmpty)
+        #expect(store.reactions?.hasReacted(post.id) == false)
+        #expect(!store.isLoading)
+    }
+
+    @Test func cancelledImageDownloadCannotPublishOrMergeReactions() async {
+        let suite = "remote.cancel.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backend = DelayedImageBackend()
+        let post = row(title: "Cancelled", handle: "maya", photos: ["photo"], reacted: true)
+        backend.rows = [post]
+        let store = RemoteFeedStore()
+        store.backend = backend
+        store.reactions = ReactionStore(defaults: defaults)
+        let request = Task { await store.refresh(scope: .everyone) }
+        for _ in 0..<1000 where backend.signing == nil { await Task.yield() }
+        request.cancel()
+        backend.finish()
+        await request.value
+        #expect(store.items.isEmpty)
+        #expect(store.reactions?.hasReacted(post.id) == false)
+        #expect(!store.isLoading)
+    }
+
+    @Test func reactionRemovedDuringImageLoadingIsNotResurrected() async {
+        let suite = "remote.localtap.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backend = DelayedImageBackend()
+        let post = row(title: "Photo", handle: "maya", photos: ["photo"], reacted: true)
+        backend.rows = [post]
+        let reactions = ReactionStore(defaults: defaults)
+        reactions.merge(viewerReacted: [post.id.uuidString])
+        let store = RemoteFeedStore()
+        store.backend = backend
+        store.reactions = reactions
+        let request = Task { await store.refresh(scope: .everyone) }
+        for _ in 0..<1000 where backend.signing == nil { await Task.yield() }
+        reactions.toggle(post.id)
+        for _ in 0..<1000 where !reactions.pending.isEmpty { await Task.yield() }
+        #expect(reactions.pending.isEmpty)
+        backend.finish()
+        await request.value
+        #expect(store.items.count == 1)
+        #expect(!reactions.hasReacted(post.id))
+    }
+
+    private final class DelayedFollowPullBackend: StubSocialBackend {
+        var reply: CheckedContinuation<Set<String>?, Never>?
+        override var isAvailable: Bool { true }
+        override func pullFollowing() async -> Set<String>? {
+            await withCheckedContinuation { reply = $0 }
+        }
+        override func feed(scope: FeedScope, cursor: FeedCursor?, limit: Int) async -> FeedPage? {
+            FeedPage(rows: [], next: nil)
+        }
+    }
+
+    @Test func slowFollowRefreshCannotRestoreAnAcknowledgedUnfollow() async {
+        let suite = "remote.followtap.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let follows = FollowStore(defaults: defaults)
+        follows.merge(remote: ["realathlete"])
+        let backend = DelayedFollowPullBackend()
+        let store = RemoteFeedStore()
+        store.backend = backend
+        store.follows = follows
+        let request = Task { await store.refresh(scope: .everyone) }
+        for _ in 0..<1000 where backend.reply == nil { await Task.yield() }
+        follows.toggle("realathlete")
+        for _ in 0..<1000 where !follows.pending.isEmpty { await Task.yield() }
+        #expect(follows.pending.isEmpty)
+        backend.reply?.resume(returning: ["realathlete"])
+        backend.reply = nil
+        await request.value
+        #expect(!follows.isFollowing("realathlete"))
+        #expect(!store.isLoading)
+    }
+
+    private actor ImageFetchCounter {
+        var calls = 0
+        func fetch(_ data: Data) async -> Data? {
+            calls += 1
+            try? await Task.sleep(for: .milliseconds(20))
+            return data
+        }
+    }
+
+    @Test func concurrentAvatarRequestsShareOneDownloadAndDiskEntry() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = RemoteImageCache(directory: directory)
+        let counter = ImageFetchCounter()
+        let png = try #require(tileImage().pngData())
+        let results = await withTaskGroup(of: Data?.self, returning: [Data?].self) { group in
+            for _ in 0..<24 {
+                group.addTask { await cache.data(for: "avatar") { await counter.fetch(png) } }
+            }
+            var values: [Data?] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+        #expect(results.count == 24)
+        #expect(results.allSatisfy { $0 == png })
+        #expect(await counter.calls == 1)
+        let reloaded = RemoteImageCache(directory: directory)
+        let cached = await reloaded.data(for: "avatar") { await counter.fetch(png) }
+        #expect(cached == png)
+        #expect(await counter.calls == 1)
+    }
+
+    @Test func invalidImageResponsesAndLegacyCacheEntriesRecoverOnRetry() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = RemoteImageCache(directory: directory)
+        let bad = Data("<html>Expired signed URL</html>".utf8)
+        #expect(await cache.data(for: "photo") { bad } == nil)
+        let key = SHA256.hash(data: Data("photo".utf8)).map { String(format: "%02x", $0) }.joined()
+        let file = directory.appendingPathComponent(key)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        try bad.write(to: file) // Simulate an error body cached by an older app build.
+        let png = try #require(tileImage().pngData())
+        #expect(await cache.data(for: "photo") { png } == png)
+        #expect(try Data(contentsOf: file) == png)
     }
 
     @Test func matchedRouteMutationInvalidatesTheLocalFeedSignature() {
@@ -474,12 +650,14 @@ struct CommunitySurfacePerfTests {
         var checked = 0
         for athlete in CommunityDirectory.all().filter(\.isSample).prefix(140) {
             let city = athlete.routeCity
+            let home = athlete.homeCoordinate
             let full = CommunityLedger.lifetime(handle: athlete.handle, primary: athlete.primaryType,
                                                 city: city, count: athlete.totalWorkouts,
-                                                clock: clock, lead: athlete.ledgerLead, detail: false)
+                                                clock: clock, home: home,
+                                                lead: athlete.ledgerLead, detail: false)
             let cheap = CommunityLedger.lead(handle: athlete.handle, primary: athlete.primaryType,
                                              city: city, count: athlete.totalWorkouts,
-                                             clock: clock, lead: athlete.ledgerLead)
+                                             clock: clock, home: home, lead: athlete.ledgerLead)
             #expect(cheap?.session == full.leadSession,
                     "@\(athlete.handle): prefix walk picked a different wall card")
             #expect(cheap?.index == full.leadIndex,
@@ -496,12 +674,14 @@ struct CommunitySurfacePerfTests {
         let clock = CommunityLedger.Clock(Date())
         for athlete in CommunityDirectory.all().filter({ $0.isSample && $0.totalWorkouts > 60 }).prefix(12) {
             let city = athlete.routeCity
+            let home = athlete.homeCoordinate
             let whole = CommunityLedger.sessions(handle: athlete.handle, primary: athlete.primaryType,
                                                  city: city, count: athlete.totalWorkouts,
-                                                 clock: clock, lead: athlete.ledgerLead)
+                                                 clock: clock, home: home, lead: athlete.ledgerLead)
             let page = CommunityLedger.sessions(handle: athlete.handle, primary: athlete.primaryType,
                                                 city: city, count: athlete.totalWorkouts,
-                                                clock: clock, lead: athlete.ledgerLead, limit: 30)
+                                                clock: clock, home: home, lead: athlete.ledgerLead,
+                                                limit: 30)
             #expect(page.count == 30, "@\(athlete.handle): a page of 30 came back with \(page.count)")
             #expect(page == Array(whole.prefix(30)),
                     "@\(athlete.handle): the paged walk and the full walk disagree")
@@ -517,7 +697,7 @@ struct CommunitySurfacePerfTests {
                 handle: athlete.handle, primary: athlete.primaryType,
                 city: athlete.routeCity,
                 count: athlete.totalWorkouts, clock: CommunityDirectory.seedClock,
-                lead: athlete.ledgerLead, detail: false)
+                home: athlete.homeCoordinate, lead: athlete.ledgerLead, detail: false)
             #expect(athlete.dayStreak == life.streakDays, "@\(athlete.handle): streak drifted")
             #expect(abs(athlete.totalDistanceM - life.distanceM) < 1,
                     "@\(athlete.handle): lifetime distance drifted")

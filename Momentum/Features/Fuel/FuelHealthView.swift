@@ -93,6 +93,7 @@ struct FuelHealthView: View {
         // Foregrounding after hours asleep: "today" is baked into the buckets, so re-judge at
         // once rather than showing yesterday's analysis under today's title (the FuelView rule).
         .onChange(of: scenePhase) { _, phase in if phase == .active { recomputeIfNeeded(force: true) } }
+        .trackScreen(.fuelHealth)
     }
 
     // MARK: Hero — the day's verdict

@@ -8,7 +8,7 @@ import SwiftData
 struct InjuryResponseTests {
 
     /// A runner profile with a real generated plan (quality + easy + long runs to respond to).
-    private func makeRunner(_ ctx: ModelContext) -> UserProfile {
+    private func makeRunner(_ ctx: ModelContext) throws -> UserProfile {
         let vm = OnboardingViewModel()
         vm.activities = [.run]
         vm.goal = .raceDistance
@@ -17,14 +17,14 @@ struct InjuryResponseTests {
         vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date())!
         vm.experience = .some
         vm.weeklyRunVolumeM = 30_000
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         profile.distanceUnit = "metric"   // deterministic clean-km snapping, locale-independent
         return profile
     }
 
     @Test func twingeKeepsRunningButDropsQuality() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
         let cal = Calendar.current
         let windowEnd = cal.date(byAdding: .day, value: InjurySeverity.twinge.windowDays, to: cal.startOfDay(for: Date()))!
@@ -46,7 +46,7 @@ struct InjuryResponseTests {
 
     @Test func reportJoinsTheSharedAdaptationThrottle() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
         #expect(plan.lastAdaptedAt == nil)
 
@@ -60,7 +60,7 @@ struct InjuryResponseTests {
 
     @Test func loadAdaptationNeverTouchesInjuryConvertedSessions() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
 
         InjuryResponse.report(area: .knee, severity: .moderate, profile: profile, in: ctx)
@@ -81,7 +81,7 @@ struct InjuryResponseTests {
 
     @Test func moderateSwapsImpactForCrossTrainingAndSevereMakesItOptional() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
         let cal = Calendar.current
 
@@ -106,7 +106,7 @@ struct InjuryResponseTests {
         #expect(events.contains { $0.headline.localizedCaseInsensitiveContains("knee") })
     }
 
-    @Test func athleteFacingOutcomesAvoidTreatmentAndRecoveryPromises() {
+    @Test func athleteFacingOutcomesAvoidTreatmentAndRecoveryPromises() throws {
         let retiredClaims = [
             "most twinges settle",
             "ice and gentle",
@@ -119,7 +119,7 @@ struct InjuryResponseTests {
         for severity in InjurySeverity.allCases {
             let pc = PersistenceController.inMemory()
             let context = pc.container.mainContext
-            let profile = makeRunner(context)
+            let profile = try makeRunner(context)
             let outcome = InjuryResponse.report(
                 area: .knee,
                 severity: severity,
@@ -135,7 +135,7 @@ struct InjuryResponseTests {
 
     @Test func resumeRestoresAGentleReturnNotQualityWork() throws {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
 
         InjuryResponse.report(area: .calf, severity: .moderate, profile: profile, in: ctx)
@@ -160,7 +160,7 @@ struct InjuryResponseTests {
         // Re-injury risk peaks right after resume — even sessions the injury window never touched
         // must hold no quality for 7 days.
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)
+        let profile = try makeRunner(ctx)
         let plan = try #require(profile.plan)
         let cal = Calendar.current
 
@@ -185,7 +185,7 @@ struct InjuryResponseTests {
     @Test func resumeTellsTheTruthAboutTheRaceGoal() throws {
         // Plenty of runway (10 weeks to a 10K, real volume) → reassurance on resume.
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
-        let profile = makeRunner(ctx)                              // 10K, 10 weeks out, 30 km/wk
+        let profile = try makeRunner(ctx)                              // 10K, 10 weeks out, 30 km/wk
         InjuryResponse.report(area: .calf, severity: .moderate, profile: profile, in: ctx)
         let ok = InjuryResponse.resume(profile: profile, in: ctx)
         #expect(ok.detail.contains("still on track"))

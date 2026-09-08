@@ -52,6 +52,8 @@ struct ManagePlanView: View {
     @State private var pendingRequest: PlanAdjustmentService.Request?
     @State private var picker: Picker?
     @State private var showInjury = false
+    @State private var showIllness = false
+    @State private var showPlanSync = false
     /// The last applied change and its undo, held by the Plan tab so it survives Done and a
     /// reopen (the chat's undo lives on its message; this one lived and died with the sheet).
     @Binding var applied: ManageReceipt?
@@ -86,6 +88,11 @@ struct ManagePlanView: View {
                     } else {
                         if plan?.isSelfCoached == true {
                             quiet("You are coaching this plan yourself. Schedule edits still work; the coach does not reshape the week.")
+                        }
+                        if services.planSync.isEnabled {
+                            section("Across your devices") {
+                                row("icloud", "Plan sync", services.planSync.detail, last: true) { showPlanSync = true }
+                            }
                         }
                         scheduleSection
                         trainingSection
@@ -148,6 +155,11 @@ struct ManagePlanView: View {
                 }
                 }
             }
+            .sheet(isPresented: $showPlanSync) { PlanSyncView(profile: profile) }
+            .sheet(isPresented: $showIllness, onDismiss: {
+                PlanAdjustmentService.propagate(profile: profile, workouts: workouts, notifications: services.notifications)
+                onPlanChanged(); refreshAvailability()
+            }) { IllnessCheckInView(profile: profile) }
             .sheet(isPresented: $showInjury, onDismiss: {
                 // The injury loop writes the plan itself; mirror it downstream and re-read the rows.
                 PlanAdjustmentService.propagate(profile: profile, workouts: workouts, notifications: services.notifications)
@@ -168,6 +180,7 @@ struct ManagePlanView: View {
         .nestedPaywallHost()
         .onAppear { PerfMark.end("manage-open") }
         .presentationDetents([.large])
+        .trackScreen(.managePlan)
     }
 
     // MARK: - Sections
@@ -197,7 +210,7 @@ struct ManagePlanView: View {
             }
             row("dumbbell", "Strength & equipment",
                 unavailable[.equipment] ?? "\(profile.disciplines.contains(Discipline.strength.rawValue) ? "Strength on · " : "")\(equipmentLabel(profile.equipment))") { picker = .equipment }
-            row("books.vertical", "Swap in a library session", "Guided sessions priced to your paces", last: true) { onOpenLibrary() }
+            row("books.vertical", "Add a library session", "Extra training at your paces; your existing sessions stay", last: true) { onOpenLibrary() }
         }
     }
 
@@ -217,9 +230,7 @@ struct ManagePlanView: View {
             } else {
                 row("pause.circle", "Pause and come back", unavailable[.pause] ?? "Travel, life. Everything shifts later; race day stays") { picker = .pause }
             }
-            row("thermometer.variable", "I'm not feeling well", unavailable[.unwell] ?? "Pause three days, nothing is lost") {
-                request = .init(intent: .pausePlan(days: 3), title: "I'm not feeling well", request: "I'm unwell and need a few days")
-            }
+            row("thermometer.variable", IllnessResponse.state(for: profile) == nil ? "I'm not feeling well" : "Recovery check-in", "Rest now, then return gradually when you are ready") { showIllness = true }
             row("bandage", "Something hurts", "Train around it, with a gated way back", last: true) { showInjury = true }
         }
     }
@@ -251,7 +262,7 @@ struct ManagePlanView: View {
         // Counted with availability, never per body pass.
         let missed = missedCount
         if missed == 0 { return "Missed sessions roll forward on their own. Lighten the week if you need a gentler way back" }
-        return "\(missed) rolled forward already. Lighten the week for a gentler way back"
+        return "\(missed) past sessions adjusted. Continue with the week ahead, or lighten it for a gentler return"
     }
 
     private func daysRequest(_ days: Int?, _ preferred: [Int]?) -> String {

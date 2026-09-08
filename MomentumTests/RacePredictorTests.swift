@@ -70,3 +70,24 @@ struct RacePredictorTests {
         #expect(eliteMarathon < 3 * 3600)
     }
 }
+
+extension RacePredictorTests {
+    @Test func enteredRoadResultsRoundTripWithoutAnExtraPenalty() throws {
+        for (distance, seconds) in [(5000.0, 1800.0), (10000, 3600), (21097.5, 7200), (42195, 14400), (42195, 21600)] {
+            let p5k = PlanEngine.riegelP5k(distanceM: distance, timeS: seconds)
+            let projected = try #require(RacePredictor.finishTimeS(raceDistanceM: distance, p5kSPerKm: p5k))
+            #expect(abs(projected - seconds) < 0.01)
+        }
+        #expect(RacePredictor.finishTimeS(raceDistanceM: .infinity, p5kSPerKm: 300) == nil)
+    }
+}
+
+struct RacePredictionPersonalizationTests {
+    @Test func personalizedEnduranceChangesPredictionButPassingTimeDoesNot() throws {
+        let standard = try #require(RacePredictor.finishTimeS(raceDistanceM: 42195, p5kSPerKm: 300))
+        let personal = try #require(RacePredictor.finishTimeS(raceDistanceM: 42195, p5kSPerKm: 300, exponent: 1.10))
+        #expect(personal > standard)
+        #expect(RacePredictor.finishTimeS(raceDistanceM: 5000, p5kSPerKm: 300, exponent: 1.10) == 1500)
+        #expect(RacePredictor.finishTimeS(raceDistanceM: 42195, p5kSPerKm: 300, exponent: .nan) == nil)
+    }
+}

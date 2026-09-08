@@ -144,7 +144,7 @@ struct AthleteProfileView: View {
             isPro: athlete.isSample && CommunityGenerator.isPro(handle: athlete.handle),
             handle: athlete.handle,
             location: athlete.location,
-            bio: athlete.bio,
+            bio: athlete.isSample ? "Example athlete · \(athlete.bio)" : athlete.bio,
             followLine: .init(followers: followerCount, following: followingCount) { graphFace = .followers },
             chips: chips,
             chrome: {

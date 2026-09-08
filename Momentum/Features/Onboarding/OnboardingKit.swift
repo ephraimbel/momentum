@@ -1,5 +1,27 @@
 import SwiftUI
 
+/// Permission and review artwork may exceed a compact phone's height or grow with Dynamic Type.
+/// Keep the actions in the safe area and let the explanatory content scroll independently.
+struct OnboardingHeroPage<Content: View, Actions: View>: View {
+    @ViewBuilder var content: Content
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(spacing: 0) {
+            GeometryReader { geometry in
+                ScrollView {
+                    VStack(spacing: 0) { content }
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: geometry.size.height)
+                }
+                .scrollIndicators(.hidden)
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            actions
+        }
+    }
+}
+
 // The onboarding's visual kit (glass pass, 2026-08-27 — owner direction: the minimal, bright,
 // glass-and-glow grammar of enterprise health onboardings, in OUR theme and OUR words). One canvas,
 // one floating glass back button, one centered heading, one floating choice card, one glowing glyph
@@ -580,6 +602,8 @@ struct OnboardingCTA: View {
                 HStack(spacing: 10) {
                     Text(title)
                         .font(.rounded(17, weight: .semibold))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 14, weight: .semibold))
                         .offset(x: isEnabled || reduceMotion ? 0 : -4)
@@ -588,7 +612,9 @@ struct OnboardingCTA: View {
                 .opacity(inFlight ? 0 : 1)
                 if inFlight { ProgressView().tint(Theme.background) }
             }
-            .frame(maxWidth: .infinity).frame(height: 58)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, minHeight: 58)
             .foregroundStyle(isEnabled ? Theme.background : Theme.inkTertiary)
             // Waiting for a choice, the pill rests as a quiet white surface with grey text —
             // the same object the secondary buttons are — instead of a dimmed black slab
@@ -617,7 +643,10 @@ struct OnboardingSecondary: View {
             Text(title)
                 .font(.rounded(Theme.FontSize.body, weight: .semibold))
                 .foregroundStyle(Theme.inkTertiary)
-                .frame(maxWidth: .infinity).frame(height: 44)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

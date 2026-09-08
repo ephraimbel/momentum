@@ -13,6 +13,18 @@ struct SavedRoutesView: View {
     @Query private var profiles: [UserProfile]
     @Environment(\.modelContext) private var context
     @State private var opened: SavedRoute?
+    @State private var collections = RouteCollectionStore()
+    @State private var selectedCollection: UUID?
+    @State private var creatingCollection = false
+    @State private var collectionName = ""
+    @State private var routeToCollect: UUID?
+    @State private var removalFailed = false
+
+    private var visibleRoutes: [SavedRoute] {
+        guard let selectedCollection,
+              let collection = collections.collections.first(where: { $0.id == selectedCollection }) else { return routes }
+        return routes.filter { collection.routeIDs.contains($0.id) }
+    }
 
     private var distanceUnit: DistanceUnit {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
@@ -21,10 +33,14 @@ struct SavedRoutesView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                if !routes.isEmpty || !collections.collections.isEmpty { collectionBar }
                 if routes.isEmpty {
                     emptyState
+                } else if visibleRoutes.isEmpty {
+                    ContentUnavailableView("This collection is empty", systemImage: "folder",
+                        description: Text("Open a saved post's menu to add it here."))
                 } else {
-                    ForEach(routes) { row($0) }
+                    ForEach(visibleRoutes) { row($0) }
                 }
             }
             .padding(.horizontal, Theme.Space.lg)
@@ -34,33 +50,99 @@ struct SavedRoutesView: View {
         .navigationTitle("Saved")
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $opened) { SavedRouteDetailView(route: $0) }
+        .task(id: profiles.first?.id) {
+            collections.load(profileID: profiles.first?.id)
+            collections.prune(validIDs: Set(routes.map(\.id)))
+            selectedCollection = nil
+        }
+        .onChange(of: routes.map(\.id)) { _, ids in collections.prune(validIDs: Set(ids)) }
+        .alert("New collection", isPresented: $creatingCollection) {
+            TextField("Collection name", text: $collectionName)
+            Button("Create") {
+                if let id = collections.create(name: collectionName) {
+                    if let routeToCollect { collections.add(routeID: routeToCollect, to: id) }
+                    selectedCollection = id
+                    Haptics.success()
+                }
+                routeToCollect = nil
+            }
+            .disabled(collectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) { routeToCollect = nil }
+        } message: { Text("Keep routes and posts together. Collections stay on this device.") }
+        .alert("Couldn't remove this save", isPresented: $removalFailed) {
+            Button("OK", role: .cancel) { }
+        } message: { Text("Your saved post is still here. Please try again.") }
+    }
+
+    private var collectionBar: some View {
+        HStack {
+            Menu {
+                Button("All saved") { selectedCollection = nil }
+                ForEach(collections.collections) { collection in
+                    Button(collection.name) { selectedCollection = collection.id }
+                }
+            } label: {
+                Label(collections.collections.first(where: { $0.id == selectedCollection })?.name ?? "All saved",
+                      systemImage: "folder")
+                    .font(.rounded(14, weight: .semibold)).lineLimit(1)
+            }
+            .accessibilityIdentifier("saved.collections.filter")
+            Spacer()
+            if let selectedCollection {
+                Menu {
+                    Button("Delete collection", role: .destructive) {
+                        collections.remove(selectedCollection)
+                        self.selectedCollection = nil
+                    }
+                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                .accessibilityLabel("Collection options")
+            }
+            Button { collectionName = ""; routeToCollect = nil; creatingCollection = true } label: {
+                Image(systemName: "folder.badge.plus").frame(width: 44, height: 44)
+            }
+            .buttonStyle(CommunityControlPressStyle())
+            .accessibilityLabel("New collection")
+            .disabled(profiles.first == nil)
+        }
+        .padding(.vertical, Theme.Space.sm)
     }
 
     private func row(_ route: SavedRoute) -> some View {
-        // A route opens its explorable map; a routeless save (a strength day, a swim) is the kept
-        // post itself — its row is informational, no map to promise, no chevron that lies.
-        //
-        // The routeless row is NOT a Button any more (2026-08-29). It used to be one whose action
-        // was `if route.hasRoute { … }`, so for a routeless save it took the press highlight,
-        // announced itself to VoiceOver as a button, and then did nothing — a dead control, which
-        // is exactly what this audit is about. Long-press to Remove still works on both.
-        Group {
-            if route.hasRoute {
-                Button { opened = route } label: { rowBody(route) }
-                    .buttonStyle(.plain)
-            } else {
-                rowBody(route)
+        HStack(spacing: 0) {
+            Group {
+                if route.hasRoute {
+                    Button { opened = route; Haptics.light() } label: { rowBody(route) }
+                        .buttonStyle(CommunityControlPressStyle())
+                } else { rowBody(route) }
             }
+            .accessibilityLabel("\(route.title), \(subtitle(route))")
+            Menu { routeActions(route) } label: {
+                Image(systemName: "ellipsis").frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Organize \(route.title)")
         }
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 0.5) }
-        .contextMenu {
-            Button(role: .destructive) {
-                context.delete(route)
-                try? context.save()
-                Haptics.light()
-            } label: { Label("Remove", systemImage: "bookmark.slash") }
+        .contextMenu { routeActions(route) }
+    }
+
+    @ViewBuilder private func routeActions(_ route: SavedRoute) -> some View {
+        ForEach(collections.collections) { collection in
+            Button {
+                collections.toggle(routeID: route.id, in: collection.id); Haptics.selection()
+            } label: {
+                Label(collection.name, systemImage: collection.routeIDs.contains(route.id) ? "checkmark.circle.fill" : "folder")
+            }
         }
-        .accessibilityLabel("\(route.title), \(subtitle(route))")
+        Button("New collection…", systemImage: "folder.badge.plus") {
+            collectionName = ""; routeToCollect = route.id; creatingCollection = true
+        }
+        .disabled(profiles.first == nil)
+        Divider()
+        Button(role: .destructive) {
+            context.delete(route)
+            do { try context.save(); Haptics.light() }
+            catch { context.rollback(); removalFailed = true }
+        } label: { Label("Remove saved post", systemImage: "bookmark.slash") }
     }
 
     private func rowBody(_ route: SavedRoute) -> some View {
@@ -84,7 +166,7 @@ struct SavedRoutesView: View {
                         .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink).lineLimit(1)
                     Text(subtitle(route))
                         .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                        .foregroundStyle(Theme.inkTertiary).lineLimit(1)
+                        .foregroundStyle(Theme.inkSecondary).lineLimit(2)
                 }
                 Spacer(minLength: 0)
                 if route.hasRoute {
@@ -127,6 +209,7 @@ struct SavedRouteDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
+    @State private var removalFailed = false
 
     private var distanceUnit: DistanceUnit {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
@@ -149,18 +232,23 @@ struct SavedRouteDetailView: View {
                 HStack {
                     Button { dismiss() } label: {
                         Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                            .frame(width: 44, height: 44).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
                     }
                     .accessibilityLabel("Close")
                     Spacer()
                     Button {
                         context.delete(route)
-                        try? context.save()
-                        Haptics.light()
-                        dismiss()
+                        do {
+                            try context.save()
+                            Haptics.light()
+                            dismiss()
+                        } catch {
+                            context.rollback()
+                            removalFailed = true
+                        }
                     } label: {
                         Image(systemName: "bookmark.fill").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                            .frame(width: 44, height: 44).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
                     }
                     .accessibilityLabel("Remove from saved routes")
                 }
@@ -192,6 +280,9 @@ struct SavedRouteDetailView: View {
             .padding(.vertical, Theme.Space.sm)
         }
         .background(Theme.background)
+        .alert("Couldn't remove this save", isPresented: $removalFailed) {
+            Button("OK", role: .cancel) { }
+        } message: { Text("Your saved route is still here. Please try again.") }
     }
 }
 

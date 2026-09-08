@@ -15,8 +15,10 @@ struct PlanEndToEndTests {
 
     private func container() throws -> ModelContainer {
         let schema = Schema(PersistenceController.models)
-        return try ModelContainer(for: schema,
+        let container = try ModelContainer(for: schema,
                                   configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        ExerciseLibrarySeed.seedIfNeeded(into: container.mainContext)
+        return container
     }
 
     /// A profile with EVERY answer onboarding can collect, each set to a value distinctive enough

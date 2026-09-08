@@ -317,6 +317,27 @@ enum DataManager {
 
     // MARK: - Delete
 
+    /// Older chunked wipes could save child deletions before disconnecting their profile.
+    /// Repair only references to absent rows, before the UI can dereference those faults.
+    /// Persistent identifiers are safe to compare without loading a missing plan's sessions.
+    static func repairDanglingProfileReferences(in context: ModelContext) throws {
+        let profiles = try context.fetch(FetchDescriptor<UserProfile>())
+        guard !profiles.isEmpty else { return }
+        let plans = Set(try context.fetchIdentifiers(FetchDescriptor<TrainingPlan>()))
+        let workouts = Set(try context.fetchIdentifiers(FetchDescriptor<Workout>()))
+        let records = Set(try context.fetchIdentifiers(FetchDescriptor<PersonalRecord>()))
+        let athletes = Set(try context.fetchIdentifiers(FetchDescriptor<AthleteModel>()))
+        for profile in profiles {
+            if let plan = profile.plan, !plans.contains(plan.persistentModelID) { profile.plan = nil }
+            if let athlete = profile.athlete, !athletes.contains(athlete.persistentModelID) { profile.athlete = nil }
+            let keptWorkouts = profile.workouts.filter { workouts.contains($0.persistentModelID) }
+            if keptWorkouts.count != profile.workouts.count { profile.workouts = keptWorkouts }
+            let keptRecords = profile.prs.filter { records.contains($0.persistentModelID) }
+            if keptRecords.count != profile.prs.count { profile.prs = keptRecords }
+        }
+        if context.hasChanges { try context.save() }
+    }
+
     /// Wipe every piece of personal data (PRD §13.3). The bundled exercise catalog (reference data,
     /// not the user's) is preserved. After this `UserProfile` is gone, so the app returns to onboarding.
     ///
@@ -328,6 +349,7 @@ enum DataManager {
         // return to onboarding resumed a FINISHED draft onto the post-plan beats with no way to
         // build a profile (the infinite account-beat loop, audit 2026-08-11).
         OnboardingDraftStore.clear()
+        RouteCollectionStore.clearAll()
         func wipe<T: PersistentModel>(_ type: T.Type) {
             for item in (try? context.fetch(FetchDescriptor<T>())) ?? [] { context.delete(item) }
         }
@@ -345,12 +367,17 @@ enum DataManager {
         wipe(PlanDecisionRecord.self)
         wipe(PlanShelfRecord.self)
         wipe(PlanAthleteStateRecord.self)
+        wipe(PlanCoachingStateRecord.self)
+        wipe(PlanPreferencesRecord.self)
+        wipe(PlanContinuityRecord.self)
+        wipe(PlanFitnessDeclarationRecord.self)
         // Standalone records (no parent relationship to cascade through) — must be wiped explicitly
         // or a reset leaves stale coaching history, inbox notifications, and check-ins behind.
         wipe(CoachingEvent.self)
         wipe(AppNotification.self)
         wipe(DailyCheckin.self)
         wipe(Meal.self)               // food log — standalone since the Fuel tab landed
+        wipe(SavedRoute.self)
         wipe(WaterEntry.self)
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything
@@ -371,42 +398,81 @@ enum DataManager {
     /// and finishes by simply running again), heaviest children first and `UserProfile` LAST —
     /// its disappearance is what flips RootView back to onboarding, so the UI only transitions
     /// when everything else is already gone.
-    static func deleteAllUserData(container: ModelContainer) async {
+    static func deleteAllUserData(container: ModelContainer) async throws {
         // Same reason as the synchronous overload: a leftover resume draft re-raises the tail of
         // a finished onboarding once the profile is gone.
         OnboardingDraftStore.clear()
-        await Task.detached(priority: .userInitiated) {
+        RouteCollectionStore.clearAll()
+        // Disconnect on the UI's context as well: Today must see plan == nil before
+        // the worker can invalidate that plan. A save on a separate context alone
+        // leaves already-registered UI objects holding their old relationships.
+        let mainContext = container.mainContext
+        for profile in try mainContext.fetch(FetchDescriptor<UserProfile>()) {
+            profile.plan = nil
+            profile.workouts = []
+            profile.prs = []
+            profile.athlete = nil
+        }
+        try mainContext.save()
+        try await Task.detached(priority: .userInitiated) {
             let context = ModelContext(container)
             context.autosaveEnabled = false
-            func wipe<T: PersistentModel>(_ type: T.Type, chunk: Int = 32) {
+            // These relationships have no inverse. Deleting a child does NOT clear the
+            // profile's reference to it. Saving the child deletion first left a dangling
+            // plan that SwiftData traversed again when cascading the final profile delete
+            // (Sentry MOMENTUM-IOS-C / D). Persist the disconnection while every row exists.
+            // Each child type is still explicitly wiped below, including archived plans.
+            for profile in try context.fetch(FetchDescriptor<UserProfile>()) {
+                profile.plan = nil
+                profile.workouts = []
+                profile.prs = []
+                profile.athlete = nil
+            }
+            // A completed session can also point to a workout that is about to be removed.
+            for session in try context.fetch(FetchDescriptor<PlannedSession>()) {
+                session.completedWorkout = nil
+            }
+            for record in try context.fetch(FetchDescriptor<PersonalRecord>()) {
+                record.workout = nil
+            }
+            try context.save()
+
+            func wipe<T: PersistentModel>(_ type: T.Type, chunk: Int = 32) throws {
                 while true {
                     var fd = FetchDescriptor<T>()
                     fd.fetchLimit = chunk
-                    let batch = (try? context.fetch(fd)) ?? []
+                    let batch = try context.fetch(fd)
                     if batch.isEmpty { break }
                     for item in batch { context.delete(item) }
-                    try? context.save()
+                    // Stop on failure: swallowing a failed save refetched the same batch
+                    // indefinitely and could make Settings spin forever.
+                    try context.save()
                 }
             }
-            wipe(Workout.self, chunk: 8)   // cascades gps samples + strength sets — the heavy rows
-            wipe(TrainingPlan.self)
-            wipe(PersonalRecord.self)
-            wipe(EarnedAward.self)
-            wipe(AthleteModel.self)
-            wipe(ChatMessage.self)
-            wipe(PlannedSessionIntentRecord.self)
-            wipe(PlanMetadataRecord.self)
-            wipe(RunningEventRecord.self)
-            wipe(RunningSeasonRecord.self)
-            wipe(PlanDecisionRecord.self)
-            wipe(PlanShelfRecord.self)
-            wipe(PlanAthleteStateRecord.self)
-            wipe(CoachingEvent.self)
-            wipe(AppNotification.self)
-            wipe(DailyCheckin.self)
-            wipe(Meal.self)
-            wipe(WaterEntry.self)
-            wipe(UserProfile.self)
+            try wipe(Workout.self, chunk: 8)   // cascades gps samples + strength sets — the heavy rows
+            try wipe(TrainingPlan.self)
+            try wipe(PersonalRecord.self)
+            try wipe(EarnedAward.self)
+            try wipe(AthleteModel.self)
+            try wipe(ChatMessage.self)
+            try wipe(PlannedSessionIntentRecord.self)
+            try wipe(PlanMetadataRecord.self)
+            try wipe(RunningEventRecord.self)
+            try wipe(RunningSeasonRecord.self)
+            try wipe(PlanDecisionRecord.self)
+            try wipe(PlanShelfRecord.self)
+            try wipe(PlanAthleteStateRecord.self)
+            try wipe(PlanCoachingStateRecord.self)
+            try wipe(PlanPreferencesRecord.self)
+            try wipe(PlanContinuityRecord.self)
+            try wipe(PlanFitnessDeclarationRecord.self)
+            try wipe(CoachingEvent.self)
+            try wipe(AppNotification.self)
+            try wipe(DailyCheckin.self)
+            try wipe(Meal.self)
+            try wipe(SavedRoute.self)
+            try wipe(WaterEntry.self)
+            try wipe(UserProfile.self)
         }.value
         ActiveWorkoutMarker.clear()   // drop any in-flight recovery marker
         HealthService.resetDedupe()   // else a post-wipe import silently skips everything

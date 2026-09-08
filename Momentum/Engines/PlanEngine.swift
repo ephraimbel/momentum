@@ -71,6 +71,14 @@ enum PlanEngine {
         let p5k = calibration.recentRun.map { riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
             ?? calibration.estimatedP5kSPerKm
             ?? levelP5k(profile.runningExperience)
+        // An explicit zero is a return-to-running starting point, not missing mileage.
+        // Use the existing starter structure while preserving independently calibrated pace.
+        // A previous experience label must not select the 26/42 km fallback after a break.
+        var profile = profile
+        if cardio == .running, profile.currentWeeklyVolumeM == 0 {
+            profile.runningExperience = .new
+            profile.intensity = .gentle
+        }
         // The athlete state (2026-09-03): observed threshold anchors the steady family, the
         // personal fatigue exponent shapes every race prediction, durability shapes long-run
         // growth. All optional — without evidence this is exactly the one-number engine.
@@ -513,10 +521,10 @@ enum PlanEngine {
         // `PlanFeasibility.peakWeeklyVolumeM` caps the RAMP at "Build up to", but the sessions are
         // then sized and rounded independently — a workout priced from its own dose, a long run
         // pinned at its cap, a shakeout added — and those had the peak drifting past a stated cap
-        // by ~15%. A cap the athlete typed is a promise; this keeps it. Never below what they
-        // already run, and never scales the race itself.
+        // by ~15%. A cap the athlete typed is a promise, including when they want to reduce
+        // their current mileage. The race itself remains its exact event distance.
         if let ceiling = profile.targetWeeklyVolumeM, ceiling > 0 {
-            let cap = max(ceiling, profile.currentWeeklyVolumeM ?? 0) * 1.02
+            let cap = ceiling
             for w in weeks.indices where weeks[w].trainingVolumeM > cap {
                 let factor = cap / weeks[w].trainingVolumeM
                 for i in weeks[w].sessions.indices
@@ -555,6 +563,19 @@ enum PlanEngine {
             }
         }
 
+        // Rounding cannot add mileage back through the athlete's explicit ceiling.
+        if let cap = profile.targetWeeklyVolumeM, cap.isFinite, cap > 0 {
+            for w in weeks.indices where weeks[w].trainingVolumeM > cap {
+                let factor = cap / weeks[w].trainingVolumeM
+                for i in weeks[w].sessions.indices where weeks[w].sessions[i].discipline != .strength
+                    && weeks[w].sessions[i].runType != .race {
+                    if let distance = weeks[w].sessions[i].targetDistanceM {
+                        weeks[w].sessions[i].targetDistanceM = max(1, floor(distance * factor))
+                    }
+                }
+            }
+        }
+
         // Re-run the governor after the ordering pass moved volumes and clean-distance rounding
         // snapped them. On a beginner's small sessions a snap is a large relative change, and the
         // plan the athlete gets is the rounded one, so that is the shape the 1.3x cap has to hold.
@@ -564,7 +585,15 @@ enum PlanEngine {
         // it can then read as a spike (coach pass 2026-09-06 — a 5K build on a steep ladder failed
         // the legacy cap at exactly that week). Both passes only ever reduce, so they run in turn
         // until neither has anything left to do; three rounds is more than any real plan needs.
-        for _ in 0..<3 {
+        for _ in 0..<8 {
+            for w in weeks.indices {
+                for i in weeks[w].sessions.indices {
+                    let session = weeks[w].sessions[i]
+                    let limit = session.runType == .long ? profile.longRunLimitS : profile.regularRunLimitS
+                    weeks[w].sessions[i] = RunPrescriptionBudget.constrain(session, p5k: p5k,
+                        raceDistanceM: profile.raceDistanceM, goalPace: goalRacePace, limitS: limit, unit: profile.distanceUnit)
+                }
+            }
             var changed = false
             let finalFactors = ACWRGovernor.capFactors(weeklyMeters: weeks.map(\.trainingVolumeM),
                                                        currentWeeklyM: profile.currentWeeklyVolumeM ?? 0)
@@ -916,8 +945,10 @@ enum PlanEngine {
         // Can this week carry a session that counts? Three days always can; below that it takes
         // real mileage — except in the closing weeks, where even a base-building athlete gets one
         // short race-pace rehearsal so the pace is not novel on the start line.
-        let weekCanCarryQuality = runDays >= 3 || phase == .taper || phase == .peak
-            || (currentWeeklyVolumeM ?? (level == .new ? 14_000 : level == .some ? 26_000 : 42_000)) >= 18_000
+        let returningFoundation = isRunning && currentWeeklyVolumeM == 0
+            && (weekIndex == 0 || phase == .base || phase == .recovery)
+        let weekCanCarryQuality = !returningFoundation && (runDays >= 3 || phase == .taper || phase == .peak
+            || (currentWeeklyVolumeM ?? (level == .new ? 14_000 : level == .some ? 26_000 : 42_000)) >= 18_000)
         do {
             // Shares of the week, by how many days the athlete runs. Written as a table because
             // the constraints are only satisfiable at some values and a formula hid that: at three
@@ -2025,6 +2056,19 @@ enum PlanEngine {
         var pool: [Int]
         if cleanedPref.count >= total {
             pool = cleanedPref
+        } else if !cleanedPref.isEmpty {
+            // Partial preferences are anchors, not a reason to throw away the answer.
+            pool = cleanedPref
+            while pool.count < min(total, 7) {
+                let candidates = (0..<7).filter { !pool.contains($0) }
+                guard let next = candidates.max(by: { a, b in
+                    let gapA = pool.map { circularDayDistance(a, $0) }.min() ?? 0
+                    let gapB = pool.map { circularDayDistance(b, $0) }.min() ?? 0
+                    return gapA == gapB ? a > b : gapA < gapB
+                }) else { break }
+                pool.append(next)
+            }
+            pool.sort()
         } else {
             let open = (0..<7).filter { !avoidSet.contains($0) }
             pool = open.count >= total ? open : Array(0..<7)
@@ -2077,7 +2121,7 @@ enum PlanEngine {
         var runDays: [Int]
         if runs.isEmpty {
             runDays = []
-        } else if cleanedPref.count >= total {
+        } else if !cleanedPref.isEmpty {
             runDays = pickSpread(from: pool, count: runs.count)
             // The long run wants the weekend day among the preferred days.
             seatLongHome(&runDays)
@@ -2407,4 +2451,6 @@ struct PlanInputs: Equatable, Sendable {
     /// opens the app to the map with today's run, never a lift or a rest day. Off when a run was
     /// already logged today, so a rebuild after this morning's run does not ask for a second.
     var opensWithRun: Bool = true
+    var regularRunLimitS: Double? = nil
+    var longRunLimitS: Double? = nil
 }

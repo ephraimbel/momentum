@@ -11,6 +11,7 @@ import SwiftData
 struct WorkoutLibrarySheet: View {
     let plan: TrainingPlan
     var defaultDate: Date = Date()
+    var replacing: PlannedSession? = nil
     var onDone: () -> Void
 
     @Environment(\.modelContext) private var context
@@ -44,12 +45,13 @@ struct WorkoutLibrarySheet: View {
             }
             .navigationDestination(for: WorkoutLibrary.Entry.self) { entry in
                 WorkoutLibraryDetail(entry: entry, plan: plan, defaultDate: defaultDate,
-                                     distanceUnit: distanceUnit, onAdded: onDone)
+                                     distanceUnit: distanceUnit, replacing: replacing, onAdded: onDone)
             }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+        .trackScreen(.workoutLibrary)
     }
 
     private var intro: some View {
@@ -88,9 +90,10 @@ struct WorkoutLibrarySheet: View {
     /// "8 × 400m @ 4:41 /km · ~45 min" — so browsing already speaks in the athlete's numbers.
     private func card(_ entry: WorkoutLibrary.Entry) -> some View {
         let rx = WorkoutLibrary.prescription(entry, p5k: plan.p5kSPerKm, unit: distanceUnit)
+            .fitting(plan: plan, profile: profiles.first, unit: distanceUnit)
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.sm) {
-                Text(entry.name)
+                Text(rx.name)
                     .font(.rounded(Theme.FontSize.body, weight: .bold))
                     .foregroundStyle(Theme.ink)
                 tierChip(entry.tier)
@@ -99,7 +102,7 @@ struct WorkoutLibrarySheet: View {
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Theme.inkTertiary)
             }
-            Text(entry.what)
+            Text(rx.name == entry.name ? entry.what : rx.rationale)
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -161,6 +164,7 @@ struct WorkoutLibraryDetail: View {
     let defaultDate: Date
     let distanceUnit: DistanceUnit
     var onAdded: () -> Void
+    var replacing: PlannedSession? = nil
 
     @Environment(\.modelContext) private var context
     @Query private var profiles: [UserProfile]
@@ -168,21 +172,33 @@ struct WorkoutLibraryDetail: View {
     @State private var volume: Double?
     @State private var day: Date
     @State private var saveFailed = false
+    @State private var saveFailureMessage = "Your choices are still here. Please try again."
     /// Latched on the first Add tap — a double-tap must never write two sessions.
     @State private var adding = false
 
     init(entry: WorkoutLibrary.Entry, plan: TrainingPlan, defaultDate: Date,
-         distanceUnit: DistanceUnit, onAdded: @escaping () -> Void) {
+         distanceUnit: DistanceUnit, replacing: PlannedSession? = nil, onAdded: @escaping () -> Void) {
         self.entry = entry
         self.plan = plan
         self.defaultDate = defaultDate
         self.distanceUnit = distanceUnit
         self.onAdded = onAdded
+        self.replacing = replacing
         _day = State(initialValue: Calendar.current.startOfDay(for: defaultDate))
     }
 
     private var prescription: WorkoutLibrary.Prescription {
-        WorkoutLibrary.prescription(entry, volume: volume, p5k: plan.p5kSPerKm, unit: distanceUnit)
+        let proposed = WorkoutLibrary.prescription(entry, volume: volume, p5k: plan.p5kSPerKm, unit: distanceUnit)
+        if let replacing {
+            return PlanSessionReplacement.prescription(proposed, replacing: replacing, plan: plan,
+                                                       profile: profiles.first, unit: distanceUnit)
+        }
+        return proposed.fitting(plan: plan, profile: profiles.first, unit: distanceUnit)
+    }
+
+    private var replacementBlock: String? {
+        replacing.flatMap { PlanSessionReplacement.blocked($0,
+            by: WorkoutLibrary.prescription(entry, volume: volume, p5k: plan.p5kSPerKm, unit: distanceUnit), in: plan) }
     }
 
     private var workout: StructuredWorkout? {
@@ -197,8 +213,17 @@ struct WorkoutLibraryDetail: View {
                 header.reveal(0)
                 structureCard.reveal(0.05)
                 dialSection.reveal(0.09)
-                coachSections.reveal(0.13)
-                daySection.reveal(0.17)
+                if prescription.name == entry.name {
+                    coachSections.reveal(0.13)
+                } else {
+                    Text(prescription.rationale).font(.rounded(Theme.FontSize.body, weight: .medium))
+                        .foregroundStyle(Theme.inkSecondary)
+                }
+                if replacing == nil { daySection.reveal(0.17) }
+                else {
+                    Text(replacementBlock ?? "Keeps the date and fits within the original session's training budget.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                }
             }
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, Theme.Space.sm)
@@ -208,10 +233,10 @@ struct WorkoutLibraryDetail: View {
         .background(Theme.background)
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { addBar }
-        .alert("Couldn't add the workout", isPresented: $saveFailed) {
+        .alert(replacing == nil ? "Couldn't add the workout" : "Couldn't replace the workout", isPresented: $saveFailed) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Something went wrong writing to storage. Your choices are still here — try again.")
+            Text(saveFailureMessage)
         }
     }
 
@@ -222,10 +247,10 @@ struct WorkoutLibraryDetail: View {
             Text("\(entry.category.rawValue) · \(entry.tier.rawValue)".uppercased())
                 .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
                 .foregroundStyle(Theme.inkTertiary)
-            Text(entry.name)
+            Text(prescription.name)
                 .font(.display(30, weight: .black))
                 .foregroundStyle(Theme.ink)
-            Text(entry.what)
+            Text(prescription.name == entry.name ? entry.what : "An easy session within your time limit.")
                 .font(.rounded(Theme.FontSize.body, weight: .medium))
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -428,13 +453,14 @@ struct WorkoutLibraryDetail: View {
                 .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
         }
         .buttonStyle(.plain)
-        .disabled(adding)
+        .disabled(adding || replacementBlock != nil)
         .padding(.horizontal, Theme.Space.lg)
         .padding(.vertical, Theme.Space.sm)
         .background(Theme.background.opacity(0.94))
     }
 
     private var addLabel: String {
+        if replacing != nil { return "Replace this session" }
         let cal = Calendar.current
         if cal.isDateInToday(day) { return "Add for today" }
         if cal.isDateInTomorrow(day) { return "Add for tomorrow" }
@@ -444,16 +470,23 @@ struct WorkoutLibraryDetail: View {
     private func add() {
         guard !adding else { return }
         adding = true
-        let session = prescription.makeSession(on: day)
-        context.insert(session)
-        plan.sessions.append(session)
         do {
-            try context.save()
+            if let replacing {
+                try PlanSessionReplacement.apply(prescription, replacing: replacing, plan: plan,
+                    profile: profiles.first, unit: distanceUnit, in: context)
+            } else {
+                try PlanMutation.perform(in: context) {
+                    let session = prescription.makeSession(on: day)
+                    context.insert(session)
+                    plan.sessions.append(session)
+                }
+            }
             Haptics.success()
             PhoneWatchSync.shared.scheduleRefresh()
             onAdded()
         } catch {
-            context.delete(session)
+            saveFailureMessage = (error as? PlanSessionReplacement.Failure)?.message
+                ?? "Your choices are still here. Please try again."
             adding = false
             saveFailed = true
         }

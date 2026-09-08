@@ -30,6 +30,8 @@ struct CommunityView: View {
     /// second declaration for the same type further down.
     private struct FollowingPush: Identifiable, Hashable { let id = 0 }
     @State private var showingFollowing: FollowingPush?
+    @State private var showingExampleInfo = false
+    @State private var showingRouteDiscovery = false
     /// "Your day" with nothing shared today → share the latest workout (Aura's "select activity
     /// to share: Today"). The composer is the story composer.
     @State private var sharingToday: Workout?
@@ -627,6 +629,9 @@ struct CommunityView: View {
         .navigationBarHidden(true)
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .navigationDestination(item: $showingFollowing) { _ in FollowingListView() }
+        .sheet(isPresented: $showingRouteDiscovery) {
+            CommunityRouteDiscoveryView(items: items, ownHandle: profile?.handle)
+        }
         .sheet(item: $sharingToday) { w in
             ShareCardView(workout: w, weightUnit: WeightUnit(rawValue: profile?.weightUnit ?? "kg") ?? .kg,
                           distanceUnit: DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto)
@@ -925,6 +930,7 @@ struct CommunityView: View {
             }
         }
         #endif
+        .trackScreen(.community)
     }
 
     /// The wall: header → Friends | Global text tabs → tiles, one structured column (the stacked
@@ -939,17 +945,52 @@ struct CommunityView: View {
                 // branch, so opening Friends with nobody followed took the search field, the ring
                 // row and the scope tabs off screen with the wall — the one state where finding
                 // people matters most had no way to find people, and the header jumped.
-                followingRow
-                    .padding(.top, Theme.Space.md)
+                if followedPeople.isEmpty {
+                    Button { searching = true; Haptics.selection() } label: {
+                        Label("Find people", systemImage: "magnifyingglass")
+                            .font(.rounded(Theme.FontSize.body, weight: .medium))
+                            .foregroundStyle(Theme.inkSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(Theme.Space.md)
+                            .background(Theme.surface, in: Capsule())
+                    }
+                    .buttonStyle(CommunityControlPressStyle())
+                    .padding(.horizontal, Theme.Space.md)
+                    .padding(.top, Theme.Space.sm)
+                } else {
+                    followingRow.padding(.top, Theme.Space.md)
+                }
                 HStack {
                     Text("Explore")
                         .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    if items.contains(where: \.isCommunity) {
+                        Button { showingExampleInfo = true } label: {
+                            Label("Includes examples", systemImage: "info.circle")
+                                .font(.rounded(10, weight: .medium))
+                                .foregroundStyle(Theme.inkSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("community.examples.info")
+                    }
                     Spacer()
+                    Button { showingRouteDiscovery = true; Haptics.selection() } label: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(CommunityControlPressStyle())
+                    .accessibilityLabel("Browse routes")
+                    .accessibilityIdentifier("community.routes.browse")
                     savedRoutesDoor
                 }
                 .padding(.horizontal, Theme.Space.md)
                 .padding(.top, Theme.Space.lg)
                 CommunityScopeTabs(scopeRaw: $scopeRaw)
+                    .alert("About example profiles", isPresented: $showingExampleInfo) {
+                        Button("Got it", role: .cancel) { }
+                    } message: {
+                        Text("Example athletes and their activity are preloaded to show how Momentum works. Their posts and reactions are illustrative, not live member activity. Real members share their own workouts.")
+                    }
 
                 if items.isEmpty {
                     // No flash of the empty state during the very first assembly pass.
@@ -991,6 +1032,7 @@ struct CommunityView: View {
                         .padding(.bottom, Theme.Space.xxl)
                 }
             }
+            .communitySnapshotScrolling()
             .scrollPosition(id: $wallAnchor, anchor: .top)
             .onChange(of: wallAnchor) { _, id in
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
@@ -1158,7 +1200,7 @@ struct CommunityView: View {
                 Image(systemName: "bookmark.fill")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Theme.inkSecondary)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)

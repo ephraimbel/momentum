@@ -791,4 +791,205 @@ struct PlanLifecycleTests {
         #expect(activation.plan.name == "Faster 10K")
         #expect(try ctx.fetch(FetchDescriptor<TrainingPlan>()).count == 1)
     }
+    @Test func anUnreadableDraftCannotBeScheduled() throws {
+        let c = try makeContainer(); let ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let record = PlanShelfRecord(profileID: profile.id, status: .draft, name: "Broken",
+            createdAt: today, blueprintData: Data("broken".utf8))
+        ctx.insert(record); try ctx.save()
+        #expect(throws: PlanLifecycleService.Failure.unreadableBlueprint) {
+            try PlanLifecycleService.schedule(record, start: day(1), now: today, in: ctx)
+        }
+        #expect(record.status == .draft)
+        #expect(record.scheduledStart == nil)
+    }
+
+    @Test func anotherAthletesDraftCannotBeActivatedOrScheduled() throws {
+        let c = try makeContainer(); let ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let other = UserProfile(); ctx.insert(other)
+        let blueprint = PlanBlueprint(profile: profile)
+        let record = try PlanLifecycleService.saveDraft(blueprint, preview: nil, for: profile, in: ctx)
+        #expect(throws: PlanLifecycleService.Failure.notShelved) {
+            try PlanLifecycleService.activate(blueprint, from: record, for: other, now: today, in: ctx)
+        }
+        #expect(throws: PlanLifecycleService.Failure.notShelved) {
+            try PlanLifecycleService.schedule(record, start: day(1), for: other, now: today, in: ctx)
+        }
+        #expect(record.status == .draft)
+        #expect(other.plan == nil)
+    }
+
+}
+
+
+extension PlanLifecycleTests {
+    /// Six distinct ability/current-load profiles × four road distances × two availability budgets.
+    /// These exercise the actual preview and persisted activation, not a hand-built schedule.
+    @Test(arguments: Array(0..<48))
+    func runnerCohortPreviewActivationMatrix(_ scenario: Int) throws {
+        let cohorts: [(ExperienceLevel, Double, Double, Double, Int)] = [
+            (.new, 0, 0, 480, 3), (.some, 0, 0, 360, 3),
+            (.some, 20_000, 8_000, 330, 4), (.experienced, 40_000, 16_000, 270, 5),
+            (.experienced, 65_000, 24_000, 235, 6), (.experienced, 90_000, 30_000, 210, 6)]
+        let cohort = cohorts[scenario / 8], distance = [5_000.0, 10_000, 21_097.5, 42_195][(scenario / 2) % 4]
+        let limited = scenario % 2 == 1
+        let c = try makeContainer(), ctx = c.mainContext, p = UserProfile(), current = TrainingPlan()
+        p.createdAt = day(-180); p.disciplines = [Discipline.running.rawValue]
+        p.weeklyRunVolumeM = 70_000; p.longestRunM = 30_000
+        current.p5kSPerKm = cohort.3; ctx.insert(p); ctx.insert(current); p.plan = current
+        var b = PlanBlueprint(profile: p)
+        b.goal = .raceDistance; b.raceDistanceM = distance; b.raceDate = day(distance > 40_000 ? 140 : 112)
+        b.weeklyRunVolumeM = cohort.1; b.longestRunM = cohort.2; b.runningExperience = cohort.0
+        b.daysPerWeek = cohort.4; b.fitnessDeclaredAt = today.addingTimeInterval(-60)
+        if limited {
+            b.targetWeeklyRunVolumeM = max(10_000, cohort.1 * 0.8)
+            let prefs = PlanPreferencesRecord.upsert(profileID: p.id, in: ctx)
+            prefs.regularRunLimitS = 30 * 60; prefs.longRunLimitS = 60 * 60
+        }
+        try ctx.save()
+        let staged = PlanService.stagePreview(blueprint: b, for: p, startDate: today, in: ctx)
+        #expect(staged.inputs.currentWeeklyVolumeM == cohort.1)
+        #expect(staged.inputs.longestRunM == cohort.2)
+        let validation = LegacyPlanInvariantValidator.validate(staged.generated, inputs: staged.inputs,
+            calibration: CalibrationSeed(estimatedP5kSPerKm: cohort.3), startDate: today)
+        #expect(validation.isValid, "scenario \(scenario): \(validation.hardViolations.map(\.code))")
+        let preview = PlanLifecycleService.preview(for: b, profile: p, startDate: today, today: today, in: ctx)
+        let activated = try PlanLifecycleService.activate(b, for: p, now: today, in: ctx).plan
+        let rows = activated.sessions.filter { $0.discipline == .running && $0.runType != .race }
+        let blockStart = try #require(activated.blockStart)
+        let volumes = Dictionary(grouping: rows) {
+            (cal.dateComponents([.day], from: blockStart, to: $0.date).day ?? 0) / 7
+        }.mapValues { $0.reduce(0.0) { $0 + ($1.targetDistanceM ?? 0) } }
+        #expect(abs(preview.firstWeekM - (volumes[0] ?? 0)) < 1)
+        #expect(abs(preview.peakWeekM - (volumes.values.max() ?? 0)) < 1)
+        #expect(preview.longestRunM == rows.compactMap(\.targetDistanceM).max())
+        #expect(activated.sessions.filter { $0.runType == .race }.count == 1)
+        #expect(activated.sessions.first { $0.runType == .race }?.targetDistanceM == distance)
+        #expect(activated.weekPhases.last == PlanPhase.taper.rawValue)
+        if let ceiling = b.targetWeeklyRunVolumeM { #expect(preview.peakWeekM <= ceiling + 1) }
+        if limited {
+            for run in rows {
+                let seconds = FuelingGuide.estimatedDurationS(distanceM: run.targetDistanceM,
+                    paceSPerKm: run.targetPaceSPerKm, durationS: run.targetDurationS) ?? 0
+                #expect(seconds <= (run.runType == .long ? 3_600 : 1_800) + 1)
+            }
+        }
+        let after = PlanService.observedFitness(for: p, on: today, in: ctx)
+        #expect(after.weeklyM == cohort.1 && after.longestM == cohort.2)
+    }
+
+    @Test func freshFitnessAnswersClearOldMileageAndSurviveUndoAndCloudRestore() throws {
+        let c = try makeContainer(), ctx = c.mainContext, p = makeProfile(in: ctx)
+        p.createdAt = day(-180)
+        _ = logRun(25_000, at: day(-5), for: p, in: ctx)
+        var b = PlanBlueprint(profile: p)
+        b.weeklyRunVolumeM = 0; b.longestRunM = 0; b.fitnessDeclaredAt = today.addingTimeInterval(-60)
+        try PlanMutation.perform(in: ctx) { b.apply(to: p) }
+        let zero = PlanService.observedFitness(for: p, on: today, in: ctx)
+        #expect(zero.weeklyM == 0 && zero.longestM == 0)
+        let saved = try #require(CoachUndo.capture(p))
+        var unknown = b; unknown.weeklyRunVolumeM = nil; unknown.longestRunM = nil
+        unknown.fitnessDeclaredAt = today
+        try PlanMutation.perform(in: ctx) { unknown.apply(to: p) }
+        let unclear = PlanService.observedFitness(for: p, on: today, in: ctx)
+        #expect(unclear.weeklyM == nil && unclear.longestM == nil)
+        #expect(CoachUndo.restore(saved, profile: p, in: ctx))
+        #expect(p.weeklyRunVolumeM == 0 && p.longestRunM == 0 && p.fitnessDeclaredAt == b.fitnessDeclaredAt)
+        let snapshot = try PlanCloudSnapshot.capture(p, in: ctx)
+        let destination = try makeContainer()
+        let restored = try PlanMutation.perform(in: destination.mainContext) { try snapshot.restore(in: destination.mainContext) }
+        #expect(restored.fitnessDeclaredAt == b.fitnessDeclaredAt)
+        let restoredFitness = PlanService.observedFitness(for: restored, on: today, in: destination.mainContext)
+        #expect(restoredFitness.weeklyM == 0 && restoredFitness.longestM == 0)
+    }
+
+    @Test func recoveryEvidenceIsIdenticalInWorkerPreviewAndRebuild() async throws {
+        let c = try makeContainer(), ctx = c.mainContext, p = makeProfile(in: ctx)
+        p.createdAt = day(-180)
+        _ = logRun(30_000, at: day(-5), for: p, in: ctx)
+        let marker = PlanContinuityRecord.upsert(profileID: p.id, in: ctx)
+        marker.trainingEvidenceFrom = day(-2)
+        _ = logRun(2_000, at: day(-1), for: p, in: ctx)
+        var b = PlanBlueprint(profile: p)
+        b.weeklyRunVolumeM = 80_000; b.longestRunM = 30_000; b.fitnessDeclaredAt = today
+        try PlanMutation.perform(in: ctx) { b.apply(to: p) }
+        let worker = PlanFitnessWorker(modelContainer: c)
+        let read = try await worker.snapshot(declaredWeeklyM: p.weeklyRunVolumeM, declaredLongestM: p.longestRunM,
+            profileCreatedAt: p.createdAt, trainingEvidenceFrom: marker.trainingEvidenceFrom,
+            declaredAt: p.fitnessDeclaredAt, endingAt: today)
+        let staged = PlanService.stagePreview(blueprint: b, for: p, startDate: today, in: ctx)
+        let actual = PlanService.observedFitness(for: p, on: today, in: ctx)
+        #expect(read.weeklyM == 500 && read.longestM == 2_000 && read.usesLoggedRuns)
+        #expect(staged.inputs.currentWeeklyVolumeM == read.weeklyM && staged.inputs.longestRunM == read.longestM)
+        #expect(actual.weeklyM == read.weeklyM && actual.longestM == read.longestM)
+    }
+
+    @Test func scheduledPreviewCountsOnlyTrainingAfterItsStart() throws {
+        let c = try makeContainer(), ctx = c.mainContext, p = makeProfile(in: ctx)
+        let b = blueprint10K(p), start = day(49)
+        let preview = PlanLifecycleService.preview(for: b, profile: p, startDate: start, today: today, in: ctx)
+        let fitness = PlanService.stagePreview(blueprint: b, for: p, startDate: start, in: ctx).inputs.currentWeeklyVolumeM
+        let expected = PlanLifecycleService.feasibility(for: b, profile: p, today: start, currentWeeklyM: fitness)
+        #expect(preview.outlook?.verdict == expected.verdict.rawValue)
+        #expect(preview.outlook?.realisticFinishS == expected.realisticFinishS)
+    }
+
+    @Test func v8StoreUpgradesAndKeepsFreshDeclarationsOnReopen() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("upgrade.store"), id = UUID()
+        do {
+            let schema = Schema(versionedSchema: SchemaV8.self)
+            let c = try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, url: url)])
+            let p = UserProfile(); p.id = id; p.weeklyRunVolumeM = 0
+            c.mainContext.insert(p); try c.mainContext.save()
+        }
+        do {
+            let schema = Schema(versionedSchema: SchemaV9.self)
+            let c = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+                configurations: [ModelConfiguration(schema: schema, url: url)])
+            let p = try #require(try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first)
+            #expect(p.id == id && p.weeklyRunVolumeM == 0)
+            PlanFitnessDeclarationRecord.set(today, for: p, in: c.mainContext); try c.mainContext.save()
+        }
+        let schema = Schema(versionedSchema: SchemaV9.self)
+        let c = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
+            configurations: [ModelConfiguration(schema: schema, url: url)])
+        let p = try #require(try c.mainContext.fetch(FetchDescriptor<UserProfile>()).first)
+        #expect(p.fitnessDeclaredAt == today)
+    }
+}
+
+
+extension PlanLifecycleTests {
+    @Test func currentVolumeChangesTheStartingDoseAndZeroNeverUsesExperiencedDefaults() throws {
+        let c = try makeContainer(), ctx = c.mainContext, p = makeProfile(in: ctx)
+        p.createdAt = day(-180)
+        var b = blueprint10K(p)
+        b.runningExperience = .experienced; b.daysPerWeek = 5
+        b.fitnessDeclaredAt = today.addingTimeInterval(-60)
+        b.weeklyRunVolumeM = 20_000; b.longestRunM = 8_000
+        let regular = PlanService.stagePreview(blueprint: b, for: p, startDate: today, in: ctx).generated
+        b.weeklyRunVolumeM = 65_000; b.longestRunM = 24_000
+        let highVolume = PlanService.stagePreview(blueprint: b, for: p, startDate: today, in: ctx).generated
+        #expect(highVolume.weeks[0].runVolumeM > regular.weeks[0].runVolumeM)
+        b.weeklyRunVolumeM = 0; b.longestRunM = 0
+        let returning = PlanService.stagePreview(blueprint: b, for: p, startDate: today, in: ctx).generated
+        #expect(returning.weeks[0].runVolumeM < regular.weeks[0].runVolumeM)
+        #expect(returning.weeks[0].sessions.filter { $0.discipline == .running }.allSatisfy { !$0.isHardRun })
+        #expect(returning.weeks[0].sessions.contains { ($0.intervals ?? "").contains("Run/walk") })
+        #expect(returning.p5kSPerKm == regular.p5kSPerKm, "Experience and mileage are not a new measured race result.")
+    }
+
+    @Test func freshDeclarationsExpireAndDeletionRemovesTheirProvenance() async throws {
+        let c = try makeContainer(), ctx = c.mainContext, p = makeProfile(in: ctx)
+        p.createdAt = day(-180); p.weeklyRunVolumeM = 65_000; p.longestRunM = 25_000
+        PlanFitnessDeclarationRecord.set(today, for: p, in: ctx); try ctx.save()
+        #expect(PlanService.observedFitness(for: p, on: today, in: ctx).weeklyM == 65_000)
+        #expect(PlanService.observedFitness(for: p, on: day(60), in: ctx).weeklyM == 8_000)
+        try await DataManager.deleteAllUserData(container: c)
+        #expect(try ctx.fetchCount(FetchDescriptor<PlanFitnessDeclarationRecord>()) == 0)
+    }
 }

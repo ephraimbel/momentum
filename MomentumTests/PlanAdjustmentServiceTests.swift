@@ -57,6 +57,22 @@ struct PlanAdjustmentServiceTests {
         #expect(p.signature == PlanAdjustmentService.signature(of: profile.plan))
     }
 
+    @Test func recoveryChangeInvalidatesAProposalEvenWhenSessionsHaveNotChanged() throws {
+        let c = try makeContainer(), ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let proposal = PlanAdjustmentService.proposal(.changeDays(daysPerWeek: 5, preferredDays: nil),
+            title: "Days", request: "5 days", profile: profile, workouts: [], today: today, in: ctx)
+        let before = PlanAdjustmentService.signature(of: profile.plan)
+        // Persist only the athlete-wide state: the plan's sessions deliberately stay identical.
+        try IllnessResponse.save(.init(startedAt: today, checkedAt: today), profile: profile, in: ctx)
+        try ctx.save()
+        #expect(PlanAdjustmentService.signature(of: profile.plan) == before)
+        let result = PlanAdjustmentService.apply(proposal, profile: profile, workouts: [],
+            notifications: NotificationSpy(), today: today, in: ctx)
+        guard case .stale = result else { Issue.record("Recovery changes must invalidate an old proposal"); return }
+        #expect(profile.daysPerWeek == 4)
+    }
+
     @Test func theThrottleIsExplainedBeforeTheTapAndEnforcedOnApply() throws {
         let c = try makeContainer(); let ctx = c.mainContext
         let profile = makeProfile(in: ctx)
@@ -360,7 +376,7 @@ struct PlanAdjustmentServiceTests {
         try ctx.save()
         PlanCoaching.reconcileMissed(plan, today: today, in: ctx)
         #expect(plan.pausedUntil == nil)
-        #expect(past.allSatisfy { $0.status == .moved })
+        #expect(past.allSatisfy { $0.status == .moved || $0.status == .missed })
     }
 
     @Test func undoRestoresThePlanUnderTheSameIdentityWithItsAthleteState() throws {
@@ -491,6 +507,10 @@ struct PlanAdjustmentServiceTests {
         plan.lastAdaptedAt = today
         plan.lastPaceEasedAt = day(-1)
         plan.pausedUntil = day(3)
+        let evidenceID = UUID()
+        let state = PlanCoachingStateRecord.upsert(planID: plan.id, in: ctx)
+        state.pendingP5kWorkoutID = evidenceID
+        state.paceEvidenceDates[evidenceID.uuidString] = day(-1)
         try ctx.save()
 
         let rebuilt = try #require(PlanService.rebuild(for: profile, startDate: today, in: ctx))
@@ -499,6 +519,14 @@ struct PlanAdjustmentServiceTests {
         #expect(rebuilt.lastAdaptedAt == today)
         #expect(rebuilt.lastPaceEasedAt == day(-1))
         #expect(rebuilt.pausedUntil == day(3))
+        let rebuiltState = try #require(rebuilt.coachingState)
+        #expect(rebuiltState.pendingP5kWorkoutID == evidenceID)
+        #expect(rebuiltState.paceEvidenceDates[evidenceID.uuidString] == day(-1))
+        #expect(!rebuiltState.pauseShiftedDates.isEmpty)
+        #expect(rebuiltState.pauseShiftedDates.allSatisfy { id, date in
+            rebuilt.sessions.contains { $0.id.uuidString == id && $0.date == date }
+        })
+        #expect(PlanCoachingStateRecord.fetch(planID: planID, in: ctx) == nil)
         // The throttle still holds on the rebuilt plan, and says so before the tap.
         #expect(!CoachActions.canAdaptLoad(rebuilt, today: today))
         let ease = PlanAdjustmentService.proposal(.easeWeek, title: "Ease", request: "lighter", profile: profile,
@@ -577,5 +605,140 @@ struct PlanAdjustmentServiceTests {
         #expect(done.status == .completed)
         #expect(done.targetDistanceM == before[done.id]?.distanceM)
         #expect(spy.scheduled == 1)
+    }
+    @Test func crossingMidnightRequiresANewAdjustmentPreview() throws {
+        let c = try makeContainer(); let ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let proposal = PlanAdjustmentService.proposal(.easeThisWeek, title: "Ease", request: "Lighter",
+            profile: profile, workouts: [], today: today, in: ctx)
+        let spy = NotificationSpy()
+        guard case .stale(let fresh) = PlanAdjustmentService.apply(proposal, profile: profile,
+            workouts: [], notifications: spy, today: day(1), in: ctx) else {
+            Issue.record("A seven-day edit must be previewed again after midnight"); return
+        }
+        #expect(fresh.contextSignature != proposal.contextSignature)
+        #expect(spy.scheduled == 0)
+    }
+
+    @Test func changingAvailabilityRequiresANewPreviewWithoutChangingThePlan() throws {
+        let c = try makeContainer(); let ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let proposal = PlanAdjustmentService.proposal(.changeDays(daysPerWeek: 5, preferredDays: nil),
+            title: "Days", request: "5 days", profile: profile, workouts: [], today: today, in: ctx)
+        profile.sessionMinutes = 25
+        let spy = NotificationSpy()
+        guard case .stale(let fresh) = PlanAdjustmentService.apply(proposal, profile: profile,
+            workouts: [], notifications: spy, today: today, in: ctx) else {
+            Issue.record("Changed athlete settings must refresh the preview"); return
+        }
+        #expect(fresh.signature == proposal.signature)
+        #expect(fresh.contextSignature != proposal.contextSignature)
+        #expect(spy.scheduled == 0)
+    }
+
+    @Test func aNewCompletedRunInvalidatesAnOpenPreview() throws {
+        let c = try makeContainer(); let ctx = c.mainContext
+        let profile = makeProfile(in: ctx)
+        let proposal = PlanAdjustmentService.proposal(.easeThisWeek, title: "Ease", request: "Lighter",
+            profile: profile, workouts: [], today: today, in: ctx)
+        let run = Workout(); run.startedAt = today; run.durationS = 1800
+        ctx.insert(run)
+        let spy = NotificationSpy()
+        guard case .stale = PlanAdjustmentService.apply(proposal, profile: profile,
+            workouts: [run], notifications: spy, today: today, in: ctx) else {
+            Issue.record("Completed training changed the proposal inputs"); return
+        }
+        #expect(spy.scheduled == 0)
+    }
+
+    @Test func raceDateAndStrengthRepChangesInvalidateThePlanSignature() throws {
+        let plan = TrainingPlan()
+        let original = PlanAdjustmentService.signature(of: plan)
+        plan.raceDate = today
+        #expect(PlanAdjustmentService.signature(of: plan) != original)
+        let session = PlannedSession(); session.discipline = .strength
+        let target = PlannedExercise(); session.strengthTargets = [target]; plan.sessions = [session]
+        let beforeReps = PlanAdjustmentService.signature(of: plan)
+        target.targetRepHigh = 15
+        #expect(PlanAdjustmentService.signature(of: plan) != beforeReps)
+    }
+
+}
+
+@MainActor
+struct PlanMutationReliabilityTests {
+    enum DiskFailure: Error { case full }
+    private func container() throws -> ModelContainer {
+        let schema = Schema(PersistenceController.models)
+        return try ModelContainer(for: schema, configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+    }
+
+    @Test func failedCommitRestoresPlanAndDiscardsDeferredEffectsButKeepsPendingWorkout() throws {
+        let c = try container(), ctx = c.mainContext
+        let p = UserProfile(), plan = TrainingPlan(), session = PlannedSession()
+        ctx.insert(p); ctx.insert(plan); ctx.insert(session)
+        p.plan = plan; plan.sessions = [session]; session.targetDistanceM = 5000
+        try ctx.save()
+        let workout = Workout(); workout.durationS = 1234; ctx.insert(workout)
+        var published = false
+        do {
+            try PlanMutation.perform(in: ctx, commit: { _ in throw DiskFailure.full }) {
+                session.targetDistanceM = 9999
+                plan.lastAdaptedAt = Date()
+                PlanCoachingStateRecord.upsert(planID: plan.id, in: ctx).pendingP5kWorkoutID = workout.id
+                PlanMutation.afterCommit(in: ctx) { published = true }
+                try PlanMutation.save(ctx) // intermediate saves must not leak a partial edit
+            }
+            Issue.record("Commit should fail")
+        } catch is DiskFailure {}
+        #expect(session.targetDistanceM == 5000)
+        #expect(plan.lastAdaptedAt == nil)
+        #expect(plan.coachingState == nil)
+        #expect(!published)
+        #expect(try ctx.fetch(FetchDescriptor<Workout>()).first?.durationS == 1234)
+    }
+
+    @Test func replacementKeepsIdentityDateAndDoseAndProtectsEasyDays() throws {
+        let c = try container(), ctx = c.mainContext
+        let p = UserProfile(), plan = TrainingPlan(), session = PlannedSession()
+        p.disciplines = [Discipline.running.rawValue]
+        ctx.insert(p); ctx.insert(plan); ctx.insert(session); p.plan = plan; plan.sessions = [session]
+        session.discipline = .running; session.runType = .intervals; session.targetDistanceM = 6000
+        session.targetPaceSPerKm = 300; session.intervals = "6×400m @ 5K"
+        try ctx.save()
+        let id = session.id, date = session.date
+        let proposed = WorkoutLibrary.Prescription(name: "Tempo", runType: .tempo, intervals: nil,
+            targetDistanceM: 12000, targetDurationS: nil, targetPaceSPerKm: 320, rationale: "Steady effort.")
+        try PlanSessionReplacement.apply(proposed, replacing: session, plan: plan, profile: p, unit: .metric, in: ctx)
+        #expect(session.id == id && session.date == date && plan.sessions.count == 1)
+        #expect(session.runType == .tempo && (session.targetDistanceM ?? 0) <= 6000)
+        session.runType = .easy
+        #expect(PlanSessionReplacement.blocked(session, by: proposed, in: plan) != nil)
+        session.runType = .race
+        #expect(PlanSessionReplacement.blocked(session, by: proposed, in: plan) != nil)
+        session.runType = .intervals; session.status = .completed
+        #expect(PlanSessionReplacement.blocked(session, by: proposed, in: plan) != nil)
+    }
+
+    @Test func nestedMutationCommitsOnceAndHonoursTimeLimitsAfterManualIncrease() throws {
+        let c = try container(), ctx = c.mainContext
+        let p = UserProfile(), plan = TrainingPlan(), session = PlannedSession()
+        ctx.insert(p); ctx.insert(plan); ctx.insert(session)
+        p.plan = plan; plan.sessions = [session]
+        session.discipline = .running; session.runType = .easy
+        session.targetDistanceM = 1000; session.targetPaceSPerKm = 400
+        PlanPreferencesRecord.upsert(profileID: p.id, in: ctx).regularRunLimitS = 1800
+        try ctx.save()
+        var commits = 0, effects = 0
+        try PlanMutation.perform(in: ctx, commit: { context in commits += 1; try context.save() }) {
+            try PlanMutation.perform(in: ctx) {
+                session.targetDistanceM = 12000
+                PlanMutation.afterCommit(in: ctx) { effects += 1 }
+            }
+            #expect(effects == 0)
+        }
+        #expect(commits == 1 && effects == 1)
+        #expect((session.targetDistanceM ?? 0) <= 4500)
+        #expect(session.targetDurationS == 1800)
     }
 }

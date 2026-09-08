@@ -46,10 +46,19 @@ final class SavedRoute {
     }
 
     var pts: [[Double]] { (try? JSONDecoder().decode([[Double]].self, from: ptsJSON)) ?? [] }
+    /// Reject malformed saved geometry as a whole; dropping a bad point could invent a shortcut.
     var coordinates: [CLLocationCoordinate2D] {
-        pts.compactMap { $0.count >= 2 ? CLLocationCoordinate2D(latitude: $0[0], longitude: $0[1]) : nil }
+        var result: [CLLocationCoordinate2D] = []
+        for pair in pts {
+            guard pair.count >= 2, pair[0].isFinite, pair[1].isFinite else { return [] }
+            let point = CLLocationCoordinate2D(latitude: pair[0], longitude: pair[1])
+            guard CLLocationCoordinate2DIsValid(point) else { return [] }
+            if let last = result.last, last.latitude == point.latitude, last.longitude == point.longitude { continue }
+            result.append(point)
+        }
+        return result
     }
     var mapStyle: MapStyleOption { MapStyleOption(rawValue: mapStyleRaw) ?? .standard }
     var sport: WorkoutType { WorkoutType(rawValue: sportRaw) ?? .run }
-    var hasRoute: Bool { !pts.isEmpty }
+    var hasRoute: Bool { coordinates.count > 1 }
 }

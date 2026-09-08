@@ -163,3 +163,82 @@ Social is **free** (growth/virality per PRD §10). Pro stays the AI coach + adva
   data only** (`CommunityAthlete.isSample == false` hides the synthesized body-of-work).
   **Still deferred:** Realtime presence (globe) and social notifications (`AppNotification`
   social kinds + targetID deep-links).
+
+## 2026-09-07 — Where the seeded community actually runs
+**The wall's realism is a DATA problem, and two defects were shipped in the data while every test
+watching the code passed.**
+
+**1. Runners were drawn over water.** `scripts/fetch_community_routes.py` asked Mapbox Directions
+for real street loops — and then threw most of each answer away, keeping every Nth vertex until 90
+were left. On a long loop that replaces bridge and shoreline geometry with straight chords
+kilometres long, and a chord goes where the road did not. 425 of the 967 shipped loops carried a
+chord over 500 m; the worst was 10.3 km. Sampled against Mapbox's own `water` polygons — the same
+data the app's basemap paints blue — **seventeen of the forty worst-chord loops were drawn over open
+water**: an 8.8 km line from Sausalito across the Golden Gate, a Chicago "run" out in Lake Michigan,
+Sydney Harbour, Lake Ontario, the Hudson. `CommunityContentAuditTests.everyRouteFollowsBundledStreetGeometry`
+passed throughout, and honestly: every drawn polyline WAS a bundled loop. The bundled loop was wrong.
+
+**2. Everyone ran downtown.** Every loop of a metro was routed from that metro's single downtown
+coordinate, so all ~44 seeded athletes of a metro traced the same city-centre streets — including
+the two thirds of them who, since the 2026-08-29 places pass, say they live in a suburb or a
+commuter town. A wall of strangers whose stated homes span 2,990 real towns and whose maps span 65
+downtowns reads as generated no matter how good the rest of the content is.
+
+**What ships now.**
+- **Geometry is the routed path.** Simplification is Douglas-Peucker at 5 m, which can only remove a
+  point already lying on the line it leaves behind, so the shape stays on the road it came from.
+  Ferries are excluded from routing (a ferry leg is a genuinely over-water polyline), and any chord
+  over 700 m has its interior sampled against the live water layer before the loop is admitted.
+- **Loops are anchored on the towns athletes actually claim.** Each metro's anchors are picked from
+  `CommunityPlaces` by farthest-point sampling, so a handful covers the whole metro instead of
+  clustering downtown, and the core city carries a bigger share because a third of a metro's
+  athletes live there. Every loop ships its anchor (`c`), and `CommunityRoutes.pools(city:near:)`
+  hands an athlete the loops near their own home — resolved identically by the ledger, the wall card,
+  the profile grid and the pulse path, so the index a session stores still names the geometry the
+  tile draws.
+- **Trails exist.** A third kind (`trail`), anchored on parks, nature reserves, trailheads and
+  forest via Mapbox's category search. Trail runs were unconditionally mapless before this, for the
+  honest reason that no trail geometry was bundled — the one sport this community runs in nature was
+  the one that never showed where.
+- **Wire format v2** (`scripts/community_routes_lib.py` ↔ `CommunityRoutes.decode`): a magic byte,
+  then zigzag varint deltas at 1e-5 degrees. Deltas cost about half what the old absolute `Int32`
+  pairs at 1e-4 did, which is what pays for keeping the geometry instead of decimating it.
+
+**The tripwires.** `CommunityRouteRealismTests` pins the shape properties offline — no chord long
+enough to leave a road, geometry dense enough to be a routed path rather than a sample of one, every
+loop anchored on a real place of its own metro, the median athlete starting within 15 km of home.
+`scripts/audit_community_routes.py` does the empirical half against the live water layer; it is what
+to run after a regeneration, and it exits non-zero when any loop is drawn on water.
+
+**What that produced.** 2,840 loops across 65 metros (2,253 run, 281 ride, 306 trail) in 1.14 MB,
+against 967 loops in 947 KB before. Runs span 2.4 to 26.2 km, rides 13.8 to 61.7, trails 4.0 to
+18.2. The median distance from an athlete's home to the start of the route their card draws fell
+from **41.3 km to 14.0 km**, and the ninetieth percentile from 79.7 km to 42.0 km. Vertex counts,
+which the old fetch had collapsed onto exactly 90 for 99.4% of loops, now take 295 distinct values.
+
+**One more thing the wall needed: ONE basemap family.** A seeded post's map style was dealt from
+five options including the Pro `streets` and `outdoors` looks, so a single screen of six tiles could
+put a quiet grey street plan beside a saturated blue-and-green atlas — six different apps in one
+grid, and a straight breach of the house rule that colour is earned. It deals from the two default
+styles now, which are also the two an athlete without Pro could actually be using.
+
+**And the demo athlete's own runs.** `DemoSeed.samplesFromLoop` had the same disease at a smaller
+scale: `dense: false` kept 24 points of a 10 km loop, so the profile grid drew smooth ovals straight
+across the University of Texas campus and the Colorado River, over a basemap showing every street
+they ignored. It keeps 200 now.
+
+**Also fixed:** three of the eight featured athletes (`bennettbuilt`, `priya.hybrid`, `ergmornings`)
+print no location by design, and `routeCity` therefore fell through to `CommunityLedger.fallbackCity`
+— their globe dots sat in New York, London and Chicago while every mapped tile on their profile
+grids drew **Austin** streets. They carry an explicit `metro` now; the byline is unchanged.
+
+
+### 2026-09-08 — independent route audit corrections
+
+See [COMMUNITY-REALISM-AUDIT.md](COMMUNITY-REALISM-AUDIT.md) for evidence and verification. The
+previous section records the earlier implementation, not a geographic guarantee. Short wet streaks
+are not automatically bridges, and `exclude=ferry` is best-effort: the fetcher must inspect returned
+step modes. Pool equality proves data consistency, not real-world access. Park-anchored walking
+directions are not verified trail surface. Demo routes preserve every vertex; the intermediate
+200-point cap still cut corners. Sample posts no longer invent elevation or measured AI analysis.
+The community remains a clearly disclosed example population, not evidence of live membership.

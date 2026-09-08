@@ -12,8 +12,10 @@ struct PlanRenewalTests {
 
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema(PersistenceController.models)
-        return try ModelContainer(for: schema,
+        let container = try ModelContainer(for: schema,
                                   configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        ExerciseLibrarySeed.seedIfNeeded(into: container.mainContext)
+        return container
     }
 
     private let cal = Calendar.current
@@ -219,5 +221,33 @@ struct PlanRenewalTests {
         let renewed = PlanService.renewBlock(for: profile, startDate: today, in: ctx)
         #expect(renewed == nil)
         #expect(profile.plan?.blockIndex == before)   // untouched — races run to the line, not in blocks
+    }
+}
+
+extension PlanRenewalTests {
+    @Test func signupDoesNotTreatUnobservedWeeksAsZeroRunning() {
+        let now = Date()
+        let cal = Calendar(identifier: .gregorian)
+        let joined = cal.date(byAdding: .day, value: -10, to: now)!
+        let rows = [PlanRunEvidence(startedAt: now, distanceM: 10000),
+                    PlanRunEvidence(startedAt: joined, distanceM: 40000)]
+        let baseline = PlanFitnessEvidence.snapshot(runs: rows, declaredWeeklyM: 40000, declaredLongestM: 16000,
+                                                   profileCreatedAt: joined, endingAt: now, calendar: cal)
+        #expect(baseline.weeklyM == 40000)
+        let zero = PlanFitnessEvidence.snapshot(runs: [], declaredWeeklyM: 0, declaredLongestM: nil,
+                                               profileCreatedAt: now, endingAt: now, calendar: cal)
+        #expect(zero.weeklyM == 0)
+    }
+}
+
+
+extension PlanRenewalTests {
+    @Test func longestRecentRunUsesTheSameFourWeekWindowAsTheQuestion() {
+        let baseline = PlanFitnessEvidence.snapshot(runs: [
+            PlanRunEvidence(startedAt: day(-40), distanceM: 30_000),
+            PlanRunEvidence(startedAt: day(-2), distanceM: 5_000)],
+            declaredWeeklyM: 40_000, declaredLongestM: 30_000,
+            profileCreatedAt: day(-180), endingAt: today, calendar: cal)
+        #expect(baseline.longestM == 5_000)
     }
 }

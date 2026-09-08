@@ -1,0 +1,49 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "A48F1439-691B-4437-A020-F2FB20E2DB40",
+        "deviceName" : "Codex Fuel Plan Validation",
+        "modelName" : "iPhone 17 Pro",
+        "osBuildNumber" : "23C54",
+        "osVersion" : "26.2",
+        "platform" : "iOS Simulator"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 228,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "CommunityValidation · Built with macOS 26.6.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1788863954.289,
+  "passedTests" : 227,
+  "result" : "Passed",
+  "skippedTests" : 0,
+  "startTime" : 1788863937.73,
+  "statistics" : [
+    {
+      "subtitle" : "2 test runs",
+      "title" : "1 test ran with dynamic parameters"
+    }
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - CommunityValidation",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "100% of duration",
+      "text" : "7 longest test runs with outlier durations exceeding 0.65s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 227
+}

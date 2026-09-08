@@ -169,6 +169,7 @@ struct StrengthSaveView: View {
                 }
             }
         }
+        .trackScreen(.workoutSave)
     }
 
     /// The session's name and story printed directly on the page under the hero's fade (user
@@ -187,6 +188,12 @@ struct StrengthSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+            if CommunityAccess.enabled {
+                Text("Add a photo or a few words if you'd like. You choose who can see this session.")
+                    .font(.rounded(12, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
+                    .padding(.top, Theme.Space.xs)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -194,10 +201,7 @@ struct StrengthSaveView: View {
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             effortRow
-            if CommunityAccess.enabled {
-                Divider().overlay(Theme.hairline)
-                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
-            }
+
         }
         .padding(Theme.Space.md)
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))

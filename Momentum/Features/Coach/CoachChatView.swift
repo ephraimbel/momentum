@@ -158,6 +158,7 @@ struct CoachChatView: View {
             }
             #endif
         }
+        .trackScreen(.coachChat)
     }
 
     /// A calm, premium landing the first time in (redesigned 2026-07-30): a personal two-line

@@ -88,6 +88,7 @@ struct SportPicker: View {
                 }
             }
         }
+        .trackScreen(.sportPicker)
     }
 
     private var searchBar: some View {

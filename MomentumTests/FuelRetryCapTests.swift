@@ -122,7 +122,7 @@ struct FuelRetryCapTests {
     /// tabs twice exhausted a meal's whole budget on calls that were never made — and landing
     /// never brought the estimate back.
     @Test func offlineErrorsProveTheFunctionWasNeverReached() {
-        for code: URLError.Code in [.notConnectedToInternet, .networkConnectionLost,
+        for code: URLError.Code in [.notConnectedToInternet,
                                     .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
                                     .dataNotAllowed, .internationalRoamingOff,
                                     .secureConnectionFailed] {
@@ -134,6 +134,7 @@ struct FuelRetryCapTests {
     /// and a meal that times out on every visit is the standing tax the cap exists to stop.
     @Test func aTimeoutStillCostsAnAttempt() {
         #expect(!FuelEstimator.neverReachedServer(URLError(.timedOut)))
+        #expect(!FuelEstimator.neverReachedServer(URLError(.networkConnectionLost)))
         #expect(!FuelEstimator.neverReachedServer(URLError(.badServerResponse)))
     }
 

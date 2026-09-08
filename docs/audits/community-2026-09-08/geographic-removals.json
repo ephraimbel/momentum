@@ -1,0 +1,14 @@
+[
+  {
+    "city": "San Antonio, TX",
+    "kind": "trail",
+    "index": 4,
+    "reason": "outside supported anchor/start-snap limit"
+  },
+  {
+    "city": "Tampa, FL",
+    "kind": "trail",
+    "index": 1,
+    "reason": "outside supported anchor/start-snap limit"
+  }
+]

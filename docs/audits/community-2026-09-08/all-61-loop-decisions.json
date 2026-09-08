@@ -1,0 +1,1222 @@
+[
+  {
+    "route_id": "0cc601c71e7312d75a7498e2cad47a36c9fe3e10c0fe38a262c33e964c782b7e",
+    "city": "Austin, TX",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "S Congress Ave"
+    ],
+    "segments": [
+      27
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "4baf587f211f46c3acf6b830f74e9424a785da0f2d2998f6f19cec518db4f749",
+    "city": "Boston, MA",
+    "kind": "run",
+    "original_index": 5,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Beacon St"
+    ],
+    "segments": [
+      14,
+      41
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "1ebec49b953eb28de1957a93401b2ee4a3b8c03e8e892b14c8a509386d5bb283",
+    "city": "Boston, MA",
+    "kind": "trail",
+    "original_index": 1,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Beacon St"
+    ],
+    "segments": [
+      20,
+      29
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "6f3285a1686ca4a12a769b3cffb99ec13b051958d31b63fd038b5b3af6c84999",
+    "city": "Boulder, CO",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "County Rd 14 1/2"
+    ],
+    "segments": [
+      12
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "f1b3447db87458b1c21775c2539eee2b0cb84e6403504517af9b860f3e2cede8",
+    "city": "Boulder, CO",
+    "kind": "run",
+    "original_index": 24,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Hwy 52"
+    ],
+    "segments": [
+      1
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "ee3bfa8f0af86184abee067a98edaf3f26e95664bfd2c6c9ef3fe2084532572b",
+    "city": "Brooklyn, NY",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 8,
+    "max_consecutive_wet": 4,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "George Washington Bridge Lower Level",
+      "George Washington Bridge Upper Level",
+      "N Walk"
+    ],
+    "segments": [
+      57,
+      191
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "7a3445bc64bd4f72ebb665cd915c1443e324e274ad15a7f7eec23cac878c44c9",
+    "city": "Charlotte, NC",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [],
+    "segments": [
+      159,
+      306
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "3e4ab568294a2baa4fd180c98e95ce78dc2d0d88a391916bff6a4612776fd139",
+    "city": "Chicago, IL",
+    "kind": "run",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Chinatown-Ogilvie/Union",
+      "Michigan Avenue-Chinatown",
+      "W Roosevelt Rd"
+    ],
+    "segments": [
+      92
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "744912d819b2b90ca9e6c4ac492445461db1e91786065bff9820c06082f697a0",
+    "city": "Cincinnati, OH",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Roebling Bridge"
+    ],
+    "segments": [
+      30,
+      43
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "39ebab5d896b48cc993d8bfd811f659bf4b6bd3cbfefa1472bea5ab382b59c94",
+    "city": "Cincinnati, OH",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Taylor\u2013Southgate Bridge"
+    ],
+    "segments": [
+      60,
+      77
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "73c94e034c57697c1de9f7b0673d9470f902c72d28a34b6a5415b863e75424cb",
+    "city": "Dallas, TX",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 6,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "W Eldorado Pkwy"
+    ],
+    "segments": [
+      8,
+      55
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "9eefc474efbfea9664b7ced4c72340ce52299ead13a2e7894dce2f2c7f6f0b97",
+    "city": "Dallas, TX",
+    "kind": "run",
+    "original_index": 37,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 6,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Lake Ridge Pkwy"
+    ],
+    "segments": [
+      38,
+      51
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "6b7e50bc62b4f2c072104a8bca41013515148fd27ccd5863fd319cd145a9ca85",
+    "city": "Denver, CO",
+    "kind": "run",
+    "original_index": 24,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "W Bridge St"
+    ],
+    "segments": [
+      11
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "a87d7b7e41c8704c8c2144f5c4b6fbd606763b3c6898ecd7f00f3341231e4089",
+    "city": "Dublin",
+    "kind": "run",
+    "original_index": 2,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "MacMahon Bridge"
+    ],
+    "segments": [
+      14,
+      30
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "52033f33ffd776d870bb5919532f8a66a04f1a9bc9e21000762878bea41c3f0f",
+    "city": "Houston, TX",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "House Hahl Trail"
+    ],
+    "segments": [
+      80
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "8af3fed3129e3ef426ccd146dfdce2cbf64093d7a98829b4796600b19f2fbd5b",
+    "city": "London",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Waterloo Bridge"
+    ],
+    "segments": [
+      46
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "6665149a0133ef80541271a6a123213ca1be0f1b449605b8ce616d7255efae66",
+    "city": "London",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Waterloo Bridge"
+    ],
+    "segments": [
+      98
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "9c7d1e73548090cc36174df4edc2a6afdb43f8ded84191e796f518215700848e",
+    "city": "Los Angeles, CA",
+    "kind": "run",
+    "original_index": 34,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_waterfront_or_crossing"
+    ],
+    "road_names": [],
+    "segments": [
+      3
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "537aa1c057f8d423c9af1f34cea2e44eca1cd0d21d66942874c7a6df6be61435",
+    "city": "Madison, WI",
+    "kind": "run",
+    "original_index": 17,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Glacial Drumlin State Trail"
+    ],
+    "segments": [
+      17,
+      51
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "2729588ad8f8fe92dd54451acccd4d89614bd62a0f85402bd931f7d4ec767f1d",
+    "city": "Madison, WI",
+    "kind": "run",
+    "original_index": 19,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Merrimac Ferry"
+    ],
+    "segments": [
+      7,
+      16
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "cb881b412183d5f326011ec975c47d92c1af4a8b424dee3c92ca2ee57df258ea",
+    "city": "Madison, WI",
+    "kind": "run",
+    "original_index": 20,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Merrimac Ferry"
+    ],
+    "segments": [
+      43,
+      68
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "d861208a1507a51aaeedc56c78f223eb7f7a6bff3ac2846f3b75795c38f3bd04",
+    "city": "Nashville, TN",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Jefferson St Bridge"
+    ],
+    "segments": [
+      2
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "7e43eb2633ba1ba89e7b9df14cea37205e118d1d2fb7e9e70b5a149d161f5b32",
+    "city": "Nashville, TN",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Jefferson St Bridge"
+    ],
+    "segments": [
+      58
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "449f7146225f5d4273708fbb69c3d420379674db92aee1ed31017764eaee74ae",
+    "city": "New York, NY",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Manhattan Bridge",
+      "Manhattan Bridge Pedestrian Path"
+    ],
+    "segments": [
+      82,
+      83
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "ef246393d29db947e25615c62ed760133914b3953661e71e41389e1ac3210dc5",
+    "city": "New York, NY",
+    "kind": "run",
+    "original_index": 5,
+    "decision": "quarantine",
+    "wet_samples": 6,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Paulus Hook \u2013 Brookfield Pl"
+    ],
+    "segments": [
+      12,
+      44
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "880fa25eacaa019bcb3c1261a75ca3b803151ac388d450d0e7ee0cb2bf77977e",
+    "city": "New York, NY",
+    "kind": "trail",
+    "original_index": 2,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Ed Koch Queensboro Bridge Lower Roadway",
+      "Ed Koch Queensboro Bridge Outer Roadway",
+      "Ed Koch Queensboro Bridge Upper Level",
+      "Long Island City \u2013 Roosevelt Island"
+    ],
+    "segments": [
+      13,
+      54
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "b13ed42e0311b1095f8fa5f9508c3f1042397da441f83beacc5f9993e6bf8729",
+    "city": "Oakland, CA",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "quarantine",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Posey Tube",
+      "Posey Tube Path"
+    ],
+    "segments": [
+      97,
+      125
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "ed454e57283b7cdc4614d052ddc0617659c131545a72f76b73627da722dc8ee5",
+    "city": "Orlando, FL",
+    "kind": "trail",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Riverwalk Trail",
+      "W Seminole Blvd"
+    ],
+    "segments": [
+      2,
+      31
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "d4ee2c8b2be1328d2f7230827db62348173b82d0f71412a191138d3704a37b8a",
+    "city": "Oslo",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Aker brygge \u2013 Hoved\u00f8ya"
+    ],
+    "segments": [
+      161,
+      190
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+    "city": "Oslo",
+    "kind": "run",
+    "original_index": 28,
+    "decision": "quarantine",
+    "wet_samples": 10,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Dr\u00f8bak \u2013 Oscarborg"
+    ],
+    "segments": [
+      13,
+      32,
+      53,
+      72
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "7c97ba8428c8af5a83390628fc56e688805c5723d4c04f8868d3603c4768212f",
+    "city": "Philadelphia, PA",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Chestnut St",
+      "Walnut St"
+    ],
+    "segments": [
+      29,
+      38
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "b51320b6b95ca9c8079ad0d561a89d9b9eb98ada8c09ede28d0856f17c64ee5c",
+    "city": "Philadelphia, PA",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Chestnut St",
+      "Schuylkill River Trail"
+    ],
+    "segments": [
+      4
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "c32846a15e0b176fd909d7ed9c32d25ce1401e958145bd99437d72613f5bc082",
+    "city": "Philadelphia, PA",
+    "kind": "run",
+    "original_index": 7,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Market St",
+      "Salem-Woodstown Rd"
+    ],
+    "segments": [
+      33
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "e9c0533f43cd411f5cccba436d8e541f68ab8a0dfc0e39447ee9cc500df78664",
+    "city": "Pittsburgh, PA",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Smithfield St",
+      "Three Rivers Heritage Trail"
+    ],
+    "segments": [
+      15
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "4929d5645be9f9bbc0f77e452a5f2aa53d2aa4387c5a9c65f7fdd812488e0ed9",
+    "city": "Pittsburgh, PA",
+    "kind": "trail",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "David McCullough Bridge"
+    ],
+    "segments": [
+      6,
+      24
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "261e3c7c4fd0c5a4fdc8d67186d4da8df9586ec54c35503a44dcc98d59c015b8",
+    "city": "Pittsburgh, PA",
+    "kind": "trail",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Rankin Bridge"
+    ],
+    "segments": [
+      54,
+      81
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "1f8f84141c933b0760f6efd5d374e7eba183248dd4061ac8a2600c74824ff666",
+    "city": "Portland, OR",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Burnside Bridge"
+    ],
+    "segments": [
+      26
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "2f76a7e84326a19b2c59a793456b8a6020e75f471b8a84c6f06ed18681b8f7f2",
+    "city": "Portland, OR",
+    "kind": "run",
+    "original_index": 22,
+    "decision": "quarantine",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Pacific Hwy E",
+      "SW Pacific Hwy E"
+    ],
+    "segments": [
+      40
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "1da5a9328fd3a8e8a5bebd6ecddd0dc21bee54bfda0006f0f8f6b8f9979b10d0",
+    "city": "Richmond, VA",
+    "kind": "run",
+    "original_index": 4,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Manchester Bridge"
+    ],
+    "segments": [
+      27
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "c834cd774610f17515d22be5ef882c38e029b8de1d68bcb5db25f16786db62a0",
+    "city": "Richmond, VA",
+    "kind": "run",
+    "original_index": 5,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 6,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Manchester Bridge"
+    ],
+    "segments": [
+      14,
+      159
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "c7c14d09e75a69e1a08e932e2315ab5f05404b5892ca12a5573d62f5eb3625a0",
+    "city": "Richmond, VA",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Mayo Bridge"
+    ],
+    "segments": [
+      85
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "e817d9735a59b263814f4efb65e06adcef5c782ef829b9b8bec82a9dfc24490e",
+    "city": "Sacramento, CA",
+    "kind": "ride",
+    "original_index": 2,
+    "decision": "quarantine",
+    "wet_samples": 2,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [],
+    "segments": [
+      163,
+      183
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "e6906724ead451a51b43d927a83b7b4eef39836661cf4939cdf3303ed1cb1a4a",
+    "city": "San Francisco, CA",
+    "kind": "run",
+    "original_index": 15,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 8,
+    "max_consecutive_wet": 4,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Carquinez Bridge Trail"
+    ],
+    "segments": [
+      24,
+      79
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "42e9f6967f37e77b25d59ad46e415908c39fdacd37e2d9e8d0e57a20d76d4b4c",
+    "city": "Seattle, WA",
+    "kind": "ride",
+    "original_index": 1,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Mann Rd"
+    ],
+    "segments": [
+      50
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "590ebc879f6babbba433e51e4b06b99f3a07c65607f4666624e7f1600ac90c7f",
+    "city": "Singapore",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Tengku Fisabilillah"
+    ],
+    "segments": [
+      29,
+      110
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "3e141bd6f436b5e38a1e40722467374f1036cc7d425eeb903fb01e4919190305",
+    "city": "Singapore",
+    "kind": "run",
+    "original_index": 7,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Tengku Fisabilillah"
+    ],
+    "segments": [
+      6,
+      85
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "2307a7cef829a30098e16ef4ca8eb13508e16fa2b4f06975c5ba426c3537f028",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 2,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Eads Bridge"
+    ],
+    "segments": [
+      17,
+      44
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "45029d5f8e643293a5c96c0bbadc9dcc315fe53ca2449b4cf9f0162831e62cd6",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Eads Bridge"
+    ],
+    "segments": [
+      57,
+      75
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "ba0dc4d77bf3f0072f783a09f1aeffc076021d3bf49a25e6947a64ec37f9a9c6",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 20,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Discovery Bridge",
+      "Missouri Greenway"
+    ],
+    "segments": [
+      15,
+      84
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "e2e9570dc14c6005909e2c91109aa1cd805f9be096cd64113a0a515d28cb702a",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 21,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Discovery Bridge",
+      "Missouri Greenway"
+    ],
+    "segments": [
+      15,
+      127
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "229fd9db41cbfd796b721d4cb9bb253c5331fe9ac2245b2dfb0b016267f079d0",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 31,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Grafton Ferry"
+    ],
+    "segments": [
+      7,
+      26
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "180a2fb69d07cf779bc8ba6967dea777e5cda285ed08a63cee4772f436589298",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 32,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Grafton Ferry"
+    ],
+    "segments": [
+      7,
+      8
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "110d798af92edf78637355ba1fcb52cbcea975713b4d6e346f5c6bc59f54b77e",
+    "city": "St. Louis, MO",
+    "kind": "run",
+    "original_index": 34,
+    "decision": "quarantine",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Grafton Ferry"
+    ],
+    "segments": [
+      137,
+      156
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "77148f3d0142172a46c5eb4c47c98a8ac90f448e82a587e93a1303e771941c65",
+    "city": "Stockholm",
+    "kind": "ride",
+    "original_index": 0,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 2,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "V\u00e4sterbron"
+    ],
+    "segments": [
+      100
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "e71ce270fcd96e095aa54caa57a55d5351357ee79e27a4ba64eb3853e516509a",
+    "city": "Tampa, FL",
+    "kind": "ride",
+    "original_index": 3,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_waterfront_or_crossing"
+    ],
+    "road_names": [
+      "Pinellas Trail"
+    ],
+    "segments": [
+      173
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "71aea93d2b10b8e788322ec01d7ed283d7f491a0e203e4337e1e63d5c9643407",
+    "city": "Tampa, FL",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 5,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Green Bridge"
+    ],
+    "segments": [
+      3,
+      51
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "b6c2bade9df4eb690fe538ea424495984948404b159928d77fd4861c5ef6ebc6",
+    "city": "Tampa, FL",
+    "kind": "run",
+    "original_index": 8,
+    "decision": "quarantine",
+    "wet_samples": 6,
+    "max_consecutive_wet": 3,
+    "classifications": [
+      "mapped_bridge",
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Green Bridge",
+      "Hernando DeSoto Bridge",
+      "Manatee Ave W",
+      "Riverwalk"
+    ],
+    "segments": [
+      72,
+      104,
+      109
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "274cc928aeb99371248e0f45c9a72e4e23a6d41a827c256676673a562ea0b714",
+    "city": "Toronto",
+    "kind": "run",
+    "original_index": 5,
+    "decision": "quarantine",
+    "wet_samples": 8,
+    "max_consecutive_wet": 4,
+    "classifications": [
+      "unresolved_water"
+    ],
+    "road_names": [
+      "Toronto \u2013 Hanlan\u2019s Pt"
+    ],
+    "segments": [
+      93,
+      102
+    ],
+    "present_in_final_bundle": false
+  },
+  {
+    "route_id": "c247accd119f152c1624fd309f7ca3247ed371fb9039444c279275e3cd7f2396",
+    "city": "Vancouver",
+    "kind": "run",
+    "original_index": 6,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 1,
+    "max_consecutive_wet": 1,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Cambie Bridge",
+      "Cambie St Bridge"
+    ],
+    "segments": [
+      12
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "61288abbd1e2ce7d3c0a0ecf587de3c1aae716690dd5286c36cc2b46eafc8350",
+    "city": "Vancouver",
+    "kind": "run",
+    "original_index": 24,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 4,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "stal\u0315\u0259w\u0313as\u0259m Bridge"
+    ],
+    "segments": [
+      32,
+      133
+    ],
+    "present_in_final_bundle": true
+  },
+  {
+    "route_id": "34eef15bc2862d93aecbca79bfe5a7a926ce558318339e60f4a47c7386792886",
+    "city": "Vancouver",
+    "kind": "run",
+    "original_index": 25,
+    "decision": "retain_supported_geometry",
+    "wet_samples": 5,
+    "max_consecutive_wet": 2,
+    "classifications": [
+      "mapped_bridge"
+    ],
+    "road_names": [
+      "Hwy 91A",
+      "Queensborough Bridge E Sidewalk",
+      "stal\u0315\u0259w\u0313as\u0259m Bridge"
+    ],
+    "segments": [
+      24,
+      119,
+      161
+    ],
+    "present_in_final_bundle": true
+  }
+]

@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var exportMessage: String?
     @State private var confirmDelete = false
     @State private var deletingData = false   // background wipe in flight; the row shows a spinner
+    @State private var deleteDataFailed = false
     @State private var healthConnected = false
     @State private var connectingHealth = false
     @State private var healthDenied = false   // the permission sheet was declined — say so, don't dead-end
@@ -110,7 +111,15 @@ struct SettingsView: View {
                 // profile goes last, so RootView flips to onboarding only once everything's gone.
                 deletingData = true
                 Task {
-                    await DataManager.deleteAllUserData(container: context.container)
+                    services.planSync.prepareForLocalReset()
+                    do {
+                        try await DataManager.deleteAllUserData(container: context.container)
+                        services.planSync.finishLocalReset(account: auth.userID, isGuest: auth.isGuest,
+                            expectedOwner: auth.cloudOwnerID, in: context)
+                    } catch {
+                        services.planSync.localResetFailed()
+                        deleteDataFailed = true
+                    }
                     deletingData = false   // normally moot (RootView re-onboards) — never spin forever
                 }
             }
@@ -126,6 +135,10 @@ struct SettingsView: View {
                     deletingAccount = true
                     deleteAccountFailed = false
                     let ok = await auth.deleteAccount()
+                    if ok {
+                        do { try services.planSync.forgetDeletedAccount(in: context) }
+                        catch { NotificationCenter.default.post(name: PlanMutation.failureNotification, object: nil) }
+                    }
                     deletingAccount = false
                     deleteAccountFailed = !ok
                     // Second half of the hand-hold: the server side is gone — now offer the
@@ -141,7 +154,15 @@ struct SettingsView: View {
             Button("Erase this device too", role: .destructive) {
                 deletingData = true
                 Task {
-                    await DataManager.deleteAllUserData(container: context.container)
+                    services.planSync.prepareForLocalReset()
+                    do {
+                        try await DataManager.deleteAllUserData(container: context.container)
+                        services.planSync.finishLocalReset(account: auth.userID, isGuest: auth.isGuest,
+                            expectedOwner: auth.cloudOwnerID, in: context)
+                    } catch {
+                        services.planSync.localResetFailed()
+                        deleteDataFailed = true
+                    }
                     deletingData = false
                 }
             }
@@ -149,6 +170,12 @@ struct SettingsView: View {
         } message: {
             Text("Everything on momentum's servers is gone. The workouts and meals on this phone are still here — keep training as a guest, or erase them too and start completely fresh from setup.")
         }
+        .alert("Couldn't finish deleting data", isPresented: $deleteDataFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Some data may already have been removed. Please try Delete all data again to finish.")
+        }
+        .trackScreen(.settings)
     }
 
     // MARK: Identity header

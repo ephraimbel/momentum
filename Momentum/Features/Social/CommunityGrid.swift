@@ -68,7 +68,7 @@ private struct FeedGridBody: View, Equatable {
     /// session and never again.
     @MainActor private static var didPlayEntrance = false
     @State private var arrived: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     init(items: [FeedItem], zoomNamespace: Namespace.ID? = nil,
          newBoundaryID: UUID? = nil, newPostCount: Int = 0,
@@ -171,7 +171,7 @@ private struct FeedTile: View {
     var onOpen: () -> Void
 
     @Environment(ReactionStore.self) private var reactions
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
     @State private var ink: FeedTileMedia.InkContext = .appearance
     /// The double-tap heart burst — visible for a beat, then gone.
     @State private var burst = false
@@ -308,6 +308,7 @@ struct FeedTileMedia: View {
     /// Wall/grid tiles follow the author's cover choice. The post pager's alternate rectangle
     /// opts out so it always previews the actual route/body visual, never a duplicate photo.
     var respectsPhotoCover: Bool = true
+    var showsMapStatus: Bool = true
     var onInkContext: ((InkContext) -> Void)? = nil
 
     /// One render size for every wall/grid tile, so the synchronous cache read below and the async
@@ -328,10 +329,11 @@ struct FeedTileMedia: View {
     /// are mapped there and nowhere else.
     private var hasRoute: Bool { item.hasRenderableRoute }
 
-    init(item: FeedItem, respectsPhotoCover: Bool = true,
+    init(item: FeedItem, respectsPhotoCover: Bool = true, showsMapStatus: Bool = true,
          onInkContext: ((InkContext) -> Void)? = nil) {
         self.item = item
         self.respectsPhotoCover = respectsPhotoCover
+        self.showsMapStatus = showsMapStatus
         self.onInkContext = onInkContext
         #if DEBUG
         if Thread.isMainThread {
@@ -349,13 +351,18 @@ struct FeedTileMedia: View {
     @State private var photo: UIImage?
     @State private var photoPreview: UIImage?
     @State private var snapshot: UIImage?
+    @State private var snapshotIdentity: String?
+    @State private var mapLoadFinished = false
+    private var mediaIdentity: String {
+        "\(item.id)-\(item.renderSignature)-\(colorScheme == .dark)-\(respectsPhotoCover)"
+    }
 
     /// The already-rendered map for this tile, if one exists — `@State` first, then the shared
     /// cache read synchronously. `LazyVGrid` discards a cell's `@State` when it scrolls off, so
     /// without the second half every scroll-back drew a grey silhouette for a frame and crossfaded
     /// the map in behind it, on tiles that had been finished for minutes.
     private var resolvedSnapshot: UIImage? {
-        if let snapshot { return snapshot }
+        if snapshotIdentity == mediaIdentity, let snapshot { return snapshot }
         guard hasRoute else { return nil }
         return FeedRouteSnapshots.cachedImage(post: item.id, style: item.mapStyle,
                                               scheme: colorScheme, size: Self.tileSize,
@@ -392,6 +399,17 @@ struct FeedTileMedia: View {
                         RouteSilhouette(coords: item.routeCoordinates ?? [])
                             .stroke(Theme.route, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                             .padding(Theme.Space.md)
+                        if showsMapStatus {
+                            HStack(spacing: 5) {
+                                if !mapLoadFinished { ProgressView().controlSize(.mini) }
+                                Text(mapLoadFinished ? "Route preview" : "Loading map…")
+                                    .font(.rounded(10, weight: .medium))
+                            }
+                            .foregroundStyle(Theme.inkSecondary)
+                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .background(Theme.surface.opacity(0.95), in: Capsule())
+                            .allowsHitTesting(false)
+                        }
                     }
                 }
             } else if item.photoData != nil {
@@ -401,7 +419,10 @@ struct FeedTileMedia: View {
             }
         }
         .animation(.easeOut(duration: 0.25), value: map != nil)
-        .task(id: "\(item.id)-\(item.renderSignature)-\(colorScheme == .dark)-\(respectsPhotoCover)") {
+        .task(id: mediaIdentity) {
+            let requestIdentity = mediaIdentity
+            mapLoadFinished = false
+            defer { if !Task.isCancelled { mapLoadFinished = true } }
             // The cover rule (2026-07-29): the activity's own visual leads; a photo covers only
             // when the author chose it — or when the post has no route/muscle visual at all.
             if respectsPhotoCover, item.coverIsPhoto, let data = item.photoData {
@@ -452,6 +473,8 @@ struct FeedTileMedia: View {
                 if let rendered = await FeedRouteSnapshots.image(
                     post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
                     size: Self.tileSize, routeWidth: Self.tileRouteWidth) {
+                    guard !Task.isCancelled else { return }
+                    snapshotIdentity = requestIdentity
                     snapshot = rendered
                     // The canvas the snapshot ACTUALLY baked, not the style the post stored: a
                     // Realistic/Light post pairs to Dark at night (`uriStyle(for:)`, the same
@@ -508,7 +531,7 @@ private struct FeedTilePressStyle: ButtonStyle {
 /// (opacity only, ~1.6s — nothing close to a strobe). Reduce Motion holds it steady.
 struct LiveDot: View {
     @State private var bright = false
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         Circle()
@@ -536,7 +559,7 @@ struct LiveDot: View {
 struct CommunityScopeTabs: View {
     @Binding var scopeRaw: String
     @Namespace private var underline
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ReducedMotionPreference private var reduceMotion
 
     var body: some View {
         // Halves, not a centered pair (owner call 2026-07-30): each tab owns its half of the bar —

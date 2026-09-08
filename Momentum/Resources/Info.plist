@@ -71,6 +71,8 @@
 	<true/>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>momentum uses this to measure which ads bring runners to the app, so we can keep showing them to people like you and stop wasting money on the rest. Your training data is never sold.</string>
+	<key>PlanContinuityEnabled</key>
+	<true/>
 	<key>RevenueCatAPIKey</key>
 	<string>appl_RCnCHIbAdYuSJAkzepPxxmnGVMJ</string>
 	<key>SKAdNetworkItems</key>

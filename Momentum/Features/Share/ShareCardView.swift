@@ -242,6 +242,7 @@ struct ShareCardView: View {
         // is the light source and every control is glass on charcoal. An environment override,
         // never `preferredColorScheme` on a modal (that leaks to the presenter).
         .environment(\.colorScheme, .dark)
+        .trackScreen(.share)
     }
 
     // MARK: Templates — composition × voice as one grid of live tiles (the Aura sheet), replacing

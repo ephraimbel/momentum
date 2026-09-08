@@ -86,6 +86,7 @@ struct StrengthLiveView: View {
                 showingLibrary = true
             }
         }
+        .trackScreen(.workoutRecorder)
     }
 
     @ViewBuilder

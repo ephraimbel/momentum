@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "excluded": [
+    {
+      "route_id": "2729588ad8f8fe92dd54451acccd4d89614bd62a0f85402bd931f7d4ec767f1d",
+      "city": "Madison, WI",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "cb881b412183d5f326011ec975c47d92c1af4a8b424dee3c92ca2ee57df258ea",
+      "city": "Madison, WI",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "ef246393d29db947e25615c62ed760133914b3953661e71e41389e1ac3210dc5",
+      "city": "New York, NY",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "ae1e7caee49cb00795d6880351501e236382e0c9bc9e70b0a625474b7469272d"
+    },
+    {
+      "route_id": "b13ed42e0311b1095f8fa5f9508c3f1042397da441f83beacc5f9993e6bf8729",
+      "city": "Oakland, CA",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+      "city": "Oslo",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "d4ee2c8b2be1328d2f7230827db62348173b82d0f71412a191138d3704a37b8a",
+      "city": "Oslo",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "2f76a7e84326a19b2c59a793456b8a6020e75f471b8a84c6f06ed18681b8f7f2",
+      "city": "Portland, OR",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "e817d9735a59b263814f4efb65e06adcef5c782ef829b9b8bec82a9dfc24490e",
+      "city": "Sacramento, CA",
+      "kind": "ride",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "3e141bd6f436b5e38a1e40722467374f1036cc7d425eeb903fb01e4919190305",
+      "city": "Singapore",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "590ebc879f6babbba433e51e4b06b99f3a07c65607f4666624e7f1600ac90c7f",
+      "city": "Singapore",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "110d798af92edf78637355ba1fcb52cbcea975713b4d6e346f5c6bc59f54b77e",
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "180a2fb69d07cf779bc8ba6967dea777e5cda285ed08a63cee4772f436589298",
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "229fd9db41cbfd796b721d4cb9bb253c5331fe9ac2245b2dfb0b016267f079d0",
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "b6c2bade9df4eb690fe538ea424495984948404b159928d77fd4861c5ef6ebc6",
+      "city": "Tampa, FL",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    },
+    {
+      "route_id": "274cc928aeb99371248e0f45c9a72e4e23a6d41a827c256676673a562ea0b714",
+      "city": "Toronto",
+      "kind": "run",
+      "reason": "Wet sample lacks nearby mapped pedestrian-compatible road/bridge evidence; conservatively excluded, not a proven unsafe crossing.",
+      "source_bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329"
+    }
+  ]
+}

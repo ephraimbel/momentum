@@ -60,6 +60,24 @@ struct CommunityAthlete: Identifiable, Sendable, Hashable {
     /// whole community (`CommunityPlacesTests.routesAreStillKeyedByTheMetroNotTheTown`).
     var routeCity: String { metro ?? location ?? CommunityLedger.fallbackCity }
 
+    /// **The coordinate their routes are anchored on** — the town they actually live in, so their
+    /// sessions draw loops from their own streets instead of their metro's downtown (2026-09-07).
+    ///
+    /// DERIVED, never stored, and derived the same way `CommunityGenerator.athlete` derives it: the
+    /// wall card is built there while the profile grid and the lifetime fold are built here, and if
+    /// those two ever resolved different pools the same session index would name two different
+    /// loops — a tile whose distance no longer matched the shape drawn under it. `lat`/`lon` are
+    /// deliberately NOT used: they carry the globe's ±2 km jitter, which can tip an athlete over a
+    /// pool boundary. nil for real network athletes. Featured personas use their written coordinate.
+    var homeCoordinate: CommunityLedger.Home? {
+        guard isSample, let metro else { return nil }
+        // Featured personas already have a written home; their lead post uses that same coordinate.
+        if ledgerLead != nil { return (lat: lat, lon: lon) }
+        return CommunityPlaces.home(metro: metro,
+                                    seed: CommunityGenerator.handleHash("home:\(handle)"))
+            .map { (lat: $0.lat, lon: $0.lon) }
+    }
+
     /// Explicit so the two aggregates can be OMITTED by the seeded community while real network
     /// athletes keep passing their own (`RemoteFeedStore`) — the labels and order are unchanged.
     init(handle: String, name: String, location: String?, metro: String? = nil, bio: String,
@@ -164,16 +182,23 @@ enum CommunityDirectory {
         /// distance and time their own card prints.
         func post(_ n: Int, _ a: CommunityAuthor, _ type: WorkoutType, _ when: Date, _ title: String,
                   _ caption: String?, _ stat: String = "", city: String? = nil,
+                  near: CommunityLedger.Home? = nil,
                   targetKm: Double = 8, paceSecPerKm: Double = 340, mapless: Bool = false,
                   litKm: Double = 0, litSeconds: Double = 0,
-                  pr: String? = nil, reactions: Int = 0, ai: String? = nil)
+                  pr: String? = nil, reactions: Int = 0)
         -> (item: FeedItem, session: CommunitySession) {
             var rng = SeededRNG(n &* 99_173)
             // `mapless` = the generator's honesty rule for the hand-curated voices too: a title
             // that claims a workout or terrain ("tempo", "Hill repeats", a trail) must never sit
             // over a downtown street loop (CommunityContentAuditTests trips otherwise).
+            // `near` is the persona's OWN coordinate. Without it the nearest-distance search runs
+            // over the metro's whole pool, which since 2026-09-07 spans ten anchors up to 50 km
+            // apart — so Maya, who lives downtown, could have been handed a loop from a commuter
+            // town an hour out purely because its length was a better match.
             let loop = (type.isGPS && !mapless)
-                ? (city ?? a.location).flatMap { CommunityRoutes.loop(city: $0, discipline: type, nearestKm: targetKm) }
+                ? (city ?? a.location).flatMap {
+                    CommunityRoutes.loop(city: $0, discipline: type, near: near, nearestKm: targetKm)
+                  }
                 : nil
             var seconds = litSeconds
             let statLine = loop.map {
@@ -193,7 +218,7 @@ enum CommunityDirectory {
                                 isCommunity: true, isPro: CommunityGenerator.isPro(handle: a.handle),
                                 type: type, date: when, title: title, caption: caption,
                                 statLine: statLine, prBadge: pr, muscles: muscles, routeLatLon: loop?.pts,
-                                mapStyle: style, baseReactions: reactions, aiRead: ai)
+                                mapStyle: style, baseReactions: reactions, aiRead: nil)
             let session = CommunitySession(day: StreakCalculator.localDay(when), date: when, type: type,
                                            distanceM: (loop?.km ?? litKm) * 1000, durationS: seconds,
                                            routePool: nil, structured: false)
@@ -203,12 +228,19 @@ enum CommunityDirectory {
         /// Assembles one featured athlete: the written persona, their curated post pinned as the
         /// newest ledger entry, and every lifetime number folded out of the ledger behind it.
         func athlete(_ a: CommunityAuthor, bio: String, sessions: Int, sport: WorkoutType,
-                     lat: Double, lon: Double,
+                     lat: Double, lon: Double, metro: String? = nil,
                      post p: (item: FeedItem, session: CommunitySession)) -> CommunityAthlete {
             // No walk here either: their curated post IS ledger entry 0, the session count is the
             // written one, and the streak/distance fold when someone opens them.
+            //
+            // `metro` exists for the three personas who deliberately print no location. Without it
+            // `routeCity` fell through to `CommunityLedger.fallbackCity` — so Theo's dot sat in New
+            // York, Priya's in London and Devon's in Chicago while every mapped tile on their
+            // profile grids drew AUSTIN streets (found 2026-09-07). It sets the route and season
+            // key only; the byline still shows nothing, which is the written persona.
             CommunityAthlete(
-                handle: a.handle, name: a.name, location: a.location, bio: bio,
+                handle: a.handle, name: a.name, location: a.location, metro: metro ?? a.location,
+                bio: bio,
                 totalWorkouts: sessions, lat: lat, lon: lon, posts: [p.item],
                 primarySport: sport, ledgerLead: p.session)
         }
@@ -225,15 +257,15 @@ enum CommunityDirectory {
         return [
             athlete(maya, bio: "Marathoner chasing a sub-3. Coffee, then miles.",
                 sessions: 312, sport: .run, lat: 30.27, lon: -97.74,
-                post: post(1, maya, .run, ago(1.5), "Sunrise miles", "Negative split the whole way. Felt strong.", city: "Austin, TX", targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42, ai: "A textbook negative split. The back half was quicker at the same heart rate, which means real aerobic fitness is showing up, not just a good day.")),
+                post: post(1, maya, .run, ago(1.5), "Miles for today", "Glad I got out for this.", city: "Austin, TX", near: (lat: 30.27, lon: -97.74), targetKm: 10, paceSecPerKm: 290, pr: "5K PR", reactions: 42)),
             athlete(theo, bio: "Strength coach. Big believer in boring consistency.",
-                sessions: 540, sport: .strength, lat: 40.78, lon: -73.97,
-                post: post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", litSeconds: 3_760, pr: "Squat e1RM PR", reactions: 67, ai: "Tonnage up with the same RPE. The new e1RM is earned, not a fluke. Hold this volume for a week before pushing load again.")),
+                sessions: 540, sport: .strength, lat: 40.78, lon: -73.97, metro: "New York, NY",
+                post: post(2, theo, .strength, ago(4), "Lower power", "Squats moving well at 3 plates.", "12,400 lb · 18 sets · 1:02:40", litSeconds: 3_760, pr: "Squat e1RM PR", reactions: 67)),
             athlete(lin, bio: "Cyclist. Hills are just downhills in waiting.",
                 sessions: 268, sport: .ride, lat: 45.52, lon: -122.64,
                 post: post(3, lin, .ride, ago(7), "Hill repeats", nil, "24.2 mi · 1:30:21", mapless: true, litKm: 38.95, litSeconds: 5_421, reactions: 18)),
             athlete(priya, bio: "Hybrid athlete. Lift heavy, move fast.",
-                sessions: 190, sport: .hiit, lat: 51.51, lon: -0.13,
+                sessions: 190, sport: .hiit, lat: 51.51, lon: -0.13, metro: "London",
                 post: post(4, priya, .hiit, ago(11), "Conditioning", "Quick and brutal.", "22:14", litSeconds: 1_334, reactions: 9)),
             athlete(marcus, bio: "Swimmer. The water always tells the truth.",
                 sessions: 221, sport: .swimming, lat: 25.77, lon: -80.25,
@@ -242,11 +274,11 @@ enum CommunityDirectory {
                 sessions: 156, sport: .trailRun, lat: 40.01, lon: -105.27,
                 post: post(6, sofia, .trailRun, ago(28), "Mesa loop", "Big climb, bigger views.", "8.1 mi · 1:14:45 · 1,350 ft", mapless: true, litKm: 13.03, litSeconds: 4_485, pr: "Longest run", reactions: 51)),
             athlete(devon, bio: "Erg every morning. Meters don't lie.",
-                sessions: 410, sport: .rowing, lat: 41.88, lon: -87.63,
+                sessions: 410, sport: .rowing, lat: 41.88, lon: -87.63, metro: "Chicago, IL",
                 post: post(7, devon, .rowing, ago(33), "Steady state", nil, "40:19", litSeconds: 2_419, reactions: 7)),
             athlete(amara, bio: "Walking my way back to strong. One step at a time.",
                 sessions: 88, sport: .walk, lat: 47.62, lon: -122.31,
-                post: post(8, amara, .walk, ago(46), "Recovery walk", "Easy day, clear head.", targetKm: 5, paceSecPerKm: 570, reactions: 23)),
+                post: post(8, amara, .walk, ago(46), "Recovery walk", "Easy day, clear head.", near: (lat: 47.62, lon: -122.31), targetKm: 5, paceSecPerKm: 570, reactions: 23)),
         ]
     }
 
@@ -292,11 +324,13 @@ enum CommunityDirectory {
             // The city here is a real `CommunityRoutes` KEY ("Austin, TX", not "Austin" and not
             // the athlete's home town) — a miss means every GPS history post ships WITHOUT its map.
             city: athlete.routeCity,
-            count: athlete.totalWorkouts, clock: seedClock, lead: athlete.ledgerLead,
+            count: athlete.totalWorkouts, clock: seedClock, home: athlete.homeCoordinate,
+            lead: athlete.ledgerLead,
             limit: max(0, want - pulses.count))
         var items = CommunityGenerator.gridPosts(handle: athlete.handle, name: athlete.name,
                                                  city: athlete.routeCity,
                                                  place: athlete.location ?? athlete.routeCity,
+                                                 home: athlete.homeCoordinate,
                                                  sessions: sessions, now: now)
         // The featured eight lead with a written post; it IS ledger entry 0, so it replaces the
         // tile that entry would otherwise have generated rather than sitting on top of it.
@@ -327,7 +361,8 @@ enum CommunityDirectory {
         var life = CommunityLedger.lifetime(
             handle: athlete.handle, primary: athlete.primaryType,
             city: athlete.routeCity,
-            count: athlete.totalWorkouts, clock: seedClock, lead: athlete.ledgerLead)
+            count: athlete.totalWorkouts, clock: seedClock, home: athlete.homeCoordinate,
+            lead: athlete.ledgerLead)
         for pulse in (pulseSessions[athlete.handle] ?? []).map(\.session) {
             life.sessions += 1
             life.distanceM += pulse.distanceM

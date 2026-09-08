@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.7.5"      # 2026-09-05: welcome gallery + white onboarding + review beat + $99.99 yearly / 3-day trial ship as 1.7.5. Must match the ASC version record EXACTLY.
-    CURRENT_PROJECT_VERSION: "43"   # build 43 (v1.7.5): the add-a-session sheet in the house grammar. Builds 1–42 consumed on ASC.
+    MARKETING_VERSION: "1.8.0"      # Combined Plan, Fuel, Community, onboarding and reliability release.
+    CURRENT_PROJECT_VERSION: "44"   # Next build after 1.7.5 (43).
     # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 SHIFTS 33's step order: a `units` beat was inserted after `disciplines`, so index 4 is UNITS and everything from there on moves up one (33: 24 = account; 34: 25 = account). The funnel view groups by build precisely so the two never average together, which is why this number had to move before upload. Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
@@ -137,6 +137,8 @@ targets:
         # templates, local-only social). Setup: docs/SOCIAL-BACKEND-SETUP.md.
         SupabaseURL: "$(SUPABASE_URL)"
         SupabaseAnonKey: "$(SUPABASE_ANON_KEY)"
+        # Enable only after deploying the continuity migration and passing device restore tests.
+        PlanContinuityEnabled: true
         # Error monitoring only. The public DSN is injected rather than committed; blank means the
         # SDK never initializes. See docs/SENTRY-SETUP.md for the free-plan/privacy runbook.
         SentryDSN: "$(SENTRY_DSN)"

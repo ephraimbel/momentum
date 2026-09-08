@@ -17,7 +17,7 @@ struct RecoveryAdaptationTests {
                         respiratoryZ: resp, wristTempDeltaC: temp)
     }
 
-    @Test func oneBadSignalNeverLurchesThePlan() {
+    @Test func oneBadSignalNeverLurchesThePlan() throws {
         // HRV suppressed but sleep + RHR fine → hold steady (noise-resistant by design).
         let s = signals(hrv: 40, hrvBase: 55, rhr: 48, rhrBase: 48, sleep: 8)
         #expect(RecoveryAdaptation.decide(signals: s, intensity: .balanced) == nil)
@@ -34,7 +34,7 @@ struct RecoveryAdaptationTests {
         #expect(d.reason.contains("resting HR"))
     }
 
-    @Test func aggressiveRunsOnATighterLeash() {
+    @Test func aggressiveRunsOnATighterLeash() throws {
         // HRV down + resting HR only *slightly* up (2 bpm): balanced holds; aggressive eases.
         let s = signals(hrv: 40, hrvBase: 55, rhr: 50, rhrBase: 48)
         #expect(RecoveryAdaptation.decide(signals: s, intensity: .balanced) == nil)
@@ -45,7 +45,7 @@ struct RecoveryAdaptationTests {
         #expect(RecoveryAdaptation.decide(signals: t, intensity: .aggressive) != nil)
     }
 
-    @Test func noSignalsMeansNoDecision() {
+    @Test func noSignalsMeansNoDecision() throws {
         #expect(RecoveryAdaptation.decide(signals: .empty, intensity: .aggressive) == nil)
     }
 
@@ -84,7 +84,7 @@ struct RecoveryAdaptationTests {
         #expect(warm.reason.contains("resting HR elevated"))
     }
 
-    @Test func mildIllnessDeviationsContributeNothing() {
+    @Test func mildIllnessDeviationsContributeNothing() throws {
         // z 1.9 / +0.9 °C sit under the warning thresholds — with only a short night besides, hold.
         // (The readiness score's soft tier may still shade the number; the plan doesn't move.)
         let mild = signals(sleep: 5.2, resp: 1.9, temp: 0.9)
@@ -119,7 +119,7 @@ struct RecoveryAdaptationTests {
         let pc = PersistenceController.inMemory(); let ctx = pc.container.mainContext
         let vm = OnboardingViewModel()
         vm.activities = [.run]; vm.goal = .endurance; vm.experience = .some; vm.weeklyRunVolumeM = 30_000
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         let plan = try #require(profile.plan)
 
         let d = RecoveryAdaptation.Decision(reason: "your training load has spiked and HRV is suppressed")
@@ -142,7 +142,7 @@ struct RecoveryAdaptationTests {
         vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .tenK
         vm.hasRace = true; vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date())!
         vm.experience = .some; vm.weeklyRunVolumeM = 30_000
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         profile.distanceUnit = "metric"   // deterministic clean-km snapping, locale-independent
         let plan = try #require(profile.plan)
 

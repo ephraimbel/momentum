@@ -137,3 +137,35 @@ struct GeneratedPlan: Sendable, Equatable {
     var durability: DurabilitySignal? = nil
     var weeks: [GeneratedWeek]
 }
+
+/// Last boundary before a generated prescription replaces the athlete's saved plan.
+/// These are data-integrity checks, not a claim that passing them validates coaching quality.
+enum PlanPrescriptionValidation {
+    enum Failure: Error { case invalidPrescription; case trainingRules([PlanValidationCode]) }
+
+    static func validate(_ plan: GeneratedPlan) throws {
+        func positive(_ value: Double?) -> Bool {
+            value.map { $0.isFinite && $0 > 0 } ?? true
+        }
+        guard positive(plan.p5kSPerKm), positive(plan.goalRacePaceSPerKm),
+              positive(plan.thresholdSPerKm), positive(plan.riegelExponent),
+              !plan.weeks.isEmpty, plan.weeks.contains(where: { !$0.sessions.isEmpty }) else {
+            throw Failure.invalidPrescription
+        }
+        for (index, week) in plan.weeks.enumerated() {
+            guard week.index == index else { throw Failure.invalidPrescription }
+            for s in week.sessions {
+                guard (0..<7).contains(s.dayOffset), positive(s.targetDistanceM),
+                      positive(s.targetDurationS), positive(s.targetPaceSPerKm) else {
+                    throw Failure.invalidPrescription
+                }
+                for e in s.strengthTargets {
+                    guard e.targetSets > 0, e.repLow > 0, e.repHigh >= e.repLow,
+                          positive(e.targetRPE), positive(e.targetPctRM) else {
+                        throw Failure.invalidPrescription
+                    }
+                }
+            }
+        }
+    }
+}

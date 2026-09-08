@@ -143,7 +143,7 @@ struct PlanPreviewContent: View {
                 }
             }
             if preview.firstWeekM > 0, preview.peakWeekM > preview.firstWeekM {
-                Text("From \(Formatters.distance(meters: preview.firstWeekM, unit: distanceUnit)) in week 1 to \(Formatters.distance(meters: preview.peakWeekM, unit: distanceUnit)) at the peak. Every number is a floor for the week, not a promise of how you will feel.")
+                Text("From \(Formatters.distance(meters: preview.firstWeekM, unit: distanceUnit)) in week 1 to \(Formatters.distance(meters: preview.peakWeekM, unit: distanceUnit)) at the peak. These are planned targets. Your recovery and logged training guide adjustments.")
                     .font(.rounded(Theme.FontSize.label, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkTertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }

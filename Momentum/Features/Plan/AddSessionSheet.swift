@@ -76,6 +76,7 @@ struct AddSessionSheet: View {
         .sheet(isPresented: $showSportPicker) {
             SportPicker(selection: $sport) { showSportPicker = false }
         }
+        .trackScreen(.addSession)
     }
 
     // MARK: Masthead — the house sheet grammar: the lowercase title centered in the display face,

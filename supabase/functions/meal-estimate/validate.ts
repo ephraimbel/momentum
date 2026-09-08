@@ -1,20 +1,46 @@
 // meal-estimate: request and response validation (2026-09-07).
 //
-// Pure functions, no I/O, so `deno test supabase/functions/meal-estimate` pins them. The model's
+// Validators and a bounded request reader, tested without providers. The model's
 // answer is never trusted as application data: every item is re-checked, counts and numbers are
 // bounded, unknown micros stay null (never zero), and a photo that shows no food comes back as a
 // reason, never as a confident-looking meal.
 //
-// Consistency is engineered here, not hoped for (photo pass, 2026-09-07): the energy of every
-// item is reconciled to its own macros (the Atwater identity, alcohol included), and grams and
-// kcal are snapped to the steps the prompt asks for, so two answers for the same plate that differ
-// only in the model's rounding come out byte-identical.
+// Estimated energy is checked against macro energy with room for fibre; estimated grams and
+// kcal are rounded consistently. Supplied label values are preserved. These checks improve
+// internal consistency, but cannot establish that a photographed portion was estimated correctly.
 
 export const MAX_TEXT_CHARS = 500;
 export const MAX_ITEMS = 40;
 export const MAX_NUMBER = 1_000_000;
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 export const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+export class BodyTooLarge extends Error {}
+
+/** Enforce the byte ceiling for chunked requests too; Content-Length is only a hint. */
+export async function readBoundedJSON(req: Request, maxBytes: number): Promise<unknown> {
+  if (!req.body) throw new SyntaxError("missing_body");
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let bytes = 0;
+  let text = "";
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new BodyTooLarge("body_size");
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+    return JSON.parse(text);
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 export type ImageInput = { mime: string; base64: string };
 
@@ -95,6 +121,8 @@ export function parseRequest(payload: unknown): { ok: true; value: RequestShape 
 
 export type Item = {
   name: string;
+  /** A legible label is not recalculated from rounded macros. Missing on older providers. */
+  nutrition_basis?: "estimated" | "label";
   qty: number;
   unit: string;
   /** The portion's weight as served (ml for a drink); the estimate's visible portion basis. */
@@ -140,9 +168,8 @@ const TAGS = new Set(["carb-dense", "protein", "electrolytes", "light", "pre-ses
 
 /**
  * How far an item's kcal may sit from the energy its own macros carry before it is rewritten.
- * Atwater's general factors (4/4/9, ethanol 7) land within a few percent for ordinary food;
- * the band leaves room for fibre and sugar alcohols on a label. Outside it the number is not
- * rough, it is wrong, and the macros (the readiness signals) are the facts to keep.
+ * This is an internal plausibility check for estimated values, not a measurement of accuracy.
+ * Labels bypass reconciliation; fibre widens the estimated energy range below.
  */
 export const KCAL_TOLERANCE = 0.25;
 /** Below this the identity is dominated by rounding, so a tiny item is left alone. */
@@ -158,9 +185,14 @@ export function macroEnergy(it: Pick<Item, "carbs_g" | "protein_g" | "fat_g" | "
  * Returns true when it did. Pure, so the band is pinned by tests.
  */
 export function reconcileEnergy(it: Item): boolean {
+  if (it.nutrition_basis === "label") return false;
   const energy = macroEnergy(it);
   if (energy < KCAL_RECONCILE_FLOOR) return false;
-  if (Math.abs(it.kcal - energy) <= KCAL_TOLERANCE * energy) return false;
+  // Total carbohydrate can include fibre that contributes less energy. A general 4/4/9
+  // calculation is a plausibility range, not ground truth (USDA also uses specific factors).
+  const lowerEnergy = Math.max(0, energy - 4 * (it.fiber_g ?? 0));
+  if (it.kcal >= lowerEnergy * (1 - KCAL_TOLERANCE)
+    && it.kcal <= energy * (1 + KCAL_TOLERANCE)) return false;
   it.kcal = Math.round(energy);
   return true;
 }
@@ -222,7 +254,10 @@ export function validateEstimate(
     const unit = typeof e.unit === "string" ? e.unit.trim().replace(/\s+/g, " ").slice(0, 24) : "";
     const qty = typeof e.qty === "number" && Number.isFinite(e.qty) ? e.qty : NaN;
     if (!name || !unit || !(qty >= 0.001 && qty <= 10_000)) return { ok: false, error: "item" };
-    const item: Partial<Item> = { name, unit, qty };
+    if (e.nutrition_basis !== undefined && e.nutrition_basis !== "estimated" && e.nutrition_basis !== "label") {
+      return { ok: false, error: "item" };
+    }
+    const item: Partial<Item> = { name, unit, qty, nutrition_basis: e.nutrition_basis === "label" ? "label" : "estimated" };
     for (const key of REQUIRED_NUMBERS) {
       const v = boundedNumber(e[key], true);
       if (v === undefined) return { ok: false, error: "item" };
@@ -244,11 +279,25 @@ export function validateEstimate(
     if (it.satfat_g !== null && it.satfat_g > it.fat_g) it.satfat_g = it.fat_g;
     // A weight of nothing is unknown, not a weightless food.
     if (it.grams !== null && it.grams === 0) it.grams = null;
+    // Unit mistakes (mg supplied as g, or per-100g numbers applied to a tiny portion) can
+    // otherwise pass the broad overflow bound and poison a whole day's totals. These are
+    // physical consistency checks, not dietary limits. Do not infer grams from drink ml.
+    if (it.grams !== null && it.fluids_ml === 0) {
+      const allowance = Math.max(3, it.grams * 0.1);
+      if (it.carbs_g + it.protein_g + it.fat_g + (it.alcohol_g ?? 0) > it.grams + allowance) {
+        return { ok: false, error: "item" };
+      }
+      const mineralsMg = it.sodium_mg + (it.potassium_mg ?? 0) + (it.magnesium_mg ?? 0)
+        + (it.iron_mg ?? 0) + (it.calcium_mg ?? 0);
+      if (mineralsMg > (it.grams + allowance) * 1000) return { ok: false, error: "item" };
+    }
     // Energy is a function of the macros. A kcal that disagrees with its own carbs, protein, fat
     // and alcohol is rewritten from them; the macros are what the readiness engine reads.
     if (reconcileEnergy(it)) stats.reconciled += 1;
-    it.kcal = snapKcal(it.kcal);
-    if (it.grams !== null) it.grams = Math.max(1, snapGrams(it.grams));
+    if (it.nutrition_basis !== "label") {
+      it.kcal = snapKcal(it.kcal);
+      if (it.grams !== null) it.grams = Math.max(1, snapGrams(it.grams));
+    }
     items.push(it);
   }
 

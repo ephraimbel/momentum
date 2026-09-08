@@ -57,4 +57,27 @@ struct WelcomeGalleryMotion {
         return ((value.truncatingRemainder(dividingBy: period) + period)
                 .truncatingRemainder(dividingBy: period)) - 0.32
     }
+
+    /// Change the photograph at the SAME boundary as wrappedTravel, while the orbit is offscreen.
+    /// Adding the visual -0.32 offset to this calculation swaps it early, at the bottom edge.
+    static func photoLap(_ value: Double) -> Int { Int(floor(value / 1.64)) }
+}
+
+/// Only foreground animation time counts. Uptime cannot jump when the wall clock is corrected.
+struct WelcomeAnimationClock {
+    private var accumulated = 0.0
+    private var started: Double?
+
+    func elapsed(at now: Double = ProcessInfo.processInfo.systemUptime) -> Double {
+        accumulated + (started.map { max(0, now - $0) } ?? 0)
+    }
+
+    mutating func setRunning(_ running: Bool, at now: Double = ProcessInfo.processInfo.systemUptime) {
+        if running {
+            if started == nil { started = now }
+        } else if started != nil {
+            accumulated = elapsed(at: now)
+            started = nil
+        }
+    }
 }

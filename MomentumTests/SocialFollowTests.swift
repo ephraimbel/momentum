@@ -99,6 +99,44 @@ struct SocialFollowTests {
         #expect(store.isFollowing("realathlete"))
     }
 
+    private final class DelayedFollowBackend: StubSocialBackend {
+        var writes: [Bool] = []
+        var reply: CheckedContinuation<Bool, Never>?
+        override func setFollow(handle: String, following: Bool) async -> Bool {
+            writes.append(following)
+            return await withCheckedContinuation { reply = $0 }
+        }
+        func finish() {
+            let continuation = reply
+            reply = nil
+            continuation?.resume(returning: true)
+        }
+    }
+
+    @Test func rapidUnfollowCannotBeOverwrittenByAnOlderFollowWrite() async {
+        let (store, suite) = freshStore()
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let backend = DelayedFollowBackend()
+        store.backend = backend
+        let handle = "realathlete"
+        store.toggle(handle)
+        for _ in 0..<1000 where backend.reply == nil { await Task.yield() }
+        #expect(backend.writes == [true])
+        store.toggle(handle)
+        store.merge(remote: [handle])
+        for _ in 0..<100 { await Task.yield() }
+        #expect(backend.writes == [true])
+        #expect(!store.isFollowing(handle))
+        backend.finish()
+        for _ in 0..<1000 where backend.reply == nil { await Task.yield() }
+        #expect(backend.writes == [true, false])
+        #expect(store.pending.contains(handle))
+        backend.finish()
+        for _ in 0..<1000 where !store.pending.isEmpty { await Task.yield() }
+        #expect(store.pending.isEmpty)
+        #expect(!store.isFollowing(handle))
+    }
+
     @Test func pendingSurvivesRelaunch() {
         let suite = "follow.pending.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

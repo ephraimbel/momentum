@@ -39,7 +39,7 @@ final class PersistenceController {
 
     /// All persisted model types — forwards to the versioned schema, which is the canonical list.
     /// Kept as a name because tests and previews build containers from it.
-    static let models: [any PersistentModel.Type] = SchemaV5.models
+    static let models: [any PersistentModel.Type] = SchemaV9.models
 
     init(inMemory: Bool = false,
          makeContainer: @escaping (Schema, ModelConfiguration) throws -> ModelContainer = {
@@ -61,7 +61,7 @@ final class PersistenceController {
         }
         #endif
         failureCode = nil
-        let schema = Schema(versionedSchema: SchemaV5.self)
+        let schema = Schema(versionedSchema: SchemaV9.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         var stage = "open"
         do {
@@ -81,6 +81,11 @@ final class PersistenceController {
                 stage = "reopen"
                 opened = try makeContainer(schema, config)
             }
+            // A previous interrupted device erase may have left a profile pointing at an
+            // already-deleted plan. Repair before any view/backfill reads plan.sessions.
+            // Failure stays on the retry screen; it must never trigger store quarantine.
+            stage = "repair"
+            try DataManager.repairDanglingProfileReferences(in: opened.mainContext)
             ExerciseLibrarySeed.seedIfNeeded(into: opened.mainContext)
             #if DEBUG
             DemoSeed.seedIfRequested(opened.mainContext)

@@ -25,6 +25,7 @@ extension PlanBlueprint {
         muscleFocus = profile.muscleFocus.compactMap(MuscleGroup.init(rawValue:))
         weeklyRunVolumeM = profile.weeklyRunVolumeM
         longestRunM = profile.longestRunM
+        fitnessDeclaredAt = profile.fitnessDeclaredAt
         runningExperience = ExperienceLevel(rawValue: profile.experience[Discipline.running.rawValue] ?? "") ?? .some
         liftingExperience = ExperienceLevel(rawValue: profile.experience[Discipline.strength.rawValue] ?? "") ?? .some
         isSelfCoached = profile.plan?.isSelfCoached ?? false
@@ -51,8 +52,17 @@ extension PlanBlueprint {
         profile.hybridPriority = hybridPriority?.rawValue
         profile.strengthSplit = strengthSplit.rawValue
         profile.muscleFocus = muscleFocus.map(\.rawValue)
-        if let weeklyRunVolumeM { profile.weeklyRunVolumeM = weeklyRunVolumeM }
-        if let longestRunM { profile.longestRunM = longestRunM }
+        if let fitnessDeclaredAt {
+            profile.weeklyRunVolumeM = weeklyRunVolumeM
+            profile.longestRunM = longestRunM
+            if let context = profile.modelContext {
+                PlanFitnessDeclarationRecord.set(fitnessDeclaredAt, for: profile, in: context)
+            }
+        } else {
+            // Old saved blueprints with absent fields preserve their original fallback behavior.
+            if let weeklyRunVolumeM { profile.weeklyRunVolumeM = weeklyRunVolumeM }
+            if let longestRunM { profile.longestRunM = longestRunM }
+        }
         profile.experience[Discipline.running.rawValue] = runningExperience.rawValue
         if lifts { profile.experience[Discipline.strength.rawValue] = liftingExperience.rawValue }
     }
@@ -116,13 +126,16 @@ enum PlanLifecycleService {
             raceDistanceM: dated ? blueprint.raceDistanceM : nil,
             goalFinishTimeS: dated ? blueprint.goalFinishTimeS : nil,
             currentP5kSPerKm: profile.plan?.p5kSPerKm,
-            currentWeeklyVolumeM: currentWeeklyM ?? blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM ?? 0,
+            currentWeeklyVolumeM: currentWeeklyM ?? (blueprint.fitnessDeclaredAt != nil
+                ? (blueprint.weeklyRunVolumeM ?? 0) : (blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM ?? 0)),
             weeksAvailable: weeks,
             experience: blueprint.runningExperience,
             injuryProne: !profile.injuryHistory.isEmpty,
             daysPerWeek: blueprint.daysPerWeek,
             intensity: blueprint.intensity,
-            targetWeeklyVolumeM: blueprint.targetWeeklyRunVolumeM)
+            targetWeeklyVolumeM: blueprint.targetWeeklyRunVolumeM,
+            regularRunLimitS: profile.planPreferences?.regularRunLimitS,
+            longRunLimitS: profile.planPreferences?.longRunLimitS)
     }
 
     /// Generate and summarise a blueprint without writing anything. Synchronous engine work; call
@@ -132,7 +145,7 @@ enum PlanLifecycleService {
                         calendar: Calendar = .current) -> PlanPreview {
         let staged = PlanService.stagePreview(blueprint: blueprint, for: profile, startDate: startDate,
                                               in: context, calendar: calendar)
-        let outlook = feasibility(for: blueprint, profile: profile, today: today,
+        let outlook = feasibility(for: blueprint, profile: profile, today: startDate,
                                   currentWeeklyM: staged.inputs.currentWeeklyVolumeM, calendar: calendar)
         return PlanPreview.build(generated: staged.generated, inputs: staged.inputs, startDate: startDate,
                                  feasibility: outlook, crossTrainingPerWeek: staged.crossTrainingPerWeek,
@@ -150,7 +163,7 @@ enum PlanLifecycleService {
         record.previewData = try preview.map { try JSONEncoder().encode($0) }
         record.scheduledStart = nil
         context.insert(record)
-        try context.save()
+        try PlanMutation.save(context)
         return record
     }
 
@@ -161,7 +174,7 @@ enum PlanLifecycleService {
         record.previewData = try preview.map { try JSONEncoder().encode($0) }
         record.name = clean.displayName
         record.updatedAt = now
-        try context.save()
+        try PlanMutation.save(context)
     }
 
     /// Put a draft on the calendar. Overlap with the current plan is the caller's decision to
@@ -170,17 +183,20 @@ enum PlanLifecycleService {
     /// day, so the card's duration and end date describe the plan that will actually start then.
     static func schedule(_ record: PlanShelfRecord, start: Date, for profile: UserProfile? = nil,
                          now: Date = Date(), in context: ModelContext, calendar: Calendar = .current) throws {
+        guard !record.isDeleted, record.modelContext === context,
+              profile == nil || record.profileID == profile?.id else { throw Failure.notShelved }
+        guard let blueprint = record.blueprint else { throw Failure.unreadableBlueprint }
         guard PlanLifecycle.canSchedule(start, today: now, calendar: calendar) else {
             throw Failure.scheduleMustBeInTheFuture
         }
         let day = calendar.startOfDay(for: start)
-        if let blueprint = record.blueprint, blueprint.isRace, let raceDate = blueprint.raceDate,
+        if blueprint.isRace, let raceDate = blueprint.raceDate,
            calendar.startOfDay(for: raceDate) < day {
             throw Failure.startAfterRaceDay
         }
         // The cached preview is rebuilt for the scheduled day unless it already is (the builder
         // previews an upcoming plan for its day, so a Save there would run the generator twice).
-        if let profile, let blueprint = record.blueprint,
+        if let profile,
            !(record.preview.map { calendar.isDate($0.startDate, inSameDayAs: day) } ?? false) {
             let built = preview(for: blueprint, profile: profile, startDate: day, today: now, in: context, calendar: calendar)
             record.previewData = try JSONEncoder().encode(built)
@@ -188,19 +204,19 @@ enum PlanLifecycleService {
         record.status = .upcoming
         record.scheduledStart = day
         record.updatedAt = now
-        try context.save()
+        try PlanMutation.save(context)
     }
 
     static func moveToDrafts(_ record: PlanShelfRecord, now: Date = Date(), in context: ModelContext) throws {
         record.status = .draft
         record.scheduledStart = nil
         record.updatedAt = now
-        try context.save()
+        try PlanMutation.save(context)
     }
 
     static func delete(_ record: PlanShelfRecord, in context: ModelContext) throws {
         context.delete(record)
-        try context.save()
+        try PlanMutation.save(context)
     }
 
     /// A previous plan's blueprint, copied into a fresh draft with the dates cleared: the athlete
@@ -224,6 +240,11 @@ enum PlanLifecycleService {
     static func activate(_ blueprint: PlanBlueprint, from record: PlanShelfRecord? = nil,
                          for profile: UserProfile, now: Date = Date(), in context: ModelContext,
                          calendar: Calendar = .current) throws -> Activation {
+        if let record {
+            guard !record.isDeleted, record.modelContext === context, record.profileID == profile.id else {
+                throw Failure.notShelved
+            }
+        }
         let start = PlanLifecycle.activationStart(now: now, calendar: calendar)
         if blueprint.isRace, let raceDate = blueprint.raceDate,
            calendar.startOfDay(for: raceDate) < calendar.startOfDay(for: start) {
@@ -259,7 +280,7 @@ enum PlanLifecycleService {
             // A chat undo captured against the replaced plan would resurrect it beside its own
             // shelf record; a switch is a new world, so every older undo point retires here.
             CoachUndo.makeSoleUndoPoint(in: context)
-            try context.save()
+            try PlanMutation.save(context)
             return Activation(plan: plan, retired: retired, scheduledStart: scheduled, start: start)
         } catch {
             context.rollback()
@@ -310,7 +331,7 @@ enum PlanLifecycleService {
                              body: "It could not start on its scheduled day. Open Your plans to edit it or start it when you are ready.",
                              on: now, in: context, dedupeToken: "plan-demoted-\(record.id.uuidString)", daily: false,
                              route: .plan)
-        if save { try? context.save() }
+        if save { try? PlanMutation.save(context) }
     }
 
     // MARK: Retiring

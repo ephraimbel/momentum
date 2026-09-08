@@ -74,6 +74,7 @@ struct MomentumApp: App {
         // prior owner's data: wipe local SwiftData so they start clean. RootView re-onboards the
         // moment `profiles.isEmpty` flips true. Guest→real upgrade + first sign-in never reach here.
         authController.onAccountSwitch = {
+            services.planSync.prepareForAccountSwitch()
             if let context = PersistenceController.shared.availableContainer?.mainContext {
                 DataManager.deleteAllUserData(in: context)
             }
@@ -218,6 +219,12 @@ struct MomentumApp: App {
             .environment(comments)
             .environment(moderation)
             .environment(remoteFeed)
+            // Screen + session tracking for every surface that carries `.trackScreen(_:)`. An
+            // environment KEY (optional, defaulting to nil) rather than an `@Environment(Services.self)`
+            // read inside the modifier: the modifier is applied on sheets and covers that don't
+            // always inherit the container, and a missing container must mean "count nothing", not
+            // a trap.
+            .environment(\.screenTracker, services.screens)
             // The brand lavender as the app-wide tint (rebrand 2026-08-16, was Theme.ink) —
             // links, toggles, pickers, and the selected tab icon all say "alive" in one voice.
             .tint(Theme.purple)
@@ -242,7 +249,14 @@ struct MomentumApp: App {
             // short one). `.onChange` only reads scenePhase; it installs no preference writer, so
             // it cannot re-trigger the System-appearance invalidation loop noted above.
             .onChange(of: scenePhase) { _, phase in
-                if phase == .background { services.analytics.flush() }
+                services.screens.sceneChanged(phase)
+                if phase == .background {
+                    // Close the session BEFORE the flush, so `session_end` — and the `last_screen`
+                    // that says where this visit stopped — rides out in the same batch. Waiting for
+                    // the next foreground to close it would lose exactly the sessions worth having:
+                    // an athlete who churns here has no next foreground.
+                    services.analytics.flush()
+                }
             }
             // The deferred half of launch (see `runDeferredLaunchWork`). 600 ms is past the first
             // paint and the tab bar's settle, but well inside the first human interaction.

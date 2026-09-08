@@ -22,7 +22,7 @@ struct OnboardingFlowTests {
         vm.handle = "maya_runs"
         vm.avatarData = Data([0xFF, 0xD8])
 
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
 
         // Identity from the onboarding identity step lands on the profile.
         #expect(profile.displayName == "Maya Rivera")
@@ -62,7 +62,7 @@ struct OnboardingFlowTests {
         vm.birthYear = Calendar.current.component(.year, from: Date()) - 30
         vm.healthRestingHR = 52
 
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         #expect(profile.restingHR == 52)
         let maxHR = try #require(profile.maxHR)              // Tanaka estimate from age
         let karvonen = try #require(HRZones.zones(maxHR: maxHR, restingHR: 52))
@@ -71,7 +71,7 @@ struct OnboardingFlowTests {
         // No Health resting-HR signal → profile stays nil and zones fall back (regression).
         let bare = OnboardingViewModel()
         bare.activities = [.run]
-        #expect(bare.finish(in: ctx).restingHR == nil)
+        #expect(try bare.finish(in: ctx).restingHR == nil)
     }
 
     @Test func heightPersistsAndSharpensTheFuelBMR() throws {
@@ -87,7 +87,7 @@ struct OnboardingFlowTests {
         vm.bodyMassKg = 70
         vm.heightCm = 185                         // a tall athlete, far from the 172 cm fallback
 
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         #expect(profile.heightCm == 185)          // the calorie inputs are now complete
 
         // Mifflin–St Jeor actually consumes it — the real height shifts BMR off the assumed one.
@@ -97,10 +97,10 @@ struct OnboardingFlowTests {
 
         // Skipping the (optional) step leaves it nil → fueling honestly falls back, never a fabricated height.
         let bare = OnboardingViewModel(); bare.activities = [.run]
-        #expect(bare.finish(in: ctx).heightCm == nil)
+        #expect(try bare.finish(in: ctx).heightCm == nil)
     }
 
-    @Test func progressAdvancesAndSkipsEquipmentForNonLifters() {
+    @Test func progressAdvancesAndSkipsEquipmentForNonLifters() throws {
         let vm = OnboardingViewModel()
         vm.activities = [.run]                        // no lifting
         #expect(!vm.steps.contains(.equipment))
@@ -134,7 +134,7 @@ struct OnboardingFlowTests {
         let vm = OnboardingViewModel()
         vm.activities = [.run, .swim, .yoga]         // run is programmed; swim/yoga are tracked add-ons
         vm.daysPerWeek = 3
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         let plan = try #require(profile.plan)
 
         // The add-ons share the 3-day budget — they don't add extra days (the reported bug).
@@ -172,7 +172,8 @@ struct OnboardingFlowTests {
         let steps = vm.steps
         func idx(_ s: OnboardingViewModel.Step) throws -> Int { try #require(steps.firstIndex(of: s)) }
         #expect(steps.first == .name)
-        #expect(try idx(.race) < idx(.experience))           // destination → starting point
+        #expect(try idx(.goal) < idx(.experience))
+        #expect(try idx(.experience) < idx(.disciplines))           // destination → starting point
         #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
         #expect(try idx(.runVolume) < idx(.injuries))        // baseline stays together
         #expect(try idx(.metrics) < idx(.days))              // starting point → training week
@@ -202,7 +203,7 @@ struct OnboardingFlowTests {
         #expect(visited == steps)                            // exactly the designed order, no skips
 
         // Everything they answered lands on the profile.
-        let profile = vm.finish(in: ctx)
+        let profile = try vm.finish(in: ctx)
         #expect(profile.injuryHistory == ["itBand", "shins"])
         #expect(profile.planIntensity == "aggressive")
         #expect(profile.weeklyRunVolumeM == 30_000)
@@ -230,7 +231,7 @@ struct OnboardingFlowTests {
     /// follows the reveal, so the plan exists before anything is asked for, and it precedes the
     /// paywall + account beats, so it is never the last thing between the athlete and the app.
     /// `OnboardingReviewUITests` pins the page's own shape; this pins its seat in the flow.
-    @Test func theReviewBeatSitsBetweenTheRevealAndCheckout() {
+    @Test func theReviewBeatSitsBetweenTheRevealAndCheckout() throws {
         let steps = OnboardingViewModel().steps
         #expect(steps.firstIndex(of: .primers)! < steps.firstIndex(of: .building)!)
         #expect(steps.firstIndex(of: .review)! == steps.firstIndex(of: .reveal)! + 1,
@@ -244,7 +245,7 @@ struct OnboardingFlowTests {
     /// screen used to gate the app on launch, which is the cheapest place in the funnel to lose
     /// someone). It must not be an answerable question, and onboarding must read as *finished* by
     /// the time it shows, since every question was answered a while back.
-    @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() {
+    @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() throws {
         let vm = OnboardingViewModel()
         let all = vm.steps
         #expect(all.last == .account, "account must be the last step — nothing follows it")
@@ -269,7 +270,7 @@ struct OnboardingFlowTests {
         #expect(vm.step == .account)
     }
 
-    @Test func raceRevealFramesTheTargetAsAPursuitNotAGuarantee() {
+    @Test func raceRevealFramesTheTargetAsAPursuitNotAGuarantee() throws {
         let vm = OnboardingViewModel()
         vm.goal = .raceDistance
         vm.raceDistance = .fiveK
@@ -287,7 +288,7 @@ struct OnboardingFlowTests {
         #expect(untimed.hasPrefix("Building toward your 5K on "))
         #expect(!untimed.localizedCaseInsensitiveContains("ready"))
     }
-    @Test func shorterInterviewKeepsEveryPlanInputAndWalksBackwards() {
+    @Test func shorterInterviewKeepsEveryPlanInputAndWalksBackwards() throws {
         let vm = OnboardingViewModel()
         vm.goal = .stayConsistent
         vm.calibrationMode = .feel
@@ -317,7 +318,7 @@ struct OnboardingFlowTests {
         #expect(!vm.steps.contains(.runVolume))
     }
 
-    @Test func startingFitnessRequiresAnAnswerAndProgressFinishesBeforeReveal() {
+    @Test func startingFitnessRequiresAnAnswerAndProgressFinishesBeforeReveal() throws {
         let vm = OnboardingViewModel()
         vm.step = .experience
         #expect(!vm.canAdvance)
@@ -332,7 +333,7 @@ struct OnboardingFlowTests {
         #expect(vm.progress == 1)
     }
 
-    @Test func identityStartsTheFlowAndKeepsCustomUsernames() {
+    @Test func identityStartsTheFlowAndKeepsCustomUsernames() throws {
         let vm = OnboardingViewModel()
         #expect(vm.step == .name)
         #expect(!vm.canAdvance)
@@ -354,4 +355,68 @@ struct OnboardingFlowTests {
         #expect(!vm.canAdvance)
     }
 
+}
+
+extension OnboardingFlowTests {
+    @Test func benchmarkDoesNotAnswerTrainingBackground() {
+        let vm = OnboardingViewModel()
+        vm.step = .experience
+        vm.calibrationMode = .time
+        vm.benchmark = .fiveK
+        vm.recentRunSeconds = 1200
+        #expect(!vm.canAdvance)
+        vm.chooseRunningBackground(.some)
+        #expect(vm.canAdvance)
+        #expect(vm.calibration.recentRun?.timeS == 1200)
+        #expect(vm.experience == .some)
+        #expect(vm.weeklyRunVolumeM == nil)
+    }
+
+    @Test func goalAndBackgroundPrecedeTheDetailedQuestions() throws {
+        let vm = OnboardingViewModel()
+        vm.goal = .raceDistance
+        let steps = vm.steps
+        #expect(Array(steps.prefix(3)) == [.name, .goal, .experience])
+        #expect(try #require(steps.firstIndex(of: .building)) < #require(steps.firstIndex(of: .reveal)))
+    }
+}
+
+extension OnboardingFlowTests {
+    @Test func raceTimeEntryRejectsMalformedClocksAndKeepsCommonShortcuts() {
+        #expect(OnboardingViewModel.benchmarkSeconds("330", benchmark: .marathon) == 12600)
+        #expect(OnboardingViewModel.benchmarkSeconds("3:30", benchmark: .marathon) == 12600)
+        #expect(OnboardingViewModel.benchmarkSeconds("2145", benchmark: .fiveK) == 1305)
+        #expect(OnboardingViewModel.benchmarkSeconds("1:38:20", benchmark: .half) == 5900)
+        for raw in ["22:xx:30", "22:99", "22::30", "-22:30", "0:00", "999999999999999999999999999"] {
+            #expect(OnboardingViewModel.benchmarkSeconds(raw, benchmark: .fiveK) == nil)
+        }
+    }
+}
+
+extension OnboardingFlowTests {
+    @Test func returningRunnerKeepsMileageQuestionsAndDraftSelection() throws {
+        let vm = OnboardingViewModel()
+        vm.goal = .stayConsistent
+        vm.chooseReturningBackground()
+        #expect(vm.returningRunner && vm.runningBackgroundChosen)
+        #expect(vm.steps.contains(.runVolume))
+        vm.weeklyRunVolumeM = 12_000; vm.longestRunM = 5_000
+        let restored = OnboardingViewModel()
+        _ = restored.restore(from: vm.draft())
+        #expect(restored.returningRunner && restored.steps.contains(.runVolume))
+        #expect(restored.weeklyRunVolumeM == 12_000 && restored.longestRunM == 5_000)
+        restored.chooseRunningBackground(.new)
+        #expect(!restored.returningRunner && !restored.steps.contains(.runVolume))
+    }
+
+    @Test func returningRunnerCanDeclareZeroRecentRunningWithoutRevivingOldMileage() throws {
+        let pc = PersistenceController.inMemory(), vm = OnboardingViewModel()
+        vm.name = "Returning runner"; vm.handle = "returning_runner"
+        vm.goal = .stayConsistent; vm.chooseReturningBackground()
+        vm.weeklyRunVolumeM = 0; vm.longestRunM = 0
+        let profile = try vm.finish(in: pc.container.mainContext)
+        #expect(profile.weeklyRunVolumeM == 0 && profile.longestRunM == 0)
+        #expect(profile.plan?.sessions.isEmpty == false)
+        #expect(profile.experience[Discipline.running.rawValue] == ExperienceLevel.some.rawValue)
+    }
 }

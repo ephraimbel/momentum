@@ -87,6 +87,18 @@ final class AuthController {
     /// Sentinel userID for a guest (account-less, local-only) session.
     static let guestID = "guest"
 
+    private(set) var cloudSessionGeneration = 0
+    var cloudOwnerID: UUID? {
+        guard let userID, let cloud = SupabaseClientProvider.client?.auth.currentUser else { return nil }
+        let appleIDs = (cloud.identities ?? []).filter { $0.provider == "apple" }.map(\.id)
+        return Self.boundCloudOwner(localID: userID, cloudID: cloud.id, appleIDs: appleIDs)
+    }
+    static func boundCloudOwner(localID: String, cloudID: UUID, appleIDs: [String]) -> UUID? {
+        if localID.hasPrefix("google:") || localID.hasPrefix("email:") {
+            return UUID(uuidString: String(localID.split(separator: ":", maxSplits: 1).last ?? "")) == cloudID ? cloudID : nil
+        }
+        return appleIDs.contains(localID) ? cloudID : nil
+    }
     private(set) var userID: String?
     private(set) var displayName: String?
     /// Sign-in email (Apple first-auth / Google) — feeds handle suggestions; never shown publicly.
@@ -204,6 +216,8 @@ final class AuthController {
 
     /// First-ever cloud session on this install → fire the guest-data claim hook exactly once.
     private func markCloudSession() {
+        guard cloudOwnerID != nil else { return }
+        cloudSessionGeneration += 1
         guard !UserDefaults.standard.bool(forKey: Self.cloudSessionKey) else { return }
         UserDefaults.standard.set(true, forKey: Self.cloudSessionKey)
         onFirstCloudSession?()

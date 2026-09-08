@@ -35,6 +35,13 @@ enum InjuryResponse {
     /// sessions this loop touched (never anything the athlete or another adaptation changed).
     static let marker = "Protecting your"
 
+    @MainActor
+    static func canStart(_ session: PlannedSession, profile: UserProfile?) -> Bool {
+        guard let profile, profile.activeInjuryArea != nil, session.discipline == .running else { return true }
+        guard !PlanCoaching.isFixedDate(session), profile.activeInjurySeverity == InjurySeverity.twinge.rawValue else { return false }
+        return session.runType?.isQuality != true && session.runType != .long && session.intervals == nil
+    }
+
     struct Outcome: Sendable {
         let headline: String
         let detail: String
@@ -49,8 +56,58 @@ enum InjuryResponse {
     static func report(area: InjuryArea, severity: InjurySeverity,
                        profile: UserProfile, today: Date = Date(),
                        in context: ModelContext, calendar: Calendar = .current) -> Outcome {
+        if !PlanMutation.isStaging(context) {
+            let unsaved = Outcome(headline: "Your plan change wasn't saved", detail: "Your previous plan is still here.",
+                                  guidance: "Please try again.", sessionsChanged: 0)
+            return PlanMutation.attempt(in: context, fallback: unsaved) { report(area: area, severity: severity, profile: profile, today: today, in: context, calendar: calendar) }
+        }
+
         let until = calendar.date(byAdding: .day, value: severity.windowDays, to: calendar.startOfDay(for: today)) ?? today
         let areaName = area.label.lowercased()
+        let changed = protect(profile: profile, severity: severity, areaName: areaName,
+                              today: today, until: until, calendar: calendar)
+
+        profile.activeInjuryArea = area.rawValue
+        profile.activeInjurySeverity = severity.rawValue
+        profile.activeInjuryUntil = until
+        // Remember the area as a conservative planning modifier, with no duplicates. This history
+        // does not diagnose the athlete or establish current capacity.
+        if !profile.injuryHistory.contains(area.rawValue) {
+            profile.injuryHistory = (profile.injuryHistory + [area.rawValue]).sorted()
+        }
+        // An injury response IS this week's structural change — joining the shared throttle keeps
+        // load-based auto-adaptation from re-shaping the same sessions days later. (The injury loop
+        // itself never *reads* the throttle: reporting pain must always work.)
+        profile.plan?.lastAdaptedAt = today
+
+        let outcome = outcomeCopy(area: areaName, severity: severity, changed: changed)
+        CoachingEvent.record(kind: .recover, headline: outcome.headline, detail: outcome.detail,
+                             on: today, in: context)
+        try? PlanMutation.save(context)
+        return outcome
+    }
+
+    /// Reapply the existing injury policy to new or restored sessions. The check-in date is
+    /// a reminder, not automatic clearance: protect the upcoming window until explicit return.
+    @MainActor
+    static func enforce(in context: ModelContext, today: Date = Date(), calendar: Calendar = .current) throws {
+        var changed = false
+        for profile in try context.fetch(FetchDescriptor<UserProfile>()) {
+            guard let raw = profile.activeInjuryArea else { continue }
+            let severity = profile.activeInjurySeverity.flatMap(InjurySeverity.init(rawValue:)) ?? .severe
+            let until = max(profile.activeInjuryUntil ?? today,
+                            calendar.date(byAdding: .day, value: severity.windowDays,
+                                          to: calendar.startOfDay(for: today)) ?? today)
+            let name = InjuryArea(rawValue: raw)?.label.lowercased() ?? "reported injury"
+            if protect(profile: profile, severity: severity, areaName: name,
+                       today: today, until: until, calendar: calendar) > 0 { changed = true }
+        }
+        if changed { _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context, now: today) }
+    }
+
+    @MainActor
+    private static func protect(profile: UserProfile, severity: InjurySeverity, areaName: String,
+                                today: Date, until: Date, calendar: Calendar) -> Int {
         var changed = 0
 
         if let plan = profile.plan {
@@ -61,10 +118,14 @@ enum InjuryResponse {
             let window = plan.sessions.filter {
                 ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
+                && !PlanCoaching.isFixedDate($0)
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= until
             }
             for s in window {
+                // A save/rebuild can revisit the same protection. Never repeatedly shrink it.
+                if severity == .twinge, s.rationale?.hasPrefix(marker) == true,
+                   s.runType?.isQuality != true, s.runType != .long, s.intervals == nil { continue }
                 switch severity {
                 case .twinge:
                     // Keep running, drop the intensity: quality → easy, volume trimmed a touch.
@@ -102,24 +163,7 @@ enum InjuryResponse {
             }
         }
 
-        profile.activeInjuryArea = area.rawValue
-        profile.activeInjurySeverity = severity.rawValue
-        profile.activeInjuryUntil = until
-        // Remember the area as a conservative planning modifier, with no duplicates. This history
-        // does not diagnose the athlete or establish current capacity.
-        if !profile.injuryHistory.contains(area.rawValue) {
-            profile.injuryHistory = (profile.injuryHistory + [area.rawValue]).sorted()
-        }
-        // An injury response IS this week's structural change — joining the shared throttle keeps
-        // load-based auto-adaptation from re-shaping the same sessions days later. (The injury loop
-        // itself never *reads* the throttle: reporting pain must always work.)
-        profile.plan?.lastAdaptedAt = today
-
-        let outcome = outcomeCopy(area: areaName, severity: severity, changed: changed)
-        CoachingEvent.record(kind: .recover, headline: outcome.headline, detail: outcome.detail,
-                             on: today, in: context)
-        try? context.save()
-        return outcome
+        return changed
     }
 
     /// The athlete says they're feeling better: clear the injury state and bring back the window's
@@ -129,6 +173,12 @@ enum InjuryResponse {
     @discardableResult
     static func resume(profile: UserProfile, today: Date = Date(),
                        in context: ModelContext, calendar: Calendar = .current) -> Outcome {
+        if !PlanMutation.isStaging(context) {
+            let unsaved = Outcome(headline: "Your plan change wasn't saved", detail: "Your previous plan is still here.",
+                                  guidance: "Please try again.", sessionsChanged: 0)
+            return PlanMutation.attempt(in: context, fallback: unsaved) { resume(profile: profile, today: today, in: context, calendar: calendar) }
+        }
+
         var restored = 0
         if let plan = profile.plan {
             let p5k = plan.p5kSPerKm
@@ -137,6 +187,7 @@ enum InjuryResponse {
                 ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && ($0.rationale?.hasPrefix(marker) ?? false)
+                && !PlanCoaching.isFixedDate($0)
             }.sorted { $0.date < $1.date }
             for (i, s) in mine.enumerated() {
                 s.discipline = .running
@@ -165,6 +216,7 @@ enum InjuryResponse {
             let eager = plan.sessions.filter {
                 ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
                 && $0.discipline == .running
+                && !PlanCoaching.isFixedDate($0)
                 && calendar.startOfDay(for: $0.date) >= calendar.startOfDay(for: today)
                 && $0.date <= gateEnd
                 && ($0.runType?.isQuality == true || $0.runType == .long)
@@ -199,7 +251,7 @@ enum InjuryResponse {
                               sessionsChanged: restored)
         CoachingEvent.record(kind: .ease, headline: outcome.headline, detail: outcome.detail,
                              on: today, in: context)
-        try? context.save()
+        try? PlanMutation.save(context)
         return outcome
     }
 
@@ -217,13 +269,16 @@ enum InjuryResponse {
                                        currentP5kSPerKm: profile.plan?.p5kSPerKm,
                                        currentWeeklyVolumeM: profile.weeklyRunVolumeM ?? 0,
                                        weeksAvailable: weeks,
-                                       experience: experience)
+                                       experience: experience,
+                                       daysPerWeek: profile.daysPerWeek,
+                                       regularRunLimitS: profile.planPreferences?.regularRunLimitS,
+                                       longRunLimitS: profile.planPreferences?.longRunLimitS)
         let label = RaceDistance.nearest(toMeters: distanceM).label.lowercased()
         switch f.verdict {
         case .onTrack:
             return "Your \(label) is still on track. \(weeks) weeks is enough runway."
         case .tight:
-            return "The \(label) is tighter now: \(weeks) weeks where we'd like about \(f.weeksNeeded). Doable if the body cooperates. Consistency over heroics."
+            return "The \(label) needs a closer look. " + f.detail
         case .tooShort:
             return "Honestly, \(weeks) weeks to the \(label) is short after a pause. A safe build wants about \(f.weeksNeeded). Consider adjusting the goal time or the date, and we'll make either work."
         case .noRace:

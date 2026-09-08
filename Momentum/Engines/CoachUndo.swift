@@ -34,6 +34,14 @@ enum CoachUndo {
         // disambiguates "captured as nil" from "not captured" (optionals encode as absent).
         var weeklyRunVolumeM: Double? = nil
         var weeklyVolumeCaptured: Bool? = nil
+        var fitnessDeclarationCaptured: Bool? = nil
+        var fitnessDeclaredAt: Date? = nil
+        var longestRunM: Double? = nil
+        var timeLimitsCaptured: Bool? = nil
+        var regularRunLimitS: Double? = nil
+        var longRunLimitS: Double? = nil
+        var illnessCaptured: Bool? = nil
+        var illnessData: Data? = nil
 
         struct PlanState: Codable, Equatable {
             var name: String
@@ -44,6 +52,7 @@ enum CoachUndo {
             var createdAt: Date
             var lastAdaptedAt: Date?
             var pausedUntil: Date?
+            var pauseShiftedDates: [String: Date]? = nil
             var weekPhases: [String]
             var sessions: [SessionState]
             var blockIndex: Int? = nil   // additive: rolling-block counter (absent in old snapshots)
@@ -58,6 +67,8 @@ enum CoachUndo {
             var lastRecalibratedAt: Date? = nil
             var pendingP5kSPerKm: Double? = nil
             var pendingP5kAt: Date? = nil
+            var pendingP5kWorkoutID: UUID? = nil
+            var paceEvidenceDates: [String: Date]? = nil
             var athleteState: AthleteState? = nil
         }
 
@@ -124,6 +135,14 @@ enum CoachUndo {
             plan: nil)
         snap.weeklyRunVolumeM = profile.weeklyRunVolumeM
         snap.weeklyVolumeCaptured = true
+        snap.fitnessDeclarationCaptured = true
+        snap.fitnessDeclaredAt = profile.fitnessDeclaredAt
+        snap.longestRunM = profile.longestRunM
+        snap.illnessCaptured = profile.modelContext?.container.schema.entities.contains(where: { $0.name == "PlanContinuityRecord" }) == true
+        snap.illnessData = profile.continuity?.illnessData
+        snap.timeLimitsCaptured = true
+        snap.regularRunLimitS = profile.planPreferences?.regularRunLimitS
+        snap.longRunLimitS = profile.planPreferences?.longRunLimitS
         if let plan = profile.plan {
             snap.plan = planState(of: plan)
         }
@@ -169,6 +188,7 @@ enum CoachUndo {
                         strengthLabel: s.strengthLabel)
                 })
         state.blockIndex = plan.blockIndex
+        state.pauseShiftedDates = plan.coachingState?.pauseShiftedDates
         state.id = plan.id
         state.isSelfCoached = plan.isSelfCoached
         state.blockStart = plan.blockStart
@@ -177,6 +197,8 @@ enum CoachUndo {
         state.lastRecalibratedAt = plan.lastRecalibratedAt
         state.pendingP5kSPerKm = plan.pendingP5kSPerKm
         state.pendingP5kAt = plan.pendingP5kAt
+        state.pendingP5kWorkoutID = plan.coachingState?.pendingP5kWorkoutID
+        state.paceEvidenceDates = plan.coachingState?.paceEvidenceDates
         if let athlete {
             state.athleteState = Snapshot.AthleteState(
                 thresholdSPerKm: athlete.thresholdSPerKm, thresholdMethod: athlete.thresholdMethod,
@@ -201,123 +223,177 @@ enum CoachUndo {
 
     /// Put everything back exactly as captured. Returns false when the snapshot can't be decoded.
     @discardableResult
-    static func restore(_ json: String, profile: UserProfile, in context: ModelContext) -> Bool {
+    static func restore(_ json: String, profile: UserProfile, in context: ModelContext,
+                        restoreCloudRecovery: Bool = false) -> Bool {
         guard let snap = try? JSONDecoder().decode(Snapshot.self, from: Data(json.utf8)) else { return false }
 
-        profile.goal = Goal(rawValue: snap.goal) ?? profile.goal
-        profile.disciplines = snap.disciplines
-        profile.daysPerWeek = snap.daysPerWeek
-        profile.sessionMinutes = snap.sessionMinutes
-        profile.equipment = Equipment(rawValue: snap.equipment) ?? profile.equipment
-        profile.raceDate = snap.raceDate
-        profile.raceDistanceM = snap.raceDistanceM
-        profile.goalFinishTimeS = snap.goalFinishTimeS
-        profile.preferredDays = snap.preferredDays
-        profile.planIntensity = snap.planIntensity
-        profile.injuryHistory = snap.injuryHistory
-        profile.activeInjuryArea = snap.activeInjuryArea
-        profile.activeInjurySeverity = snap.activeInjurySeverity
-        profile.activeInjuryUntil = snap.activeInjuryUntil
-        // Only restore when this snapshot actually captured it (older snapshots predate the field).
-        if snap.weeklyVolumeCaptured == true { profile.weeklyRunVolumeM = snap.weeklyRunVolumeM }
-
-        // Replace the plan wholesale with the captured one (state restore, not operation reversal).
-        if let old = profile.plan {
-            profile.plan = nil
-            context.delete(old)
-        }
-        if let planState = snap.plan {
-            // The plan comes back under its own id, so any shelf record that recorded it as
-            // finished (a renewal, a switch) now describes a plan that is current again. Remove
-            // it, or Your plans would list the same plan as both current and previous.
-            if let restoredID = planState.id {
-                let ghosts = (try? context.fetch(FetchDescriptor<PlanShelfRecord>(
-                    predicate: #Predicate { $0.sourcePlanID == restoredID }))) ?? []
-                ghosts.forEach(context.delete)
-            }
-            let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
-            let exercises = (try? context.fetch(FetchDescriptor<Exercise>())) ?? []
-            let workoutsByID = Dictionary(uniqueKeysWithValues: workouts.map { ($0.id, $0) })
-            let exercisesByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
-
-            let plan = TrainingPlan()
-            if let id = planState.id { plan.id = id }   // the same identity keeps every sidecar valid
-            plan.name = planState.name
-            plan.goal = Goal(rawValue: planState.goal) ?? .generalFitness
-            plan.disciplines = planState.disciplines
-            plan.raceDate = planState.raceDate
-            plan.p5kSPerKm = planState.p5kSPerKm
-            plan.createdAt = planState.createdAt
-            plan.lastAdaptedAt = planState.lastAdaptedAt
-            plan.pausedUntil = planState.pausedUntil
-            plan.weekPhases = planState.weekPhases
-            plan.blockIndex = planState.blockIndex ?? 0   // absent in pre-rolling-block snapshots
-            plan.isSelfCoached = planState.isSelfCoached ?? false
-            plan.blockStart = planState.blockStart
-            plan.goalRacePaceSPerKm = planState.goalRacePaceSPerKm
-            plan.lastPaceEasedAt = planState.lastPaceEasedAt
-            plan.lastRecalibratedAt = planState.lastRecalibratedAt
-            plan.pendingP5kSPerKm = planState.pendingP5kSPerKm
-            plan.pendingP5kAt = planState.pendingP5kAt
-            context.insert(plan)
-
-            var sessions: [PlannedSession] = []
-            for s in planState.sessions {
-                let session = PlannedSession()
-                session.id = s.id
-                session.date = s.date
-                session.discipline = Discipline(rawValue: s.discipline) ?? .running
-                session.sportType = s.sportType
-                session.runType = s.runType.flatMap(RunType.init(rawValue:))
-                session.targetDistanceM = s.targetDistanceM
-                session.targetDurationS = s.targetDurationS
-                session.targetPaceSPerKm = s.targetPaceSPerKm
-                session.intervals = s.intervals
-                session.status = SessionStatus(rawValue: s.status) ?? .planned
-                session.rationale = s.rationale
-                session.strengthLabel = s.strengthLabel
-                context.insert(session)
-                for e in s.strength {
-                    let pe = PlannedExercise()
-                    pe.order = e.order
-                    pe.exercise = e.exerciseID.flatMap { exercisesByID[$0] }
-                    pe.targetSets = e.targetSets
-                    pe.targetRepLow = e.targetRepLow
-                    pe.targetRepHigh = e.targetRepHigh
-                    pe.targetRPE = e.targetRPE
-                    pe.targetPctRM = e.targetPctRM
-                    pe.progression = e.progression
-                    context.insert(pe)
-                    session.strengthTargets.append(pe)
+        let previousAutosave = context.autosaveEnabled
+        context.autosaveEnabled = false
+        defer { context.autosaveEnabled = previousAutosave }
+        do {
+            if snap.illnessCaptured == true {
+                if restoreCloudRecovery {
+                    PlanContinuityRecord.upsert(profileID: profile.id, in: context).illnessData = snap.illnessData
+                } else {
+                    let captured = try snap.illnessData.map { try JSONDecoder().decode(IllnessResponse.State.self, from: $0) }
+                    try IllnessResponse.save(IllnessResponse.preservingRestrictions(IllnessResponse.state(for: profile), captured),
+                                             profile: profile, in: context)
                 }
-                // Re-link credited workouts so completed history keeps its plan connection.
-                if let wid = s.completedWorkoutID, let workout = workoutsByID[wid] {
-                    session.completedWorkout = workout
-                    workout.plannedSession = session
+            }
+            profile.goal = Goal(rawValue: snap.goal) ?? profile.goal
+            profile.disciplines = snap.disciplines
+            profile.daysPerWeek = snap.daysPerWeek
+            profile.sessionMinutes = snap.sessionMinutes
+            if snap.timeLimitsCaptured == true {
+                let preferences = PlanPreferencesRecord.upsert(profileID: profile.id, in: context)
+                preferences.regularRunLimitS = snap.regularRunLimitS
+                preferences.longRunLimitS = snap.longRunLimitS
+            }
+            profile.equipment = Equipment(rawValue: snap.equipment) ?? profile.equipment
+            profile.raceDate = snap.raceDate
+            profile.raceDistanceM = snap.raceDistanceM
+            profile.goalFinishTimeS = snap.goalFinishTimeS
+            profile.preferredDays = snap.preferredDays
+            profile.planIntensity = snap.planIntensity
+            // Undoing a plan edit must not clear a subsequently reported injury. Explicit
+            // cloud resolution has already merged restrictions; injury return has its own gate.
+            if restoreCloudRecovery || profile.activeInjuryArea == nil {
+                profile.activeInjuryArea = snap.activeInjuryArea
+                profile.activeInjurySeverity = snap.activeInjurySeverity
+                profile.activeInjuryUntil = snap.activeInjuryUntil
+            }
+            profile.injuryHistory = Array(Set(profile.injuryHistory + snap.injuryHistory)).sorted()
+            // Only restore when this snapshot actually captured it (older snapshots predate the field).
+            if snap.weeklyVolumeCaptured == true { profile.weeklyRunVolumeM = snap.weeklyRunVolumeM }
+            if snap.fitnessDeclarationCaptured == true {
+                profile.longestRunM = snap.longestRunM
+                PlanFitnessDeclarationRecord.set(snap.fitnessDeclaredAt, for: profile, in: context)
+            }
+
+            // Restore matching objects in place. Deleting and reinserting the whole relationship
+            // graph inside an undo-enabled save can leave SwiftData with future backing data
+            // while it snapshots the deletion. Keeping live instances also protects open views.
+            let previousPlan = profile.plan
+            if let old = previousPlan, old.id != snap.plan?.id {
+                if let state = old.coachingState { context.delete(state) }
+                if let state = PlanAthleteStateRecord.fetch(planID: old.id, in: context) { context.delete(state) }
+            }
+            if let planState = snap.plan {
+                // The plan comes back under its own id, so any shelf record that recorded it as
+                // finished (a renewal, a switch) now describes a plan that is current again. Remove
+                // it, or Your plans would list the same plan as both current and previous.
+                if let restoredID = planState.id {
+                    let ghosts = (try? context.fetch(FetchDescriptor<PlanShelfRecord>(
+                        predicate: #Predicate { $0.sourcePlanID == restoredID }))) ?? []
+                    ghosts.forEach(context.delete)
                 }
-                sessions.append(session)
+                let workouts = try context.fetch(FetchDescriptor<Workout>())
+                let exercises = try context.fetch(FetchDescriptor<Exercise>())
+                let workoutsByID = Dictionary(uniqueKeysWithValues: workouts.map { ($0.id, $0) })
+                let exercisesByID = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
+
+                let plan = previousPlan ?? TrainingPlan()
+                if previousPlan == nil { context.insert(plan) }
+                let previousSessions = plan.sessions
+                var availableSessions = Dictionary(uniqueKeysWithValues: previousSessions.map { ($0.id, $0) })
+                if let id = planState.id { plan.id = id }   // the same identity keeps every sidecar valid
+                plan.name = planState.name
+                plan.goal = Goal(rawValue: planState.goal) ?? .generalFitness
+                plan.disciplines = planState.disciplines
+                plan.raceDate = planState.raceDate
+                plan.p5kSPerKm = planState.p5kSPerKm
+                plan.createdAt = planState.createdAt
+                plan.lastAdaptedAt = planState.lastAdaptedAt
+                plan.pausedUntil = planState.pausedUntil
+                let coachingState = PlanCoachingStateRecord.upsert(planID: plan.id, in: context)
+                coachingState.pauseShiftedDates = planState.pauseShiftedDates ?? [:]
+                plan.weekPhases = planState.weekPhases
+                plan.blockIndex = planState.blockIndex ?? 0   // absent in pre-rolling-block snapshots
+                plan.isSelfCoached = planState.isSelfCoached ?? false
+                plan.blockStart = planState.blockStart
+                plan.goalRacePaceSPerKm = planState.goalRacePaceSPerKm
+                plan.lastPaceEasedAt = planState.lastPaceEasedAt
+                plan.lastRecalibratedAt = planState.lastRecalibratedAt
+                plan.pendingP5kSPerKm = planState.pendingP5kSPerKm
+                plan.pendingP5kAt = planState.pendingP5kAt
+                coachingState.pendingP5kWorkoutID = planState.pendingP5kWorkoutID
+                coachingState.paceEvidenceDates = planState.paceEvidenceDates ?? [:]
+                var sessions: [PlannedSession] = []
+                for old in previousSessions {
+                    old.completedWorkout?.plannedSession = nil
+                    old.completedWorkout = nil
+                }
+                for s in planState.sessions {
+                    let session = availableSessions.removeValue(forKey: s.id) ?? PlannedSession()
+                    if session.modelContext == nil { context.insert(session) }
+                    session.id = s.id
+                    session.date = s.date
+                    session.discipline = Discipline(rawValue: s.discipline) ?? .running
+                    session.sportType = s.sportType
+                    session.runType = s.runType.flatMap(RunType.init(rawValue:))
+                    session.targetDistanceM = s.targetDistanceM
+                    session.targetDurationS = s.targetDurationS
+                    session.targetPaceSPerKm = s.targetPaceSPerKm
+                    session.intervals = s.intervals
+                    session.status = SessionStatus(rawValue: s.status) ?? .planned
+                    session.rationale = s.rationale
+                    session.strengthLabel = s.strengthLabel
+                    let previousTargets = session.strengthTargets.sorted { $0.order < $1.order }
+                    var targets: [PlannedExercise] = []
+                    for (index, e) in s.strength.enumerated() {
+                        let pe = index < previousTargets.count ? previousTargets[index] : PlannedExercise()
+                        if pe.modelContext == nil { context.insert(pe) }
+                        pe.order = e.order
+                        pe.exercise = e.exerciseID.flatMap { exercisesByID[$0] }
+                        pe.targetSets = e.targetSets
+                        pe.targetRepLow = e.targetRepLow
+                        pe.targetRepHigh = e.targetRepHigh
+                        pe.targetRPE = e.targetRPE
+                        pe.targetPctRM = e.targetPctRM
+                        pe.progression = e.progression
+                        targets.append(pe)
+                    }
+                    session.strengthTargets = targets
+                    for old in previousTargets.dropFirst(targets.count) { context.delete(old) }
+                    // Re-link credited workouts so completed history keeps its plan connection.
+                    if let wid = s.completedWorkoutID, let workout = workoutsByID[wid] {
+                        session.completedWorkout = workout
+                        workout.plannedSession = session
+                    }
+                    sessions.append(session)
+                }
+                plan.sessions = sessions
+                for old in availableSessions.values { context.delete(old) }
+                profile.plan = plan
+                // The athlete state the plan was built with, back under the restored id. A rebuild
+                // removed the old record when it replaced the plan; without this the restored plan's
+                // paces would re-derive from population numbers.
+                if let a = planState.athleteState {
+                    let record = PlanAthleteStateRecord.upsert(planID: plan.id, in: context)
+                    record.thresholdSPerKm = a.thresholdSPerKm
+                    record.thresholdMethod = a.thresholdMethod
+                    record.thresholdConfidence = a.thresholdConfidence
+                    record.thresholdObservedAt = a.thresholdObservedAt
+                    record.riegelExponent = a.riegelExponent
+                    record.durabilitySignal = a.durabilitySignal
+                    record.computedAt = a.computedAt
+                    record.lastThresholdRecalibratedAt = a.lastThresholdRecalibratedAt
+                } else if let old = PlanAthleteStateRecord.fetch(planID: plan.id, in: context) {
+                    context.delete(old)
+                }
+                // Season pointer, metadata and intents follow the restored plan the same way they follow
+                // a rebuild; the caller saves.
+                _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+            } else if let old = previousPlan {
+                profile.plan = nil
+                context.delete(old)
             }
-            plan.sessions = sessions
-            profile.plan = plan
-            // The athlete state the plan was built with, back under the restored id. A rebuild
-            // removed the old record when it replaced the plan; without this the restored plan's
-            // paces would re-derive from population numbers.
-            if let a = planState.athleteState {
-                let record = PlanAthleteStateRecord.upsert(planID: plan.id, in: context)
-                record.thresholdSPerKm = a.thresholdSPerKm
-                record.thresholdMethod = a.thresholdMethod
-                record.thresholdConfidence = a.thresholdConfidence
-                record.thresholdObservedAt = a.thresholdObservedAt
-                record.riegelExponent = a.riegelExponent
-                record.durabilitySignal = a.durabilitySignal
-                record.computedAt = a.computedAt
-                record.lastThresholdRecalibratedAt = a.lastThresholdRecalibratedAt
-            }
-            // Season pointer, metadata and intents follow the restored plan the same way they follow
-            // a rebuild; the caller saves.
-            _ = try? RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
+            try IllnessResponse.enforce(in: context)
+            try PlanMutation.save(context)
+            return true
+        } catch {
+            context.rollback()
+            return false
         }
-        try? context.save()
-        return true
     }
 }

@@ -77,6 +77,7 @@ final class PhoneWatchSync: NSObject {
             if let s = plan.sessions.first(where: {
                 cal.isDateInToday($0.date) && $0.completedWorkout == nil
                     && ($0.status == .planned || $0.status == .moved)
+                    && PlanCoaching.canStartPlannedSession($0, profile: profiles.first)
             }) {
                 let unit = DistanceUnit.auto.resolved()
                 context["sessionTitle"] = Self.title(for: s)

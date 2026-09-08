@@ -115,12 +115,14 @@ enum AppReview {
     /// cannot know whether they wrote anything, so `recordRated` would be a lie: this records an
     /// ASK. `asksMade` then indexes past the 1st-item milestone, which means the earned cards pick
     /// up at the 5th and 15th logged item instead of nagging someone the morning after onboarding.
-    /// Idempotent within `minDaysBetweenAsks` for free, because it also stamps `lastAskKey`.
+    /// Re-entering onboarding within `minDaysBetweenAsks` records the same opportunity once.
     ///
     /// This is deliberately NOT a bypass of `shouldRequestReview` — that gate still owns every
     /// in-app card. This only tells the ledger a slot is gone.
     static func recordOnboardingAsk(defaults: UserDefaults = .standard, now: Date = .now) {
         guard !defaults.bool(forKey: ratedKey) else { return }
+        if let last = defaults.object(forKey: lastAskKey) as? Date,
+           now.timeIntervalSince(last) < minDaysBetweenAsks * 86_400 { return }
         let asks = asksMade(defaults: defaults)
         guard asks < maxAsks else { return }
         defaults.set(asks + 1, forKey: asksKey)

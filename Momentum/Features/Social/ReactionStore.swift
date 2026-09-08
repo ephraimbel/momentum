@@ -11,6 +11,8 @@ final class ReactionStore {
     private static let key = "com.momentum.social.reactions"
     private static let pendingKey = "com.momentum.social.reactionsPending"
     private let defaults: UserDefaults
+    @ObservationIgnored private var pushing: Set<String> = []
+    @ObservationIgnored private(set) var intentRevision = 0
     private(set) var reacted: Set<String>
 
     /// Post ids whose server write could not even be attempted — a tap made offline, or made as a
@@ -44,6 +46,7 @@ final class ReactionStore {
     func hasReacted(_ id: UUID) -> Bool { reacted.contains(id.uuidString) }
 
     func toggle(_ id: UUID) {
+        intentRevision &+= 1
         let key = id.uuidString
         if reacted.contains(key) { reacted.remove(key) } else { reacted.insert(key) }
         // A pulse post has no server row and no id worth keeping — the tap is real for as long as
@@ -54,23 +57,32 @@ final class ReactionStore {
         // dead connection is exactly the window that lasts longest.
         pending.insert(key)
         persist()
-        let isReacted = reacted.contains(key)
-        Task { await push(id, reacted: isReacted) }
+        Task { await push(id) }
     }
 
     /// Push one intent. Confirmed → clear it. Refused by a REACHABLE backend → also clear it (the
     /// post has no server row; see `pending`). Unreachable → leave it for `flushPending`.
-    private func push(_ id: UUID, reacted isReacted: Bool) async {
+    private func push(_ id: UUID) async {
         let key = id.uuidString
-        guard let backend else { pending.remove(key); persist(); return }   // local-only build
-        if await backend.setReaction(postID: id, reacted: isReacted) {
-            pending.remove(key)
-            persist()
-        } else if await backend.isAvailable {
-            pending.remove(key)     // a live session refused it — nothing to retry
-            persist()
+        // One writer per post. A second tap updates persisted intent immediately, and the writer
+        // sends that latest state after its current request finishes. An older response can never
+        // clear a newer pending tap or arrive at the server after the newer write.
+        guard pushing.insert(key).inserted else { return }
+        defer { pushing.remove(key) }
+        while pending.contains(key) {
+            guard let backend else { pending.remove(key); persist(); return }
+            let desired = reacted.contains(key)
+            let confirmed = await backend.setReaction(postID: id, reacted: desired)
+            let settled: Bool
+            if confirmed { settled = true }
+            else { settled = await backend.isAvailable }
+            guard desired == reacted.contains(key) else { continue }
+            if settled {
+                pending.remove(key)
+                persist()
+            }
+            return // Offline intent stays persisted; refresh will retry it.
         }
-        // Unreachable: the entry stays exactly where `toggle` put it.
     }
 
     /// Retry every reaction the network never saw. Called when the feed refreshes — which is both
@@ -80,7 +92,7 @@ final class ReactionStore {
         guard backend != nil, !pending.isEmpty else { return }
         for key in pending {
             guard let id = UUID(uuidString: key) else { pending.remove(key); persist(); continue }
-            Task { await push(id, reacted: reacted.contains(key)) }
+            Task { await push(id) }
         }
     }
 

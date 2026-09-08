@@ -150,9 +150,30 @@ enum SchemaV5: VersionedSchema {
     }
 }
 
+/// V6 adds pause provenance and consumed pace evidence without changing any released entity.
+enum SchemaV6: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(6, 0, 0) }
+    static var models: [any PersistentModel.Type] { SchemaV5.models + [PlanCoachingStateRecord.self] }
+}
+
+enum SchemaV7: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(7, 0, 0) }
+    static var models: [any PersistentModel.Type] { SchemaV6.models + [PlanPreferencesRecord.self] }
+}
+
+enum SchemaV8: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(8, 0, 0) }
+    static var models: [any PersistentModel.Type] { SchemaV7.models + [PlanContinuityRecord.self] }
+}
+
+enum SchemaV9: VersionedSchema {
+    static var versionIdentifier: Schema.Version { Schema.Version(9, 0, 0) }
+    static var models: [any PersistentModel.Type] { SchemaV8.models + [PlanFitnessDeclarationRecord.self] }
+}
+
 enum MomentumMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self]
+        [SchemaV1.self, SchemaV2.self, SchemaV3.self, SchemaV4.self, SchemaV5.self, SchemaV6.self, SchemaV7.self, SchemaV8.self, SchemaV9.self]
     }
     static var stages: [MigrationStage] {
         [
@@ -160,6 +181,10 @@ enum MomentumMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: SchemaV2.self, toVersion: SchemaV3.self),
             .lightweight(fromVersion: SchemaV3.self, toVersion: SchemaV4.self),
             .lightweight(fromVersion: SchemaV4.self, toVersion: SchemaV5.self),
+            .lightweight(fromVersion: SchemaV5.self, toVersion: SchemaV6.self),
+            .lightweight(fromVersion: SchemaV6.self, toVersion: SchemaV7.self),
+            .lightweight(fromVersion: SchemaV7.self, toVersion: SchemaV8.self),
+            .lightweight(fromVersion: SchemaV8.self, toVersion: SchemaV9.self),
         ]
     }
 }

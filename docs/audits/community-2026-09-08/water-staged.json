@@ -1,0 +1,6458 @@
+{
+  "bundle_sha256": "555e9325ee756a916b2e43e9a2ce05bcb2ceca2b6ff618f257d118c004545329",
+  "created_at_utc": "2026-09-08T09:37:23Z",
+  "coverage": {
+    "loops": 2840,
+    "chords": 7635,
+    "unique_samples": 21257,
+    "limited": false,
+    "min_chord_m": 600.0,
+    "spacing_m": 250.0,
+    "note": "Samples only; short segments and gaps between samples are not validated."
+  },
+  "query_errors": {},
+  "invalid_geometry": [],
+  "segment_classifications": {
+    "dry_samples": 7537,
+    "mapped_bridge": 68,
+    "unresolved_water": 28,
+    "mapped_waterfront_or_crossing": 2
+  },
+  "findings": [
+    {
+      "city": "Philadelphia, PA",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "7c97ba8428c8af5a83390628fc56e688805c5723d4c04f8868d3603c4768212f",
+      "km": 16.48,
+      "segment": 38,
+      "span_m": 2125.9914858870115,
+      "a": [
+        39.95434,
+        -75.1918
+      ],
+      "b": [
+        39.95128,
+        -75.16718
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 39.954,
+          "lon": -75.18906,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95366,
+          "lon": -75.18633,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95332,
+          "lon": -75.18359,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95298,
+          "lon": -75.18086,
+          "water": true,
+          "roads": [
+            {
+              "name": "Chestnut St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.48
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 7.87
+            }
+          ]
+        },
+        {
+          "lat": 39.95264,
+          "lon": -75.17812,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.9523,
+          "lon": -75.17539,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95196,
+          "lon": -75.17265,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95162,
+          "lon": -75.16992,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Boston, MA",
+      "kind": "trail",
+      "index": 1,
+      "route_id": "1ebec49b953eb28de1957a93401b2ee4a3b8c03e8e892b14c8a509386d5bb283",
+      "km": 7.7,
+      "segment": 29,
+      "span_m": 2075.408406626758,
+      "a": [
+        42.35584,
+        -71.07135
+      ],
+      "b": [
+        42.34943,
+        -71.09507
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 42.35513,
+          "lon": -71.07399,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35442,
+          "lon": -71.07662,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.3537,
+          "lon": -71.07926,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35299,
+          "lon": -71.08189,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35228,
+          "lon": -71.08453,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35157,
+          "lon": -71.08716,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35085,
+          "lon": -71.0898,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35014,
+          "lon": -71.09243,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 1.05
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 1.05
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.07
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.08
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 9.02
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.25
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 10.21
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 14.5
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 14.92
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Boston, MA",
+      "kind": "trail",
+      "index": 1,
+      "route_id": "1ebec49b953eb28de1957a93401b2ee4a3b8c03e8e892b14c8a509386d5bb283",
+      "km": 7.7,
+      "segment": 20,
+      "span_m": 2011.434906211451,
+      "a": [
+        42.34943,
+        -71.09507
+      ],
+      "b": [
+        42.35564,
+        -71.07208
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 42.35012,
+          "lon": -71.09252,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.67
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.68
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 2.67
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 2.67
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 7.18
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 7.18
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.79
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 12.9
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 12.9
+            }
+          ]
+        },
+        {
+          "lat": 42.35081,
+          "lon": -71.08996,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.3515,
+          "lon": -71.08741,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35219,
+          "lon": -71.08485,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35288,
+          "lon": -71.0823,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35357,
+          "lon": -71.07974,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35426,
+          "lon": -71.07719,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35495,
+          "lon": -71.07463,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Boston, MA",
+      "kind": "run",
+      "index": 5,
+      "route_id": "4baf587f211f46c3acf6b830f74e9424a785da0f2d2998f6f19cec518db4f749",
+      "km": 12.83,
+      "segment": 41,
+      "span_m": 1582.10489193513,
+      "a": [
+        42.34943,
+        -71.09507
+      ],
+      "b": [
+        42.35432,
+        -71.07699
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 42.35013,
+          "lon": -71.09249,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.45
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.46
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 4.02
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 4.02
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 9.86
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 9.86
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.95
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 14.92
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 14.92
+            }
+          ]
+        },
+        {
+          "lat": 42.35083,
+          "lon": -71.0899,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35153,
+          "lon": -71.08732,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35222,
+          "lon": -71.08474,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35292,
+          "lon": -71.08216,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35362,
+          "lon": -71.07957,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Philadelphia, PA",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "7c97ba8428c8af5a83390628fc56e688805c5723d4c04f8868d3603c4768212f",
+      "km": 16.48,
+      "segment": 29,
+      "span_m": 1508.5652591377843,
+      "a": [
+        39.95099,
+        -75.17732
+      ],
+      "b": [
+        39.95316,
+        -75.19479
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 39.9513,
+          "lon": -75.17982,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95161,
+          "lon": -75.18231,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "crossing",
+              "structure": "bridge",
+              "distance_m": 0.24
+            },
+            {
+              "name": "Walnut St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.02
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 6.14
+            }
+          ]
+        },
+        {
+          "lat": 39.95192,
+          "lon": -75.18481,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95223,
+          "lon": -75.1873,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95254,
+          "lon": -75.1898,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95285,
+          "lon": -75.19229,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Austin, TX",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "0cc601c71e7312d75a7498e2cad47a36c9fe3e10c0fe38a262c33e964c782b7e",
+      "km": 15.89,
+      "segment": 27,
+      "span_m": 1491.7354221608402,
+      "a": [
+        30.26991,
+        -97.74212
+      ],
+      "b": [
+        30.25714,
+        -97.74688
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 30.26778,
+          "lon": -97.74291,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 30.26565,
+          "lon": -97.74371,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 30.26353,
+          "lon": -97.7445,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 30.2614,
+          "lon": -97.74529,
+          "water": true,
+          "roads": [
+            {
+              "name": "S Congress Ave",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.08
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 8.5
+            }
+          ]
+        },
+        {
+          "lat": 30.25927,
+          "lon": -97.74609,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Boston, MA",
+      "kind": "run",
+      "index": 5,
+      "route_id": "4baf587f211f46c3acf6b830f74e9424a785da0f2d2998f6f19cec518db4f749",
+      "km": 12.83,
+      "segment": 14,
+      "span_m": 1396.7275813183653,
+      "a": [
+        42.35375,
+        -71.07911
+      ],
+      "b": [
+        42.34943,
+        -71.09507
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 42.35303,
+          "lon": -71.08177,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35231,
+          "lon": -71.08443,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35159,
+          "lon": -71.08709,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35087,
+          "lon": -71.08975,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 42.35015,
+          "lon": -71.09241,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.58
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.6
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 2.88
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 2.88
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 7.05
+            },
+            {
+              "name": null,
+              "class": "motorway_link",
+              "type": "motorway_link",
+              "structure": "bridge",
+              "distance_m": 8.6
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.7
+            },
+            {
+              "name": "Beacon St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 13.41
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Sacramento, CA",
+      "kind": "ride",
+      "index": 2,
+      "route_id": "e817d9735a59b263814f4efb65e06adcef5c782ef829b9b8bec82a9dfc24490e",
+      "km": 53.62,
+      "segment": 163,
+      "span_m": 1359.5870837163222,
+      "a": [
+        38.13006,
+        -121.58955
+      ],
+      "b": [
+        38.12414,
+        -121.57595
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 38.12907,
+          "lon": -121.58728,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.12809,
+          "lon": -121.58502,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.1271,
+          "lon": -121.58275,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.12611,
+          "lon": -121.58048,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 1.25
+            }
+          ]
+        },
+        {
+          "lat": 38.12513,
+          "lon": -121.57822,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Pittsburgh, PA",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "e9c0533f43cd411f5cccba436d8e541f68ab8a0dfc0e39447ee9cc500df78664",
+      "km": 15.98,
+      "segment": 15,
+      "span_m": 1339.557266092111,
+      "a": [
+        40.44289,
+        -79.99677
+      ],
+      "b": [
+        40.43215,
+        -80.00394
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 40.4411,
+          "lon": -79.99796,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.43931,
+          "lon": -79.99916,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.43752,
+          "lon": -80.00035,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.43573,
+          "lon": -80.00155,
+          "water": true,
+          "roads": [
+            {
+              "name": "Smithfield St",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 3.62
+            },
+            {
+              "name": "Smithfield St",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 4.3
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "bridge",
+              "distance_m": 9.68
+            },
+            {
+              "name": "Three Rivers Heritage Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 9.75
+            }
+          ]
+        },
+        {
+          "lat": 40.43394,
+          "lon": -80.00275,
+          "water": true,
+          "roads": [
+            {
+              "name": "Smithfield St",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 2.71
+            },
+            {
+              "name": "Smithfield St",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 5.39
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "bridge",
+              "distance_m": 8.89
+            },
+            {
+              "name": "Three Rivers Heritage Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 9.5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Sacramento, CA",
+      "kind": "ride",
+      "index": 2,
+      "route_id": "e817d9735a59b263814f4efb65e06adcef5c782ef829b9b8bec82a9dfc24490e",
+      "km": 53.62,
+      "segment": 183,
+      "span_m": 1252.6244343386475,
+      "a": [
+        38.12403,
+        -121.57565
+      ],
+      "b": [
+        38.12947,
+        -121.58819
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 38.12494,
+          "lon": -121.57774,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.12584,
+          "lon": -121.57983,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.15
+            },
+            {
+              "name": null,
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.15
+            }
+          ]
+        },
+        {
+          "lat": 38.12675,
+          "lon": -121.58192,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.12766,
+          "lon": -121.58401,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.12856,
+          "lon": -121.5861,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Chicago, IL",
+      "kind": "run",
+      "index": 3,
+      "route_id": "3e4ab568294a2baa4fd180c98e95ce78dc2d0d88a391916bff6a4612776fd139",
+      "km": 16.37,
+      "segment": 92,
+      "span_m": 1233.1462443917371,
+      "a": [
+        41.86729,
+        -87.62583
+      ],
+      "b": [
+        41.86711,
+        -87.64072
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 41.86725,
+          "lon": -87.62881,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 41.86722,
+          "lon": -87.63179,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 41.86718,
+          "lon": -87.63476,
+          "water": true,
+          "roads": [
+            {
+              "name": "Michigan Avenue-Chinatown",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.53
+            },
+            {
+              "name": "Chinatown-Ogilvie/Union",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 2.59
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 2.83
+            },
+            {
+              "name": "W Roosevelt Rd",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 9.78
+            }
+          ]
+        },
+        {
+          "lat": 41.86715,
+          "lon": -87.63774,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Boulder, CO",
+      "kind": "run",
+      "index": 24,
+      "route_id": "f1b3447db87458b1c21775c2539eee2b0cb84e6403504517af9b860f3e2cede8",
+      "km": 8.88,
+      "segment": 1,
+      "span_m": 1210.9614295230922,
+      "a": [
+        40.08025,
+        -104.8105
+      ],
+      "b": [
+        40.08002,
+        -104.82473
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.0802,
+          "lon": -104.81335,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.08016,
+          "lon": -104.81619,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.08011,
+          "lon": -104.81904,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.08007,
+          "lon": -104.82188,
+          "water": true,
+          "roads": [
+            {
+              "name": "Hwy 52",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.44
+            },
+            {
+              "name": "Hwy 52",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 9.93
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "San Francisco, CA",
+      "kind": "run",
+      "index": 15,
+      "route_id": "e6906724ead451a51b43d927a83b7b4eef39836661cf4939cdf3303ed1cb1a4a",
+      "km": 15.5,
+      "segment": 24,
+      "span_m": 1191.548282628161,
+      "a": [
+        38.06705,
+        -122.22694
+      ],
+      "b": [
+        38.05635,
+        -122.2262
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 38.06491,
+          "lon": -122.22679,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.24
+            }
+          ]
+        },
+        {
+          "lat": 38.06277,
+          "lon": -122.22664,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.64
+            }
+          ]
+        },
+        {
+          "lat": 38.06063,
+          "lon": -122.2265,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.67
+            }
+          ]
+        },
+        {
+          "lat": 38.05849,
+          "lon": -122.22635,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.49
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "San Francisco, CA",
+      "kind": "run",
+      "index": 15,
+      "route_id": "e6906724ead451a51b43d927a83b7b4eef39836661cf4939cdf3303ed1cb1a4a",
+      "km": 15.5,
+      "segment": 79,
+      "span_m": 1191.548282628161,
+      "a": [
+        38.05635,
+        -122.2262
+      ],
+      "b": [
+        38.06705,
+        -122.22694
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 38.05849,
+          "lon": -122.22635,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.49
+            }
+          ]
+        },
+        {
+          "lat": 38.06063,
+          "lon": -122.2265,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.67
+            }
+          ]
+        },
+        {
+          "lat": 38.06277,
+          "lon": -122.22664,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.64
+            }
+          ]
+        },
+        {
+          "lat": 38.06491,
+          "lon": -122.22679,
+          "water": true,
+          "roads": [
+            {
+              "name": "Carquinez Bridge Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.24
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "run",
+      "index": 8,
+      "route_id": "b6c2bade9df4eb690fe538ea424495984948404b159928d77fd4861c5ef6ebc6",
+      "km": 20.2,
+      "segment": 72,
+      "span_m": 1176.4625813715254,
+      "a": [
+        27.50963,
+        -82.56317
+      ],
+      "b": [
+        27.49905,
+        -82.5631
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 27.50751,
+          "lon": -82.56316,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 27.5054,
+          "lon": -82.56314,
+          "water": true,
+          "roads": [
+            {
+              "name": "Hernando DeSoto Bridge",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 1.01
+            }
+          ]
+        },
+        {
+          "lat": 27.50328,
+          "lon": -82.56313,
+          "water": true,
+          "roads": [
+            {
+              "name": "Hernando DeSoto Bridge",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.9
+            }
+          ]
+        },
+        {
+          "lat": 27.50117,
+          "lon": -82.56311,
+          "water": true,
+          "roads": [
+            {
+              "name": "Hernando DeSoto Bridge",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.15
+            },
+            {
+              "name": "Riverwalk",
+              "class": "pedestrian",
+              "type": "pedestrian",
+              "structure": "none",
+              "distance_m": 11.6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 20,
+      "route_id": "ba0dc4d77bf3f0072f783a09f1aeffc076021d3bf49a25e6947a64ec37f9a9c6",
+      "km": 18.01,
+      "segment": 15,
+      "span_m": 1165.4856015846347,
+      "a": [
+        38.80119,
+        -90.47164
+      ],
+      "b": [
+        38.79483,
+        -90.46095
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.79992,
+          "lon": -90.4695,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.79865,
+          "lon": -90.46736,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.43
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.55
+            }
+          ]
+        },
+        {
+          "lat": 38.79737,
+          "lon": -90.46523,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.74
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.43
+            }
+          ]
+        },
+        {
+          "lat": 38.7961,
+          "lon": -90.46309,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 20,
+      "route_id": "ba0dc4d77bf3f0072f783a09f1aeffc076021d3bf49a25e6947a64ec37f9a9c6",
+      "km": 18.01,
+      "segment": 84,
+      "span_m": 1165.4856015846347,
+      "a": [
+        38.79483,
+        -90.46095
+      ],
+      "b": [
+        38.80119,
+        -90.47164
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.7961,
+          "lon": -90.46309,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.79737,
+          "lon": -90.46523,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.74
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.43
+            }
+          ]
+        },
+        {
+          "lat": 38.79865,
+          "lon": -90.46736,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.43
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.55
+            }
+          ]
+        },
+        {
+          "lat": 38.79992,
+          "lon": -90.4695,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 21,
+      "route_id": "e2e9570dc14c6005909e2c91109aa1cd805f9be096cd64113a0a515d28cb702a",
+      "km": 23.5,
+      "segment": 15,
+      "span_m": 1165.4856015846347,
+      "a": [
+        38.80119,
+        -90.47164
+      ],
+      "b": [
+        38.79483,
+        -90.46095
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.79992,
+          "lon": -90.4695,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.79865,
+          "lon": -90.46736,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.43
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.55
+            }
+          ]
+        },
+        {
+          "lat": 38.79737,
+          "lon": -90.46523,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.74
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.43
+            }
+          ]
+        },
+        {
+          "lat": 38.7961,
+          "lon": -90.46309,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 21,
+      "route_id": "e2e9570dc14c6005909e2c91109aa1cd805f9be096cd64113a0a515d28cb702a",
+      "km": 23.5,
+      "segment": 127,
+      "span_m": 1165.4856015846347,
+      "a": [
+        38.79483,
+        -90.46095
+      ],
+      "b": [
+        38.80119,
+        -90.47164
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.7961,
+          "lon": -90.46309,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.79737,
+          "lon": -90.46523,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.74
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.43
+            }
+          ]
+        },
+        {
+          "lat": 38.79865,
+          "lon": -90.46736,
+          "water": true,
+          "roads": [
+            {
+              "name": "Missouri Greenway",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.43
+            },
+            {
+              "name": "Discovery Bridge",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.55
+            }
+          ]
+        },
+        {
+          "lat": 38.79992,
+          "lon": -90.4695,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Boulder, CO",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "6f3285a1686ca4a12a769b3cffb99ec13b051958d31b63fd038b5b3af6c84999",
+      "km": 52.71,
+      "segment": 12,
+      "span_m": 1150.4031475420247,
+      "a": [
+        40.09448,
+        -104.83342
+      ],
+      "b": [
+        40.09474,
+        -104.8199
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.09453,
+          "lon": -104.83072,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.09458,
+          "lon": -104.82801,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.09464,
+          "lon": -104.82531,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.09469,
+          "lon": -104.8226,
+          "water": true,
+          "roads": [
+            {
+              "name": "County Rd 14 1/2",
+              "class": "tertiary",
+              "type": "tertiary",
+              "structure": "bridge",
+              "distance_m": 0.64
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Houston, TX",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "52033f33ffd776d870bb5919532f8a66a04f1a9bc9e21000762878bea41c3f0f",
+      "km": 47.06,
+      "segment": 80,
+      "span_m": 1122.3870088972722,
+      "a": [
+        29.95636,
+        -95.73243
+      ],
+      "b": [
+        29.95643,
+        -95.72078
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 29.95637,
+          "lon": -95.7301,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 29.95639,
+          "lon": -95.72777,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 29.9564,
+          "lon": -95.72544,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 29.95642,
+          "lon": -95.72311,
+          "water": true,
+          "roads": [
+            {
+              "name": "House Hahl Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.02
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Toronto",
+      "kind": "run",
+      "index": 5,
+      "route_id": "274cc928aeb99371248e0f45c9a72e4e23a6d41a827c256676673a562ea0b714",
+      "km": 16.52,
+      "segment": 93,
+      "span_m": 1097.855128962202,
+      "a": [
+        43.6381,
+        -79.37462
+      ],
+      "b": [
+        43.63087,
+        -79.38391
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 43.63665,
+          "lon": -79.37648,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.06
+            }
+          ]
+        },
+        {
+          "lat": 43.63521,
+          "lon": -79.37834,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 2.11
+            }
+          ]
+        },
+        {
+          "lat": 43.63376,
+          "lon": -79.38019,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.45
+            }
+          ]
+        },
+        {
+          "lat": 43.63232,
+          "lon": -79.38205,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.09
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Toronto",
+      "kind": "run",
+      "index": 5,
+      "route_id": "274cc928aeb99371248e0f45c9a72e4e23a6d41a827c256676673a562ea0b714",
+      "km": 16.52,
+      "segment": 102,
+      "span_m": 1097.855128962202,
+      "a": [
+        43.63087,
+        -79.38391
+      ],
+      "b": [
+        43.6381,
+        -79.37462
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 43.63232,
+          "lon": -79.38205,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.09
+            }
+          ]
+        },
+        {
+          "lat": 43.63376,
+          "lon": -79.38019,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.45
+            }
+          ]
+        },
+        {
+          "lat": 43.63521,
+          "lon": -79.37834,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 2.11
+            }
+          ]
+        },
+        {
+          "lat": 43.63665,
+          "lon": -79.37648,
+          "water": true,
+          "roads": [
+            {
+              "name": "Toronto \u2013 Hanlan\u2019s Pt",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.06
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Brooklyn, NY",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "ee3bfa8f0af86184abee067a98edaf3f26e95664bfd2c6c9ef3fe2084532572b",
+      "km": 61.68,
+      "segment": 57,
+      "span_m": 1023.5493749901376,
+      "a": [
+        40.85064,
+        -73.9467
+      ],
+      "b": [
+        40.85295,
+        -73.95848
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 40.8511,
+          "lon": -73.94906,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.07
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.47
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.52
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.22
+            }
+          ]
+        },
+        {
+          "lat": 40.85156,
+          "lon": -73.95141,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.2
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.3
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.08
+            }
+          ]
+        },
+        {
+          "lat": 40.85203,
+          "lon": -73.95377,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.35
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.0
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 9.03
+            }
+          ]
+        },
+        {
+          "lat": 40.85249,
+          "lon": -73.95612,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.16
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.78
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 9.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Brooklyn, NY",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "ee3bfa8f0af86184abee067a98edaf3f26e95664bfd2c6c9ef3fe2084532572b",
+      "km": 61.68,
+      "segment": 191,
+      "span_m": 1023.5493749901376,
+      "a": [
+        40.85295,
+        -73.95848
+      ],
+      "b": [
+        40.85064,
+        -73.9467
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 4,
+      "samples": [
+        {
+          "lat": 40.85249,
+          "lon": -73.95612,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.16
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.78
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 9.3
+            }
+          ]
+        },
+        {
+          "lat": 40.85203,
+          "lon": -73.95377,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.35
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 7.0
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 9.03
+            }
+          ]
+        },
+        {
+          "lat": 40.85156,
+          "lon": -73.95141,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.2
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.3
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.08
+            }
+          ]
+        },
+        {
+          "lat": 40.8511,
+          "lon": -73.94906,
+          "water": true,
+          "roads": [
+            {
+              "name": "N Walk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.07
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.47
+            },
+            {
+              "name": "George Washington Bridge Lower Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 6.52
+            },
+            {
+              "name": "George Washington Bridge Upper Level",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 8.22
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "run",
+      "index": 8,
+      "route_id": "b6c2bade9df4eb690fe538ea424495984948404b159928d77fd4861c5ef6ebc6",
+      "km": 20.2,
+      "segment": 104,
+      "span_m": 1017.0476832288276,
+      "a": [
+        27.49554,
+        -82.58166
+      ],
+      "b": [
+        27.4954,
+        -82.57135
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 27.49551,
+          "lon": -82.5796,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 27.49548,
+          "lon": -82.57754,
+          "water": true,
+          "roads": [
+            {
+              "name": "Manatee Ave W",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 1.21
+            }
+          ]
+        },
+        {
+          "lat": 27.49546,
+          "lon": -82.57547,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 27.49543,
+          "lon": -82.57341,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Oakland, CA",
+      "kind": "run",
+      "index": 6,
+      "route_id": "b13ed42e0311b1095f8fa5f9508c3f1042397da441f83beacc5f9993e6bf8729",
+      "km": 16.3,
+      "segment": 97,
+      "span_m": 992.1489523286139,
+      "a": [
+        37.79669,
+        -122.27145
+      ],
+      "b": [
+        37.78864,
+        -122.27632
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 37.79468,
+          "lon": -122.27267,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 37.79266,
+          "lon": -122.27389,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 37.79065,
+          "lon": -122.2751,
+          "water": true,
+          "roads": [
+            {
+              "name": "Posey Tube Path",
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "tunnel",
+              "distance_m": 0.16
+            },
+            {
+              "name": "Posey Tube",
+              "class": "primary",
+              "type": "primary",
+              "structure": "tunnel",
+              "distance_m": 5.05
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Oakland, CA",
+      "kind": "run",
+      "index": 6,
+      "route_id": "b13ed42e0311b1095f8fa5f9508c3f1042397da441f83beacc5f9993e6bf8729",
+      "km": 16.3,
+      "segment": 125,
+      "span_m": 992.1489523286139,
+      "a": [
+        37.78864,
+        -122.27632
+      ],
+      "b": [
+        37.79669,
+        -122.27145
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 37.79065,
+          "lon": -122.2751,
+          "water": true,
+          "roads": [
+            {
+              "name": "Posey Tube Path",
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "tunnel",
+              "distance_m": 0.16
+            },
+            {
+              "name": "Posey Tube",
+              "class": "primary",
+              "type": "primary",
+              "structure": "tunnel",
+              "distance_m": 5.05
+            }
+          ]
+        },
+        {
+          "lat": 37.79266,
+          "lon": -122.27389,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 37.79468,
+          "lon": -122.27267,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "run",
+      "index": 6,
+      "route_id": "71aea93d2b10b8e788322ec01d7ed283d7f491a0e203e4337e1e63d5c9643407",
+      "km": 12.41,
+      "segment": 3,
+      "span_m": 973.741221994338,
+      "a": [
+        27.51099,
+        -82.57301
+      ],
+      "b": [
+        27.50237,
+        -82.57127
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 27.50883,
+          "lon": -82.57258,
+          "water": true,
+          "roads": [
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.43
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 3.51
+            }
+          ]
+        },
+        {
+          "lat": 27.50668,
+          "lon": -82.57214,
+          "water": true,
+          "roads": [
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.38
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 3.67
+            }
+          ]
+        },
+        {
+          "lat": 27.50453,
+          "lon": -82.5717,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.89
+            },
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.38
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Richmond, VA",
+      "kind": "run",
+      "index": 5,
+      "route_id": "c834cd774610f17515d22be5ef882c38e029b8de1d68bcb5db25f16786db62a0",
+      "km": 13.69,
+      "segment": 14,
+      "span_m": 900.5885114052604,
+      "a": [
+        37.53573,
+        -77.43906
+      ],
+      "b": [
+        37.52924,
+        -77.44517
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 37.53411,
+          "lon": -77.44059,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.08
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "none",
+              "distance_m": 6.3
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.91
+            }
+          ]
+        },
+        {
+          "lat": 37.53249,
+          "lon": -77.44212,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.93
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 6.04
+            }
+          ]
+        },
+        {
+          "lat": 37.53086,
+          "lon": -77.44364,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 2.52
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.21
+            },
+            {
+              "name": null,
+              "class": "primary_link",
+              "type": "primary_link",
+              "structure": "bridge",
+              "distance_m": 13.46
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 13.46
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Richmond, VA",
+      "kind": "run",
+      "index": 5,
+      "route_id": "c834cd774610f17515d22be5ef882c38e029b8de1d68bcb5db25f16786db62a0",
+      "km": 13.69,
+      "segment": 159,
+      "span_m": 900.5885114052604,
+      "a": [
+        37.52924,
+        -77.44517
+      ],
+      "b": [
+        37.53573,
+        -77.43906
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 37.53086,
+          "lon": -77.44364,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 2.52
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.21
+            },
+            {
+              "name": null,
+              "class": "primary_link",
+              "type": "primary_link",
+              "structure": "bridge",
+              "distance_m": 13.46
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 13.46
+            }
+          ]
+        },
+        {
+          "lat": 37.53249,
+          "lon": -77.44212,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.93
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 6.04
+            }
+          ]
+        },
+        {
+          "lat": 37.53411,
+          "lon": -77.44059,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.08
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "none",
+              "distance_m": 6.3
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 9.91
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Dublin",
+      "kind": "run",
+      "index": 2,
+      "route_id": "a87d7b7e41c8704c8c2144f5c4b6fbd606763b3c6898ecd7f00f3341231e4089",
+      "km": 6.71,
+      "segment": 14,
+      "span_m": 881.4375278419438,
+      "a": [
+        53.34315,
+        -6.24441
+      ],
+      "b": [
+        53.34151,
+        -6.23142
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 53.34274,
+          "lon": -6.24116,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 53.34233,
+          "lon": -6.23792,
+          "water": true,
+          "roads": [
+            {
+              "name": "MacMahon Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.16
+            }
+          ]
+        },
+        {
+          "lat": 53.34192,
+          "lon": -6.23467,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Dublin",
+      "kind": "run",
+      "index": 2,
+      "route_id": "a87d7b7e41c8704c8c2144f5c4b6fbd606763b3c6898ecd7f00f3341231e4089",
+      "km": 6.71,
+      "segment": 30,
+      "span_m": 881.4375278419438,
+      "a": [
+        53.34151,
+        -6.23142
+      ],
+      "b": [
+        53.34315,
+        -6.24441
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 53.34192,
+          "lon": -6.23467,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 53.34233,
+          "lon": -6.23792,
+          "water": true,
+          "roads": [
+            {
+              "name": "MacMahon Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.16
+            }
+          ]
+        },
+        {
+          "lat": 53.34274,
+          "lon": -6.24116,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Seattle, WA",
+      "kind": "ride",
+      "index": 1,
+      "route_id": "42e9f6967f37e77b25d59ad46e415908c39fdacd37e2d9e8d0e57a20d76d4b4c",
+      "km": 24.68,
+      "segment": 50,
+      "span_m": 875.1664060512418,
+      "a": [
+        47.86235,
+        -121.81501
+      ],
+      "b": [
+        47.85448,
+        -121.81487
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 47.86038,
+          "lon": -121.81498,
+          "water": true,
+          "roads": [
+            {
+              "name": "Mann Rd",
+              "class": "tertiary",
+              "type": "tertiary",
+              "structure": "bridge",
+              "distance_m": 0.4
+            }
+          ]
+        },
+        {
+          "lat": 47.85842,
+          "lon": -121.81494,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 47.85645,
+          "lon": -121.8149,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 28,
+      "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+      "km": 11.94,
+      "segment": 13,
+      "span_m": 867.1891766541838,
+      "a": [
+        59.67016,
+        10.62012
+      ],
+      "b": [
+        59.67575,
+        10.60935
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 59.67156,
+          "lon": 10.61743,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.28
+            }
+          ]
+        },
+        {
+          "lat": 59.67296,
+          "lon": 10.61473,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.22
+            }
+          ]
+        },
+        {
+          "lat": 59.67435,
+          "lon": 10.61204,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.19
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 28,
+      "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+      "km": 11.94,
+      "segment": 72,
+      "span_m": 867.1891766541838,
+      "a": [
+        59.67575,
+        10.60935
+      ],
+      "b": [
+        59.67016,
+        10.62012
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 59.67435,
+          "lon": 10.61204,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.19
+            }
+          ]
+        },
+        {
+          "lat": 59.67296,
+          "lon": 10.61473,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.22
+            }
+          ]
+        },
+        {
+          "lat": 59.67156,
+          "lon": 10.61743,
+          "water": true,
+          "roads": [
+            {
+              "name": "Dr\u00f8bak \u2013 Oscarborg",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.28
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 2,
+      "route_id": "2307a7cef829a30098e16ef4ca8eb13508e16fa2b4f06975c5ba426c3537f028",
+      "km": 6.55,
+      "segment": 17,
+      "span_m": 864.419495909295,
+      "a": [
+        38.62955,
+        -90.18546
+      ],
+      "b": [
+        38.6285,
+        -90.1756
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.62929,
+          "lon": -90.183,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.62902,
+          "lon": -90.18053,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.01
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.75
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.87
+            }
+          ]
+        },
+        {
+          "lat": 38.62876,
+          "lon": -90.17807,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.06
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.93
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.78
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 2,
+      "route_id": "2307a7cef829a30098e16ef4ca8eb13508e16fa2b4f06975c5ba426c3537f028",
+      "km": 6.55,
+      "segment": 44,
+      "span_m": 864.419495909295,
+      "a": [
+        38.6285,
+        -90.1756
+      ],
+      "b": [
+        38.62955,
+        -90.18546
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.62876,
+          "lon": -90.17807,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.06
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.93
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.78
+            }
+          ]
+        },
+        {
+          "lat": 38.62902,
+          "lon": -90.18053,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.01
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.75
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.87
+            }
+          ]
+        },
+        {
+          "lat": 38.62929,
+          "lon": -90.183,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 6,
+      "route_id": "45029d5f8e643293a5c96c0bbadc9dcc315fe53ca2449b4cf9f0162831e62cd6",
+      "km": 16.41,
+      "segment": 57,
+      "span_m": 864.419495909295,
+      "a": [
+        38.62955,
+        -90.18546
+      ],
+      "b": [
+        38.6285,
+        -90.1756
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.62929,
+          "lon": -90.183,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 38.62902,
+          "lon": -90.18053,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.01
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.75
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.87
+            }
+          ]
+        },
+        {
+          "lat": 38.62876,
+          "lon": -90.17807,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.06
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.93
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.78
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 6,
+      "route_id": "45029d5f8e643293a5c96c0bbadc9dcc315fe53ca2449b4cf9f0162831e62cd6",
+      "km": 16.41,
+      "segment": 75,
+      "span_m": 864.419495909295,
+      "a": [
+        38.6285,
+        -90.1756
+      ],
+      "b": [
+        38.62955,
+        -90.18546
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.62876,
+          "lon": -90.17807,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.06
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.93
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.78
+            }
+          ]
+        },
+        {
+          "lat": 38.62902,
+          "lon": -90.18053,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.01
+            },
+            {
+              "name": null,
+              "class": "minor_rail",
+              "type": "light_rail",
+              "structure": "bridge",
+              "distance_m": 3.75
+            },
+            {
+              "name": "Eads Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 7.87
+            }
+          ]
+        },
+        {
+          "lat": 38.62929,
+          "lon": -90.183,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Portland, OR",
+      "kind": "run",
+      "index": 22,
+      "route_id": "2f76a7e84326a19b2c59a793456b8a6020e75f471b8a84c6f06ed18681b8f7f2",
+      "km": 15.61,
+      "segment": 40,
+      "span_m": 835.0869494499955,
+      "a": [
+        45.25606,
+        -122.70508
+      ],
+      "b": [
+        45.25358,
+        -122.71515
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 45.25544,
+          "lon": -122.7076,
+          "water": true,
+          "roads": [
+            {
+              "name": "SW Pacific Hwy E",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 1.42
+            },
+            {
+              "name": "Pacific Hwy E",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 11.24
+            }
+          ]
+        },
+        {
+          "lat": 45.25482,
+          "lon": -122.71012,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 45.2542,
+          "lon": -122.71263,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Richmond, VA",
+      "kind": "run",
+      "index": 4,
+      "route_id": "1da5a9328fd3a8e8a5bebd6ecddd0dc21bee54bfda0006f0f8f6b8f9979b10d0",
+      "km": 10.95,
+      "segment": 27,
+      "span_m": 827.6832069533737,
+      "a": [
+        37.52978,
+        -77.4447
+      ],
+      "b": [
+        37.53573,
+        -77.43906
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 37.53127,
+          "lon": -77.44329,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.18
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 6.95
+            }
+          ]
+        },
+        {
+          "lat": 37.53276,
+          "lon": -77.44188,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.25
+            },
+            {
+              "name": "Manchester Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.17
+            }
+          ]
+        },
+        {
+          "lat": 37.53424,
+          "lon": -77.44047,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Dallas, TX",
+      "kind": "run",
+      "index": 37,
+      "route_id": "9eefc474efbfea9664b7ced4c72340ce52299ead13a2e7894dce2f2c7f6f0b97",
+      "km": 15.9,
+      "segment": 51,
+      "span_m": 827.2575572147379,
+      "a": [
+        32.58574,
+        -97.02649
+      ],
+      "b": [
+        32.58113,
+        -97.01956
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 32.58459,
+          "lon": -97.02476,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.14
+            }
+          ]
+        },
+        {
+          "lat": 32.58344,
+          "lon": -97.02302,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.16
+            }
+          ]
+        },
+        {
+          "lat": 32.58228,
+          "lon": -97.02129,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 1.81
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Pittsburgh, PA",
+      "kind": "trail",
+      "index": 0,
+      "route_id": "4929d5645be9f9bbc0f77e452a5f2aa53d2aa4387c5a9c65f7fdd812488e0ed9",
+      "km": 5.03,
+      "segment": 6,
+      "span_m": 826.9885718457765,
+      "a": [
+        40.44873,
+        -79.98754
+      ],
+      "b": [
+        40.45425,
+        -79.99409
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.45011,
+          "lon": -79.98918,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.45149,
+          "lon": -79.99081,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "bridge",
+              "distance_m": 1.98
+            },
+            {
+              "name": "David McCullough Bridge",
+              "class": "tertiary",
+              "type": "tertiary",
+              "structure": "bridge",
+              "distance_m": 8.77
+            }
+          ]
+        },
+        {
+          "lat": 40.45287,
+          "lon": -79.99245,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Portland, OR",
+      "kind": "run",
+      "index": 6,
+      "route_id": "1f8f84141c933b0760f6efd5d374e7eba183248dd4061ac8a2600c74824ff666",
+      "km": 17.02,
+      "segment": 26,
+      "span_m": 815.1985855849155,
+      "a": [
+        45.523,
+        -122.67234
+      ],
+      "b": [
+        45.5228,
+        -122.66188
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 45.52295,
+          "lon": -122.66972,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 45.5229,
+          "lon": -122.66711,
+          "water": true,
+          "roads": [
+            {
+              "name": "Burnside Bridge",
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 4.23
+            }
+          ]
+        },
+        {
+          "lat": 45.52285,
+          "lon": -122.6645,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Dallas, TX",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "73c94e034c57697c1de9f7b0673d9470f902c72d28a34b6a5415b863e75424cb",
+      "km": 55.4,
+      "segment": 8,
+      "span_m": 812.7537315315045,
+      "a": [
+        33.15569,
+        -96.95033
+      ],
+      "b": [
+        33.16096,
+        -96.95638
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 33.15701,
+          "lon": -96.95184,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.29
+            }
+          ]
+        },
+        {
+          "lat": 33.15833,
+          "lon": -96.95335,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.31
+            }
+          ]
+        },
+        {
+          "lat": 33.15964,
+          "lon": -96.95487,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.17
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Pittsburgh, PA",
+      "kind": "trail",
+      "index": 0,
+      "route_id": "4929d5645be9f9bbc0f77e452a5f2aa53d2aa4387c5a9c65f7fdd812488e0ed9",
+      "km": 5.03,
+      "segment": 24,
+      "span_m": 812.4978474779424,
+      "a": [
+        40.45425,
+        -79.99409
+      ],
+      "b": [
+        40.44883,
+        -79.98765
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.45289,
+          "lon": -79.99248,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.45154,
+          "lon": -79.99087,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "bridge",
+              "distance_m": 1.98
+            },
+            {
+              "name": "David McCullough Bridge",
+              "class": "tertiary",
+              "type": "tertiary",
+              "structure": "bridge",
+              "distance_m": 8.81
+            }
+          ]
+        },
+        {
+          "lat": 40.45019,
+          "lon": -79.98926,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Philadelphia, PA",
+      "kind": "run",
+      "index": 4,
+      "route_id": "b51320b6b95ca9c8079ad0d561a89d9b9eb98ada8c09ede28d0856f17c64ee5c",
+      "km": 12.4,
+      "segment": 4,
+      "span_m": 810.05418823572,
+      "a": [
+        39.95256,
+        -75.17819
+      ],
+      "b": [
+        39.95373,
+        -75.18757
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 39.95285,
+          "lon": -75.18053,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.69
+            },
+            {
+              "name": "Schuylkill River Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "none",
+              "distance_m": 4.82
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "none",
+              "distance_m": 5.38
+            },
+            {
+              "name": "Chestnut St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.21
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "steps",
+              "structure": "none",
+              "distance_m": 11.82
+            }
+          ]
+        },
+        {
+          "lat": 39.95314,
+          "lon": -75.18288,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.95344,
+          "lon": -75.18523,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Dallas, TX",
+      "kind": "run",
+      "index": 37,
+      "route_id": "9eefc474efbfea9664b7ced4c72340ce52299ead13a2e7894dce2f2c7f6f0b97",
+      "km": 15.9,
+      "segment": 38,
+      "span_m": 808.6486944564837,
+      "a": [
+        32.58108,
+        -97.01968
+      ],
+      "b": [
+        32.58558,
+        -97.02646
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 32.58221,
+          "lon": -97.02137,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 1.29
+            }
+          ]
+        },
+        {
+          "lat": 32.58333,
+          "lon": -97.02307,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 1.02
+            }
+          ]
+        },
+        {
+          "lat": 32.58445,
+          "lon": -97.02477,
+          "water": true,
+          "roads": [
+            {
+              "name": "Lake Ridge Pkwy",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.79
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Nashville, TN",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "d861208a1507a51aaeedc56c78f223eb7f7a6bff3ac2846f3b75795c38f3bd04",
+      "km": 16.36,
+      "segment": 2,
+      "span_m": 806.6576620723899,
+      "a": [
+        36.17502,
+        -86.78481
+      ],
+      "b": [
+        36.17693,
+        -86.77614
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 36.1755,
+          "lon": -86.78264,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 36.17598,
+          "lon": -86.78047,
+          "water": true,
+          "roads": [
+            {
+              "name": "Jefferson St Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.16
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 9.45
+            }
+          ]
+        },
+        {
+          "lat": 36.17645,
+          "lon": -86.77831,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "e71ce270fcd96e095aa54caa57a55d5351357ee79e27a4ba64eb3853e516509a",
+      "km": 54.63,
+      "segment": 173,
+      "span_m": 803.6664735081722,
+      "a": [
+        28.13061,
+        -82.75692
+      ],
+      "b": [
+        28.13763,
+        -82.75497
+      ],
+      "classification": "mapped_waterfront_or_crossing",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 28.13237,
+          "lon": -82.75643,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 28.13412,
+          "lon": -82.75594,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 28.13588,
+          "lon": -82.75546,
+          "water": true,
+          "roads": [
+            {
+              "name": "Pinellas Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "none",
+              "distance_m": 0.22
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Dallas, TX",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "73c94e034c57697c1de9f7b0673d9470f902c72d28a34b6a5415b863e75424cb",
+      "km": 55.4,
+      "segment": 55,
+      "span_m": 792.814681328491,
+      "a": [
+        33.16072,
+        -96.95633
+      ],
+      "b": [
+        33.15557,
+        -96.95044
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 3,
+      "samples": [
+        {
+          "lat": 33.15943,
+          "lon": -96.95486,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.34
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 3.42
+            }
+          ]
+        },
+        {
+          "lat": 33.15814,
+          "lon": -96.95338,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.33
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 2.82
+            }
+          ]
+        },
+        {
+          "lat": 33.15686,
+          "lon": -96.95191,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Eldorado Pkwy",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.22
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "none",
+              "distance_m": 9.47
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Pittsburgh, PA",
+      "kind": "trail",
+      "index": 3,
+      "route_id": "261e3c7c4fd0c5a4fdc8d67186d4da8df9586ec54c35503a44dcc98d59c015b8",
+      "km": 14.83,
+      "segment": 54,
+      "span_m": 788.6517760690356,
+      "a": [
+        40.4092,
+        -79.87634
+      ],
+      "b": [
+        40.40399,
+        -79.88266
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.4079,
+          "lon": -79.87792,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.40659,
+          "lon": -79.8795,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.40529,
+          "lon": -79.88108,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.51
+            },
+            {
+              "name": "Rankin Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 8.99
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Pittsburgh, PA",
+      "kind": "trail",
+      "index": 3,
+      "route_id": "261e3c7c4fd0c5a4fdc8d67186d4da8df9586ec54c35503a44dcc98d59c015b8",
+      "km": 14.83,
+      "segment": 81,
+      "span_m": 788.6517760690356,
+      "a": [
+        40.40399,
+        -79.88266
+      ],
+      "b": [
+        40.4092,
+        -79.87634
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 40.40529,
+          "lon": -79.88108,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.51
+            },
+            {
+              "name": "Rankin Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 8.99
+            }
+          ]
+        },
+        {
+          "lat": 40.40659,
+          "lon": -79.8795,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 40.4079,
+          "lon": -79.87792,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Orlando, FL",
+      "kind": "trail",
+      "index": 4,
+      "route_id": "ed454e57283b7cdc4614d052ddc0617659c131545a72f76b73627da722dc8ee5",
+      "km": 5.37,
+      "segment": 2,
+      "span_m": 760.3480732796838,
+      "a": [
+        28.81573,
+        -81.27143
+      ],
+      "b": [
+        28.81627,
+        -81.27921
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 28.81586,
+          "lon": -81.27338,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 28.816,
+          "lon": -81.27532,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 28.81613,
+          "lon": -81.27726,
+          "water": true,
+          "roads": [
+            {
+              "name": "Riverwalk Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 2.33
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 8.33
+            },
+            {
+              "name": "Riverwalk Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "none",
+              "distance_m": 10.67
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 12.43
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 13.09
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Orlando, FL",
+      "kind": "trail",
+      "index": 4,
+      "route_id": "ed454e57283b7cdc4614d052ddc0617659c131545a72f76b73627da722dc8ee5",
+      "km": 5.37,
+      "segment": 31,
+      "span_m": 760.3480732796838,
+      "a": [
+        28.81627,
+        -81.27921
+      ],
+      "b": [
+        28.81573,
+        -81.27143
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 28.81613,
+          "lon": -81.27726,
+          "water": true,
+          "roads": [
+            {
+              "name": "Riverwalk Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 2.33
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 8.33
+            },
+            {
+              "name": "Riverwalk Trail",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "none",
+              "distance_m": 10.67
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 12.43
+            },
+            {
+              "name": "W Seminole Blvd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 13.09
+            }
+          ]
+        },
+        {
+          "lat": 28.816,
+          "lon": -81.27532,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 28.81586,
+          "lon": -81.27338,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "London",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "8af3fed3129e3ef426ccd146dfdce2cbf64093d7a98829b4796600b19f2fbd5b",
+      "km": 15.01,
+      "segment": 46,
+      "span_m": 752.493945385607,
+      "a": [
+        51.51133,
+        -0.11914
+      ],
+      "b": [
+        51.50538,
+        -0.11396
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 51.50984,
+          "lon": -0.11785,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 51.50836,
+          "lon": -0.11655,
+          "water": true,
+          "roads": [
+            {
+              "name": "Waterloo Bridge",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.38
+            },
+            {
+              "name": "Waterloo Bridge",
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 2.76
+            },
+            {
+              "name": "Waterloo Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.88
+            },
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 9.3
+            }
+          ]
+        },
+        {
+          "lat": 51.50687,
+          "lon": -0.11525,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Singapore",
+      "kind": "run",
+      "index": 6,
+      "route_id": "590ebc879f6babbba433e51e4b06b99f3a07c65607f4666624e7f1600ac90c7f",
+      "km": 17.33,
+      "segment": 29,
+      "span_m": 736.6463827096135,
+      "a": [
+        0.97874,
+        104.04359
+      ],
+      "b": [
+        0.98416,
+        104.03978
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 0.98055,
+          "lon": 104.04232,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 2.81
+            }
+          ]
+        },
+        {
+          "lat": 0.98235,
+          "lon": 104.04105,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 1.78
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 19,
+      "route_id": "2729588ad8f8fe92dd54451acccd4d89614bd62a0f85402bd931f7d4ec767f1d",
+      "km": 5.49,
+      "segment": 7,
+      "span_m": 727.4600644258024,
+      "a": [
+        43.37073,
+        -89.62706
+      ],
+      "b": [
+        43.36574,
+        -89.62124
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 43.36907,
+          "lon": -89.62512,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.37
+            }
+          ]
+        },
+        {
+          "lat": 43.3674,
+          "lon": -89.62318,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.33
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 19,
+      "route_id": "2729588ad8f8fe92dd54451acccd4d89614bd62a0f85402bd931f7d4ec767f1d",
+      "km": 5.49,
+      "segment": 16,
+      "span_m": 727.4600644258024,
+      "a": [
+        43.36574,
+        -89.62124
+      ],
+      "b": [
+        43.37073,
+        -89.62706
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 43.3674,
+          "lon": -89.62318,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.33
+            }
+          ]
+        },
+        {
+          "lat": 43.36907,
+          "lon": -89.62512,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.37
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 20,
+      "route_id": "cb881b412183d5f326011ec975c47d92c1af4a8b424dee3c92ca2ee57df258ea",
+      "km": 8.34,
+      "segment": 43,
+      "span_m": 727.4600644258024,
+      "a": [
+        43.37073,
+        -89.62706
+      ],
+      "b": [
+        43.36574,
+        -89.62124
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 43.36907,
+          "lon": -89.62512,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.37
+            }
+          ]
+        },
+        {
+          "lat": 43.3674,
+          "lon": -89.62318,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.33
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 20,
+      "route_id": "cb881b412183d5f326011ec975c47d92c1af4a8b424dee3c92ca2ee57df258ea",
+      "km": 8.34,
+      "segment": 68,
+      "span_m": 727.4600644258024,
+      "a": [
+        43.36574,
+        -89.62124
+      ],
+      "b": [
+        43.37073,
+        -89.62706
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 43.3674,
+          "lon": -89.62318,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.33
+            }
+          ]
+        },
+        {
+          "lat": 43.36907,
+          "lon": -89.62512,
+          "water": true,
+          "roads": [
+            {
+              "name": "Merrimac Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.37
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Cincinnati, OH",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "744912d819b2b90ca9e6c4ac492445461db1e91786065bff9820c06082f697a0",
+      "km": 15.65,
+      "segment": 30,
+      "span_m": 723.8282374081733,
+      "a": [
+        39.09623,
+        -84.5107
+      ],
+      "b": [
+        39.08984,
+        -84.5091
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 39.0941,
+          "lon": -84.51017,
+          "water": true,
+          "roads": [
+            {
+              "name": "Roebling Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.19
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 4.79
+            }
+          ]
+        },
+        {
+          "lat": 39.09197,
+          "lon": -84.50963,
+          "water": true,
+          "roads": [
+            {
+              "name": "Roebling Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.28
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 5.54
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 24,
+      "route_id": "61288abbd1e2ce7d3c0a0ecf587de3c1aae716690dd5286c36cc2b46eafc8350",
+      "km": 16.01,
+      "segment": 32,
+      "span_m": 720.8703236587999,
+      "a": [
+        49.20964,
+        -122.89634
+      ],
+      "b": [
+        49.20657,
+        -122.8876
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 49.20862,
+          "lon": -122.89343,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.36
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.2
+            }
+          ]
+        },
+        {
+          "lat": 49.20759,
+          "lon": -122.89051,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 5.29
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 24,
+      "route_id": "61288abbd1e2ce7d3c0a0ecf587de3c1aae716690dd5286c36cc2b46eafc8350",
+      "km": 16.01,
+      "segment": 133,
+      "span_m": 720.8703236587999,
+      "a": [
+        49.20657,
+        -122.8876
+      ],
+      "b": [
+        49.20964,
+        -122.89634
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 49.20759,
+          "lon": -122.89051,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 5.29
+            }
+          ]
+        },
+        {
+          "lat": 49.20862,
+          "lon": -122.89343,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.36
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 25,
+      "route_id": "34eef15bc2862d93aecbca79bfe5a7a926ce558318339e60f4a47c7386792886",
+      "km": 24.86,
+      "segment": 24,
+      "span_m": 720.8703236587999,
+      "a": [
+        49.20964,
+        -122.89634
+      ],
+      "b": [
+        49.20657,
+        -122.8876
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 49.20862,
+          "lon": -122.89343,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.36
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.2
+            }
+          ]
+        },
+        {
+          "lat": 49.20759,
+          "lon": -122.89051,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 5.29
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 25,
+      "route_id": "34eef15bc2862d93aecbca79bfe5a7a926ce558318339e60f4a47c7386792886",
+      "km": 24.86,
+      "segment": 119,
+      "span_m": 720.8703236587999,
+      "a": [
+        49.20657,
+        -122.8876
+      ],
+      "b": [
+        49.20964,
+        -122.89634
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 49.20759,
+          "lon": -122.89051,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 5.29
+            }
+          ]
+        },
+        {
+          "lat": 49.20862,
+          "lon": -122.89343,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.36
+            },
+            {
+              "name": "stal\u0315\u0259w\u0313as\u0259m Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Singapore",
+      "kind": "run",
+      "index": 6,
+      "route_id": "590ebc879f6babbba433e51e4b06b99f3a07c65607f4666624e7f1600ac90c7f",
+      "km": 17.33,
+      "segment": 110,
+      "span_m": 707.8007607803364,
+      "a": [
+        0.9841,
+        104.03972
+      ],
+      "b": [
+        0.97892,
+        104.04342
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 0.98237,
+          "lon": 104.04095,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.41
+            }
+          ]
+        },
+        {
+          "lat": 0.98065,
+          "lon": 104.04219,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.47
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Singapore",
+      "kind": "run",
+      "index": 7,
+      "route_id": "3e141bd6f436b5e38a1e40722467374f1036cc7d425eeb903fb01e4919190305",
+      "km": 20.8,
+      "segment": 6,
+      "span_m": 707.8007607803364,
+      "a": [
+        0.97892,
+        104.04342
+      ],
+      "b": [
+        0.9841,
+        104.03972
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 0.98065,
+          "lon": 104.04219,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.47
+            }
+          ]
+        },
+        {
+          "lat": 0.98237,
+          "lon": 104.04095,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.41
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Singapore",
+      "kind": "run",
+      "index": 7,
+      "route_id": "3e141bd6f436b5e38a1e40722467374f1036cc7d425eeb903fb01e4919190305",
+      "km": 20.8,
+      "segment": 85,
+      "span_m": 707.8007607803364,
+      "a": [
+        0.9841,
+        104.03972
+      ],
+      "b": [
+        0.97892,
+        104.04342
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 0.98237,
+          "lon": 104.04095,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.41
+            }
+          ]
+        },
+        {
+          "lat": 0.98065,
+          "lon": 104.04219,
+          "water": true,
+          "roads": [
+            {
+              "name": "Tengku Fisabilillah",
+              "class": "trunk",
+              "type": "trunk",
+              "structure": "bridge",
+              "distance_m": 0.47
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Richmond, VA",
+      "kind": "run",
+      "index": 6,
+      "route_id": "c7c14d09e75a69e1a08e932e2315ab5f05404b5892ca12a5573d62f5eb3625a0",
+      "km": 18.02,
+      "segment": 85,
+      "span_m": 695.4843975626236,
+      "a": [
+        37.53285,
+        -77.43274
+      ],
+      "b": [
+        37.52683,
+        -77.43488
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 37.53084,
+          "lon": -77.43345,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 2.94
+            },
+            {
+              "name": "Mayo Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.63
+            }
+          ]
+        },
+        {
+          "lat": 37.52884,
+          "lon": -77.43417,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.66
+            },
+            {
+              "name": "Mayo Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 5.92
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 28,
+      "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+      "km": 11.94,
+      "segment": 32,
+      "span_m": 692.9598853947331,
+      "a": [
+        59.67346,
+        10.5967
+      ],
+      "b": [
+        59.67661,
+        10.58605
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 59.67451,
+          "lon": 10.59315,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 3.49
+            }
+          ]
+        },
+        {
+          "lat": 59.67556,
+          "lon": 10.5896,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.27
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 28,
+      "route_id": "08f7b63c6c8ac65e36d3159b01c8fca8449ad19eb26489d1ae5f8fb7f1859e8d",
+      "km": 11.94,
+      "segment": 53,
+      "span_m": 692.9598853947331,
+      "a": [
+        59.67661,
+        10.58605
+      ],
+      "b": [
+        59.67346,
+        10.5967
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 59.67556,
+          "lon": 10.5896,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 0.27
+            }
+          ]
+        },
+        {
+          "lat": 59.67451,
+          "lon": 10.59315,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 3.49
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Stockholm",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "77148f3d0142172a46c5eb4c47c98a8ac90f448e82a587e93a1303e771941c65",
+      "km": 17.24,
+      "segment": 100,
+      "span_m": 692.2488764677591,
+      "a": [
+        59.32186,
+        18.03054
+      ],
+      "b": [
+        59.32717,
+        18.02417
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 59.32363,
+          "lon": 18.02842,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 3.21
+            },
+            {
+              "name": "V\u00e4sterbron",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 3.9
+            }
+          ]
+        },
+        {
+          "lat": 59.3254,
+          "lon": 18.02629,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 2.52
+            },
+            {
+              "name": "V\u00e4sterbron",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 4.77
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 6,
+      "route_id": "c247accd119f152c1624fd309f7ca3247ed371fb9039444c279275e3cd7f2396",
+      "km": 16.95,
+      "segment": 12,
+      "span_m": 677.348487775922,
+      "a": [
+        49.26721,
+        -123.11517
+      ],
+      "b": [
+        49.2733,
+        -123.11496
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 49.26924,
+          "lon": -123.1151,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 49.27127,
+          "lon": -123.11503,
+          "water": true,
+          "roads": [
+            {
+              "name": "Cambie Bridge",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.96
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.03
+            },
+            {
+              "name": "Cambie Bridge",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 1.24
+            },
+            {
+              "name": "Cambie St Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 6.24
+            },
+            {
+              "name": "Cambie St Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 6.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Philadelphia, PA",
+      "kind": "run",
+      "index": 7,
+      "route_id": "c32846a15e0b176fd909d7ed9c32d25ce1401e958145bd99437d72613f5bc082",
+      "km": 12.49,
+      "segment": 33,
+      "span_m": 677.1953757368099,
+      "a": [
+        39.57404,
+        -75.46615
+      ],
+      "b": [
+        39.57983,
+        -75.4637
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 39.57597,
+          "lon": -75.46533,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.5779,
+          "lon": -75.46452,
+          "water": true,
+          "roads": [
+            {
+              "name": "Market St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.96
+            },
+            {
+              "name": "Salem-Woodstown Rd",
+              "class": "primary",
+              "type": "primary",
+              "structure": "none",
+              "distance_m": 14.63
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 17,
+      "route_id": "537aa1c057f8d423c9af1f34cea2e44eca1cd0d21d66942874c7a6df6be61435",
+      "km": 18.7,
+      "segment": 17,
+      "span_m": 668.8921327182983,
+      "a": [
+        43.03657,
+        -88.81528
+      ],
+      "b": [
+        43.03655,
+        -88.80705
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 43.03656,
+          "lon": -88.81254,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 43.03656,
+          "lon": -88.80979,
+          "water": true,
+          "roads": [
+            {
+              "name": "Glacial Drumlin State Trail",
+              "class": "path",
+              "type": "path",
+              "structure": "bridge",
+              "distance_m": 0.51
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Madison, WI",
+      "kind": "run",
+      "index": 17,
+      "route_id": "537aa1c057f8d423c9af1f34cea2e44eca1cd0d21d66942874c7a6df6be61435",
+      "km": 18.7,
+      "segment": 51,
+      "span_m": 668.8921327182983,
+      "a": [
+        43.03655,
+        -88.80705
+      ],
+      "b": [
+        43.03657,
+        -88.81528
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 43.03656,
+          "lon": -88.80979,
+          "water": true,
+          "roads": [
+            {
+              "name": "Glacial Drumlin State Trail",
+              "class": "path",
+              "type": "path",
+              "structure": "bridge",
+              "distance_m": 0.51
+            }
+          ]
+        },
+        {
+          "lat": 43.03656,
+          "lon": -88.81254,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Cincinnati, OH",
+      "kind": "run",
+      "index": 4,
+      "route_id": "39ebab5d896b48cc993d8bfd811f659bf4b6bd3cbfefa1472bea5ab382b59c94",
+      "km": 10.47,
+      "segment": 60,
+      "span_m": 667.4017852971839,
+      "a": [
+        39.09882,
+        -84.50396
+      ],
+      "b": [
+        39.09412,
+        -84.49915
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 39.09725,
+          "lon": -84.50236,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "Taylor\u2013Southgate Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 11.1
+            }
+          ]
+        },
+        {
+          "lat": 39.09569,
+          "lon": -84.50075,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.25
+            },
+            {
+              "name": "Taylor\u2013Southgate Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 12.33
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Cincinnati, OH",
+      "kind": "run",
+      "index": 4,
+      "route_id": "39ebab5d896b48cc993d8bfd811f659bf4b6bd3cbfefa1472bea5ab382b59c94",
+      "km": 10.47,
+      "segment": 77,
+      "span_m": 667.4017852971839,
+      "a": [
+        39.09412,
+        -84.49915
+      ],
+      "b": [
+        39.09882,
+        -84.50396
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 39.09569,
+          "lon": -84.50075,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.25
+            },
+            {
+              "name": "Taylor\u2013Southgate Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 12.33
+            }
+          ]
+        },
+        {
+          "lat": 39.09725,
+          "lon": -84.50236,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.1
+            },
+            {
+              "name": "Taylor\u2013Southgate Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 11.1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 31,
+      "route_id": "229fd9db41cbfd796b721d4cb9bb253c5331fe9ac2245b2dfb0b016267f079d0",
+      "km": 10.06,
+      "segment": 7,
+      "span_m": 654.1833804193642,
+      "a": [
+        38.96369,
+        -90.43675
+      ],
+      "b": [
+        38.95781,
+        -90.4365
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.96173,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.35
+            }
+          ]
+        },
+        {
+          "lat": 38.95977,
+          "lon": -90.43658,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 34,
+      "route_id": "110d798af92edf78637355ba1fcb52cbcea975713b4d6e346f5c6bc59f54b77e",
+      "km": 21.97,
+      "segment": 156,
+      "span_m": 654.1833804193642,
+      "a": [
+        38.95781,
+        -90.4365
+      ],
+      "b": [
+        38.96369,
+        -90.43675
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.95977,
+          "lon": -90.43658,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.7
+            }
+          ]
+        },
+        {
+          "lat": 38.96173,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.35
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 31,
+      "route_id": "229fd9db41cbfd796b721d4cb9bb253c5331fe9ac2245b2dfb0b016267f079d0",
+      "km": 10.06,
+      "segment": 26,
+      "span_m": 648.5984575024946,
+      "a": [
+        38.95786,
+        -90.43651
+      ],
+      "b": [
+        38.96369,
+        -90.43675
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.9598,
+          "lon": -90.43659,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.12
+            }
+          ]
+        },
+        {
+          "lat": 38.96175,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 34,
+      "route_id": "110d798af92edf78637355ba1fcb52cbcea975713b4d6e346f5c6bc59f54b77e",
+      "km": 21.97,
+      "segment": 137,
+      "span_m": 648.5984575024946,
+      "a": [
+        38.96369,
+        -90.43675
+      ],
+      "b": [
+        38.95786,
+        -90.43651
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.96175,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.3
+            }
+          ]
+        },
+        {
+          "lat": 38.9598,
+          "lon": -90.43659,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.12
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Charlotte, NC",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "7a3445bc64bd4f72ebb665cd915c1443e324e274ad15a7f7eec23cac878c44c9",
+      "km": 61.67,
+      "segment": 159,
+      "span_m": 643.1192390191464,
+      "a": [
+        35.60428,
+        -80.94642
+      ],
+      "b": [
+        35.60575,
+        -80.93954
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 35.60477,
+          "lon": -80.94413,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.15
+            }
+          ]
+        },
+        {
+          "lat": 35.60526,
+          "lon": -80.94183,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Charlotte, NC",
+      "kind": "ride",
+      "index": 3,
+      "route_id": "7a3445bc64bd4f72ebb665cd915c1443e324e274ad15a7f7eec23cac878c44c9",
+      "km": 61.67,
+      "segment": 306,
+      "span_m": 643.1192390191464,
+      "a": [
+        35.60575,
+        -80.93954
+      ],
+      "b": [
+        35.60428,
+        -80.94642
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 35.60526,
+          "lon": -80.94183,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 35.60477,
+          "lon": -80.94413,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 0.15
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "run",
+      "index": 6,
+      "route_id": "71aea93d2b10b8e788322ec01d7ed283d7f491a0e203e4337e1e63d5c9643407",
+      "km": 12.41,
+      "segment": 51,
+      "span_m": 641.0043529298623,
+      "a": [
+        27.50531,
+        -82.5719
+      ],
+      "b": [
+        27.51099,
+        -82.57301
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 27.5072,
+          "lon": -82.57227,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.26
+            },
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.67
+            }
+          ]
+        },
+        {
+          "lat": 27.5091,
+          "lon": -82.57264,
+          "water": true,
+          "roads": [
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.88
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 3.13
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Tampa, FL",
+      "kind": "run",
+      "index": 8,
+      "route_id": "b6c2bade9df4eb690fe538ea424495984948404b159928d77fd4861c5ef6ebc6",
+      "km": 20.2,
+      "segment": 109,
+      "span_m": 641.0043529298623,
+      "a": [
+        27.50531,
+        -82.5719
+      ],
+      "b": [
+        27.51099,
+        -82.57301
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 27.5072,
+          "lon": -82.57227,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 1.26
+            },
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 4.67
+            }
+          ]
+        },
+        {
+          "lat": 27.5091,
+          "lon": -82.57264,
+          "water": true,
+          "roads": [
+            {
+              "name": "Green Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 2.88
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 3.13
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 32,
+      "route_id": "180a2fb69d07cf779bc8ba6967dea777e5cda285ed08a63cee4772f436589298",
+      "km": 13.84,
+      "segment": 7,
+      "span_m": 640.818845351896,
+      "a": [
+        38.96369,
+        -90.43675
+      ],
+      "b": [
+        38.95793,
+        -90.43651
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.96177,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.22
+            }
+          ]
+        },
+        {
+          "lat": 38.95985,
+          "lon": -90.43659,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.15
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "St. Louis, MO",
+      "kind": "run",
+      "index": 32,
+      "route_id": "180a2fb69d07cf779bc8ba6967dea777e5cda285ed08a63cee4772f436589298",
+      "km": 13.84,
+      "segment": 8,
+      "span_m": 640.818845351896,
+      "a": [
+        38.95793,
+        -90.43651
+      ],
+      "b": [
+        38.96369,
+        -90.43675
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 38.95985,
+          "lon": -90.43659,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.15
+            }
+          ]
+        },
+        {
+          "lat": 38.96177,
+          "lon": -90.43667,
+          "water": true,
+          "roads": [
+            {
+              "name": "Grafton Ferry",
+              "class": "ferry",
+              "type": "ferry_auto",
+              "structure": "none",
+              "distance_m": 0.22
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Vancouver",
+      "kind": "run",
+      "index": 25,
+      "route_id": "34eef15bc2862d93aecbca79bfe5a7a926ce558318339e60f4a47c7386792886",
+      "km": 24.86,
+      "segment": 161,
+      "span_m": 624.9637421379509,
+      "a": [
+        49.1974,
+        -122.9481
+      ],
+      "b": [
+        49.19279,
+        -122.94318
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 49.19586,
+          "lon": -122.94646,
+          "water": true,
+          "roads": [
+            {
+              "name": "Queensborough Bridge E Sidewalk",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 0.13
+            },
+            {
+              "name": "Hwy 91A",
+              "class": "motorway",
+              "type": "motorway",
+              "structure": "bridge",
+              "distance_m": 4.45
+            }
+          ]
+        },
+        {
+          "lat": 49.19433,
+          "lon": -122.94482,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Cincinnati, OH",
+      "kind": "ride",
+      "index": 0,
+      "route_id": "744912d819b2b90ca9e6c4ac492445461db1e91786065bff9820c06082f697a0",
+      "km": 15.65,
+      "segment": 43,
+      "span_m": 624.8196747331334,
+      "a": [
+        39.0902,
+        -84.50917
+      ],
+      "b": [
+        39.09571,
+        -84.51059
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 39.09204,
+          "lon": -84.50964,
+          "water": true,
+          "roads": [
+            {
+              "name": "Roebling Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.41
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 5.21
+            }
+          ]
+        },
+        {
+          "lat": 39.09387,
+          "lon": -84.51012,
+          "water": true,
+          "roads": [
+            {
+              "name": "Roebling Bridge",
+              "class": "secondary",
+              "type": "secondary",
+              "structure": "bridge",
+              "distance_m": 0.61
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 4.16
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Los Angeles, CA",
+      "kind": "run",
+      "index": 34,
+      "route_id": "9c7d1e73548090cc36174df4edc2a6afdb43f8ded84191e796f518215700848e",
+      "km": 13.02,
+      "segment": 3,
+      "span_m": 624.2142450042967,
+      "a": [
+        34.0114,
+        -118.49502
+      ],
+      "b": [
+        34.00744,
+        -118.49982
+      ],
+      "classification": "mapped_waterfront_or_crossing",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 34.01008,
+          "lon": -118.49662,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 34.00876,
+          "lon": -118.49822,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "none",
+              "distance_m": 0
+            },
+            {
+              "name": null,
+              "class": "path",
+              "type": "footway",
+              "structure": "none",
+              "distance_m": 1.49
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Denver, CO",
+      "kind": "run",
+      "index": 24,
+      "route_id": "6b7e50bc62b4f2c072104a8bca41013515148fd27ccd5863fd319cd145a9ca85",
+      "km": 8.39,
+      "segment": 11,
+      "span_m": 615.1280577963481,
+      "a": [
+        39.98696,
+        -104.82757
+      ],
+      "b": [
+        39.98693,
+        -104.83479
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 39.98695,
+          "lon": -104.82998,
+          "water": false,
+          "roads": []
+        },
+        {
+          "lat": 39.98694,
+          "lon": -104.83238,
+          "water": true,
+          "roads": [
+            {
+              "name": "W Bridge St",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 1.98
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Nashville, TN",
+      "kind": "run",
+      "index": 4,
+      "route_id": "7e43eb2633ba1ba89e7b9df14cea37205e118d1d2fb7e9e70b5a149d161f5b32",
+      "km": 10.09,
+      "segment": 58,
+      "span_m": 612.8062974448579,
+      "a": [
+        36.17517,
+        -86.78365
+      ],
+      "b": [
+        36.17664,
+        -86.77707
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 36.17566,
+          "lon": -86.78146,
+          "water": true,
+          "roads": [
+            {
+              "name": null,
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.54
+            },
+            {
+              "name": "Jefferson St Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 11.53
+            }
+          ]
+        },
+        {
+          "lat": 36.17615,
+          "lon": -86.77926,
+          "water": false,
+          "roads": []
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 6,
+      "route_id": "d4ee2c8b2be1328d2f7230827db62348173b82d0f71412a191138d3704a37b8a",
+      "km": 16.34,
+      "segment": 161,
+      "span_m": 605.1316308372826,
+      "a": [
+        59.90777,
+        10.72929
+      ],
+      "b": [
+        59.90233,
+        10.72959
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 59.90596,
+          "lon": 10.72939,
+          "water": true,
+          "roads": [
+            {
+              "name": "Aker brygge \u2013 Hoved\u00f8ya",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 1.88
+            }
+          ]
+        },
+        {
+          "lat": 59.90414,
+          "lon": 10.72949,
+          "water": true,
+          "roads": [
+            {
+              "name": "Aker brygge \u2013 Hoved\u00f8ya",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 2.47
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "Oslo",
+      "kind": "run",
+      "index": 6,
+      "route_id": "d4ee2c8b2be1328d2f7230827db62348173b82d0f71412a191138d3704a37b8a",
+      "km": 16.34,
+      "segment": 190,
+      "span_m": 605.1316308372826,
+      "a": [
+        59.90233,
+        10.72959
+      ],
+      "b": [
+        59.90777,
+        10.72929
+      ],
+      "classification": "unresolved_water",
+      "longest_wet_streak": 2,
+      "samples": [
+        {
+          "lat": 59.90414,
+          "lon": 10.72949,
+          "water": true,
+          "roads": [
+            {
+              "name": "Aker brygge \u2013 Hoved\u00f8ya",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 2.47
+            }
+          ]
+        },
+        {
+          "lat": 59.90596,
+          "lon": 10.72939,
+          "water": true,
+          "roads": [
+            {
+              "name": "Aker brygge \u2013 Hoved\u00f8ya",
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 1.88
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "city": "London",
+      "kind": "run",
+      "index": 4,
+      "route_id": "6665149a0133ef80541271a6a123213ca1be0f1b449605b8ce616d7255efae66",
+      "km": 10.14,
+      "segment": 98,
+      "span_m": 600.6299297029508,
+      "a": [
+        51.51017,
+        -0.11813
+      ],
+      "b": [
+        51.50545,
+        -0.11391
+      ],
+      "classification": "mapped_bridge",
+      "longest_wet_streak": 1,
+      "samples": [
+        {
+          "lat": 51.5086,
+          "lon": -0.11672,
+          "water": true,
+          "roads": [
+            {
+              "name": "Waterloo Bridge",
+              "class": "path",
+              "type": "sidewalk",
+              "structure": "bridge",
+              "distance_m": 0.1
+            },
+            {
+              "name": "Waterloo Bridge",
+              "class": "path",
+              "type": "cycleway",
+              "structure": "bridge",
+              "distance_m": 2.93
+            },
+            {
+              "name": null,
+              "class": "ferry",
+              "type": "ferry",
+              "structure": "none",
+              "distance_m": 3.65
+            },
+            {
+              "name": "Waterloo Bridge",
+              "class": "primary",
+              "type": "primary",
+              "structure": "bridge",
+              "distance_m": 7.54
+            }
+          ]
+        },
+        {
+          "lat": 51.50702,
+          "lon": -0.11532,
+          "water": false,
+          "roads": []
+        }
+      ]
+    }
+  ]
+}

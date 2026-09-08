@@ -33,6 +33,7 @@ struct PaywallView: View {
             let s = min(1, max(0.82, geo.size.height / 852))
             content(s)
         }
+        .trackScreen(.paywall)
     }
 
     private func content(_ s: CGFloat) -> some View {

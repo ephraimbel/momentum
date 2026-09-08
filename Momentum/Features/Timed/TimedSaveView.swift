@@ -162,6 +162,7 @@ struct TimedSaveView: View {
         } message: {
             Text("There's no way to get this \(workout?.type.title.lowercased() ?? "activity") back.")
         }
+        .trackScreen(.workoutSave)
     }
 
     /// The session's name and story printed directly on the page under the hero's fade (user
@@ -180,6 +181,12 @@ struct TimedSaveView: View {
                 .foregroundStyle(Theme.ink)
                 .lineLimit(2...6)
                 .focused($focus, equals: .desc)
+            if CommunityAccess.enabled {
+                Text("Add a photo or a few words if you'd like. You choose who can see this session.")
+                    .font(.rounded(12, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
+                    .padding(.top, Theme.Space.xs)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -199,10 +206,6 @@ struct TimedSaveView: View {
             }
             Divider().overlay(Theme.hairline)
             calorieRow
-            if CommunityAccess.enabled {
-                Divider().overlay(Theme.hairline)
-                ShareVisibilityRow(privacy: $privacy, boxed: false, showsHint: true)
-            }
         }
         .padding(Theme.Space.md)
         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))

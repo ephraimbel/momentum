@@ -38,8 +38,7 @@ struct WelcomeGalleryView: View {
     @ReducedMotionPreference private var reduceMotion
     @State private var appeared = false
     @State private var departing = false
-    @State private var accumulatedTime = 0.0
-    @State private var runningSince: Date?
+    @State private var animationClock = WelcomeAnimationClock()
     @State private var interaction = WelcomeGalleryMotion()
     @State private var touchPoint = CGPoint(x: -300, y: -300)
     /// Frames of the reading and touch surfaces, in the gallery's coordinate space; the gallery
@@ -52,6 +51,8 @@ struct WelcomeGalleryView: View {
     /// The actions are gone from the hierarchy — not merely faded — once the flow is raised, so
     /// nothing can find "Build my plan" beneath the first question.
     @State private var actionsRemoved = false
+    @State private var handoffSent = false
+    @State private var landingHapticSent = false
 
     /// The exit: every circle gathers to the centre and stacks into one disc, the glass runner
     /// rises out of it onto a pearl glow and HOLDS there. Paced, not rushed: gather over 0.6 s,
@@ -96,8 +97,8 @@ struct WelcomeGalleryView: View {
         GeometryReader { geometry in
             ZStack {
                 Color.white.ignoresSafeArea()
-                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !shouldRun)) { clock in
-                    let time = reduceMotion ? 0 : elapsed(at: clock.date)
+                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !shouldRun)) { _ in
+                    let time = reduceMotion ? 0 : elapsed()
                     ZStack {
                         // Once the photographs have fully dissolved into the icon there is nothing
                         // left to draw here — and a full-screen lens re-rendered at 60 fps for an
@@ -109,6 +110,7 @@ struct WelcomeGalleryView: View {
                         // The icon is drawn OUTSIDE the gallery's lens, so it lands crisp.
                         brandLanding(size: geometry.size, time: time)
                     }
+                    .onChange(of: departureStage(at: time)) { _, _ in advanceDeparture(at: time) }
                 }
                 .contentShape(Rectangle())
                 .gesture(galleryGesture(size: geometry.size))
@@ -137,22 +139,33 @@ struct WelcomeGalleryView: View {
         // nothing (VoiceOver, UI tests) can find "Build my plan" under the first question.
         .accessibilityHidden(departing)
         .onAppear {
-            departing = false
+            if !handoffSent {
+                departing = false
+                departAt = nil
+                departed = false
+                actionsRemoved = false
+                landingHapticSent = false
+            }
             updateClock()
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.8)) { appeared = true }
+        }
+        .task {
             #if DEBUG
             // `--welcome-depart`: fire the exit choreography on its own one second in, so it can
             // be photographed at wall-clock offsets (screen recording slows the simulator and
             // stretches every timing it captures).
             if ProcessInfo.processInfo.arguments.contains("--welcome-depart") {
-                Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(2.6))   // past the splash, so the order is real
-                    startDeparture()
-                }
+                do { try await Task.sleep(for: .seconds(2.6)) }
+                catch { return }
+                startDeparture()
             }
             #endif
         }
         .onChange(of: shouldRun) { updateClock() }
+        .onChange(of: reduceMotion) { if reduceMotion { finishReducedDeparture() } }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { finishReducedDeparture() }
+        }
         .onDisappear { pauseClock() }
     }
 
@@ -244,8 +257,11 @@ struct WelcomeGalleryView: View {
     }
 
     private func gallery(size: CGSize, time: Double) -> some View {
+        // Gather from the tapped frame. An orbit wrapping mid-gather would teleport a photograph
+        // that is now being pulled onto the screen, even though its ordinary wrap is offscreen.
+        let orbitTime = departAt ?? time
         let pose = reduceMotion ? WelcomeGalleryMotion.Pose(phase: 0, horizontal: 0, contact: 0)
-            : interaction.pose(at: time)
+            : interaction.pose(at: orbitTime)
         let gather = gatherProgress(at: time)
         let warp = warpProgress(at: time)
         return ZStack {
@@ -253,11 +269,11 @@ struct WelcomeGalleryView: View {
             ForEach(0..<Self.orbitCount, id: \.self) { index in
                 let seed = Double(index)
                 // Wrapping happens beyond both screen edges, so an orbit never visibly resets.
-                let raw = seed / Double(Self.orbitCount) * 1.64 + time * Self.driftPerSecond + pose.phase
+                let raw = seed / Double(Self.orbitCount) * 1.64 + orbitTime * Self.driftPerSecond + pose.phase
                 let travel = WelcomeGalleryMotion.wrappedTravel(raw)
                 // Which lap this orbit is on; every lap advances it by one photograph. The swap
                 // happens off-screen (at the wrap), so nothing ever changes in front of the eye.
-                let lap = Int(floor((raw + 0.32) / 1.64))
+                let lap = WelcomeGalleryMotion.photoLap(raw)
                 let mine = Array(stride(from: index, to: galleryImages.count, by: Self.orbitCount))
                 let photo = mine[((lap % mine.count) + mine.count) % mine.count]
                 let depth = 0.5 + 0.5 * cos(travel * 4.6 + seed * 0.4)
@@ -336,64 +352,84 @@ struct WelcomeGalleryView: View {
     /// "Build my plan": the words step aside, the circles gather into one disc, the disc warps
     /// through the glass to white, and only then is the flow raised beneath it.
     private func startDeparture() {
-        guard !departing else { return }
+        guard !departing, isActive, scenePhase == .active else { return }
         Haptics.light()
         if reduceMotion {
             withAnimation(.easeOut(duration: 0.12)) { departing = true } completion: {
-                actionsRemoved = true
-                onStart()
+                finishReducedDeparture()
             }
             return
         }
         departAt = elapsed()
         withAnimation(.easeOut(duration: 0.45)) { departing = true }
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.45))
-            actionsRemoved = true                                      // faded out; now gone
-            try? await Task.sleep(for: .seconds(Self.gatherS - 0.45))
-            Haptics.medium()                                           // the disc lands
-            try? await Task.sleep(for: .seconds(Self.Handoff.coverRaiseS - Self.gatherS))
-            // Sign in ON the hold: the root inserts the flow inline on this change, over the
-            // resting icon, and the flow continues the exit itself (`Handoff`). This screen
-            // stays mounted beneath until the root lets it go.
-            onStart()
-            try? await Task.sleep(for: .seconds(Self.spentS - Self.Handoff.coverRaiseS))
-            departed = true                                            // rest reached; stop the clock
+    }
+
+    private func departureStage(at time: Double) -> Int {
+        guard let departAt else { return 0 }
+        let t = time - departAt
+        if t >= Self.spentS { return 4 }
+        if t >= Self.Handoff.coverRaiseS { return 3 }
+        if t >= Self.gatherS { return 2 }
+        return t >= 0.45 ? 1 : 0
+    }
+
+    /// Use the rendered clock, not independent sleeping tasks. On a missed frame all due beats
+    /// execute in order, exactly once; backgrounding pauses the choreography and its callbacks.
+    private func advanceDeparture(at time: Double) {
+        guard shouldRun, departing else { return }
+        let stage = departureStage(at: time)
+        if stage >= 1 { actionsRemoved = true }
+        if stage >= 2, !landingHapticSent {
+            landingHapticSent = true
+            Haptics.medium()
         }
+        if stage >= 3 { sendHandoff() }
+        if stage >= 4 { departed = true }
+    }
+
+    private func sendHandoff() {
+        guard !handoffSent else { return }
+        handoffSent = true
+        onStart()
+    }
+
+    private func finishReducedDeparture() {
+        guard (reduceMotion || departAt == nil), departing, isActive, scenePhase == .active else { return }
+        actionsRemoved = true
+        departed = true
+        sendHandoff()
     }
 
     private func updateClock() {
         if shouldRun {
-            if runningSince == nil { runningSince = Date() }
+            animationClock.setRunning(true)
+            advanceDeparture(at: elapsed())
         } else {
-            interaction.cancel(at: elapsed())
+            // An interrupted drag must release, but its current pose must not snap sideways.
+            interaction.release(predictedDeltaY: 0, height: 1, at: elapsed())
             pauseClock()
         }
     }
 
-    private func elapsed(at date: Date = Date()) -> Double {
-        accumulatedTime + (runningSince.map { max(0, date.timeIntervalSince($0)) } ?? 0)
-    }
+    private func elapsed() -> Double { animationClock.elapsed() }
 
     private func galleryGesture(size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                guard shouldRun else { return }
+                guard shouldRun, !departing else { return }
                 touchPoint = value.location
                 interaction.drag(x: value.translation.width, y: value.translation.height,
                                  height: size.height, at: elapsed())
             }
             .onEnded { value in
-                guard shouldRun else { return }
+                guard shouldRun, !departing else { return }
                 interaction.release(predictedDeltaY: value.predictedEndTranslation.height - value.translation.height,
                                     height: size.height, at: elapsed())
             }
     }
 
     private func pauseClock() {
-        guard let start = runningSince else { return }
-        accumulatedTime += max(0, Date().timeIntervalSince(start))
-        runningSince = nil
+        animationClock.setRunning(false)
     }
 }
 
@@ -462,7 +498,7 @@ struct WelcomeLandingMark: View {
 
 /// The tail of the welcome's exit, played by the onboarding flow: the landed icon holds for the
 /// rest of the welcome's hold (`Handoff.coverHoldS`), then bursts — the same smoothstep over the
-/// same `warpS` the welcome once drew. Wall-clock driven like the welcome, so both halves pace
+/// same `warpS` the welcome once drew. Foreground-clock driven like the welcome, so both halves pace
 /// alike; the icon is drawn nowhere else on the flow. Reduce Motion never sees it: that path
 /// raises the flow at once, fully present, and the welcome simply fades.
 ///
@@ -477,19 +513,48 @@ struct WelcomeHandoffBurst: View {
     /// The burst is over; nothing is drawn any more and this layer can go.
     var onSpent: () -> Void
     @ReducedMotionPreference private var reduceMotion
-    @State private var began: Date?
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var animationClock = WelcomeAnimationClock()
+    @State private var revealed = false
+    @State private var spent = false
+
+    private var shouldRun: Bool { scenePhase == .active && !reduceMotion && !spent }
 
     var body: some View {
-        if !reduceMotion {
-            TimelineView(.animation(minimumInterval: 1.0 / 60)) { clock in
-                let t = began.map { clock.date.timeIntervalSince($0) } ?? 0
-                let linear = min(1, max(0, (t - WelcomeGalleryView.Handoff.coverHoldS)
-                                            / WelcomeGalleryView.Handoff.warpS))
-                WelcomeLandingMark(rise: 1, warp: linear * linear * (3 - 2 * linear))
-                    .onChange(of: linear >= 0.35) { _, reached in if reached { onReveal() } }
-                    .onChange(of: t >= WelcomeGalleryView.Handoff.spentS) { _, spent in if spent { onSpent() } }
+        ZStack {
+            if !reduceMotion {
+                TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !shouldRun)) { _ in
+                    let t = animationClock.elapsed()
+                    let linear = min(1, max(0, (t - WelcomeGalleryView.Handoff.coverHoldS)
+                                                / WelcomeGalleryView.Handoff.warpS))
+                    WelcomeLandingMark(rise: 1, warp: linear * linear * (3 - 2 * linear))
+                        .onChange(of: t >= WelcomeGalleryView.Handoff.spentS ? 2 : (linear >= 0.35 ? 1 : 0),
+                                  initial: true) { _, stage in
+                            if shouldRun { advance(stage: stage) }
+                        }
+                }
             }
-            .onAppear { began = Date() }
         }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onAppear { updateClock() }
+        .onChange(of: shouldRun) { updateClock() }
+        .onChange(of: reduceMotion, initial: true) { _, reduced in
+            if reduced { advance(stage: 2) }
+        }
+        .onDisappear { animationClock.setRunning(false) }
+    }
+
+    private func advance(stage: Int) {
+        if stage >= 1, !revealed { revealed = true; onReveal() }
+        if stage >= 2, !spent { spent = true; onSpent() }
+    }
+
+    private func updateClock() {
+        animationClock.setRunning(shouldRun)
+        guard shouldRun else { return }
+        let t = animationClock.elapsed()
+        advance(stage: t >= WelcomeGalleryView.Handoff.spentS ? 2
+                : (t >= WelcomeGalleryView.Handoff.revealDelayS ? 1 : 0))
     }
 }

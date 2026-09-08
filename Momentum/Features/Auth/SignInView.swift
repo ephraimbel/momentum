@@ -57,6 +57,7 @@ struct SignInView: View {
             }
         }
         .animation(.easeOut(duration: 0.28), value: showingSignIn)
+        .trackScreen(.welcome)
     }
 
     // MARK: Beat 1 — the welcome (brand film → personal setup)
@@ -642,6 +643,7 @@ struct AccountOptionsView: View {
             case .gate: break
             }
         }
+        .trackScreen(.signIn)
     }
 
     /// The way out of this screen, which is different in all three places it appears.

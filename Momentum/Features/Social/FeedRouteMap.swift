@@ -34,13 +34,21 @@ enum FeedRouteSnapshots {
     static let byteBudget = 80 * 1_048_576
     static let entryBudget = 160
 
-    private static var waiters: [String: [CheckedContinuation<UIImage?, Never>]] = [:]
+    private static var waiters: [String: [UUID: CheckedContinuation<UIImage?, Never>]] = [:]
     private static var inFlight: Set<String> = []
+    private static var urgentKeys: Set<String> = []
 
     /// At most this many live render engines at once — a fast scroll through the feed otherwise
     /// bursts dozens of style/tile fetches and rate-limits the whole page into silhouettes.
     private static let maxConcurrentRenders = 4
     private static var active = 0
+    private static var scrollingSources: Set<UUID> = []
+
+    /// Don't create new offscreen/overscan engines during a scroll. Existing images remain usable,
+    /// and a tapped post's urgent request can still start immediately.
+    static func setScrolling(_ scrolling: Bool, source: UUID) {
+        if scrolling { scrollingSources.insert(source) } else { scrollingSources.remove(source) }
+    }
 
     /// Circuit breaker (2026-07-29): on a cold Mapbox cache (fresh install) a whole burst of
     /// renders can fail together — and a wall of retrying tiles then spawns engine after engine
@@ -80,23 +88,45 @@ enum FeedRouteSnapshots {
         #endif
         if let hit = touch(key) { return hit }
         if let quietUntil, Date() < quietUntil { return nil }   // breaker open — no new engines
-        return await withCheckedContinuation { continuation in
-            waiters[key, default: []].append(continuation)
+        let request = UUID()
+        return await withTaskCancellationHandler {
+          await withCheckedContinuation { continuation in
+            guard !Task.isCancelled else { continuation.resume(returning: nil); return }
+            waiters[key, default: [:]][request] = continuation
+            // A page can join a snapshot first queued by prefetch; promote that existing request.
+            if urgent { urgentKeys.insert(key) }
             guard !inFlight.contains(key) else { return }   // join the in-flight render
             inFlight.insert(key)
             Task {
                 // The reading view's hero map is the ONE the athlete is actively looking at — it
                 // must not queue behind a cold-launch backlog (feed cells + the snapshot healer can
                 // hold the gate for minutes on a fresh install, which read as "the post is broken").
-                if !urgent {
-                    while active >= maxConcurrentRenders { try? await Task.sleep(for: .milliseconds(120)) }
+                // Offscreen tiles relinquish their queue slot. A deep scroll must not make the
+                // visible screen wait for hundreds of maps nobody is looking at any more.
+                while active >= maxConcurrentRenders + (urgentKeys.contains(key) ? 1 : 0)
+                    || (!urgentKeys.contains(key) && !scrollingSources.isEmpty) {
+                    guard !(waiters[key]?.isEmpty ?? true) else {
+                        inFlight.remove(key); urgentKeys.remove(key); return
+                    }
+                    try? await Task.sleep(for: .milliseconds(120))
+                }
+                guard !(waiters[key]?.isEmpty ?? true) else {
+                    inFlight.remove(key); urgentKeys.remove(key); return
                 }
                 active += 1
-                let data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
+                let data: Data?
+                #if DEBUG
+                if let renderForTesting { data = await renderForTesting(coordinates) }
+                else { data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
+                    styleURI: resolved.styleURI, insets: insets, routeWidth: routeWidth,
+                    endpointDiameter: endpointDiameter) }
+                #else
+                data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
                                                            styleURI: resolved.styleURI,
                                                            insets: insets,
                                                            routeWidth: routeWidth,
                                                            endpointDiameter: endpointDiameter)
+                #endif
                 active -= 1
                 let image = data.flatMap(UIImage.init(data:))
                 if let image {
@@ -113,8 +143,16 @@ enum FeedRouteSnapshots {
                         consecutiveFailures = 0
                     }
                 }
-                (waiters.removeValue(forKey: key) ?? []).forEach { $0.resume(returning: image) }
+                (waiters.removeValue(forKey: key) ?? [:]).values.forEach { $0.resume(returning: image) }
                 inFlight.remove(key)
+                urgentKeys.remove(key)
+            }
+          }
+        } onCancel: {
+            Task { @MainActor in
+                let waiting = waiters[key]?.removeValue(forKey: request)
+                if waiters[key]?.isEmpty == true { waiters.removeValue(forKey: key) }
+                waiting?.resume(returning: nil)
             }
         }
     }
@@ -210,6 +248,8 @@ enum FeedRouteSnapshots {
     }
 
     #if DEBUG
+    static var renderForTesting: (([CLLocationCoordinate2D]) async -> Data?)?
+    static var pendingRenderCount: Int { inFlight.count }
     private static var hits = 0
     private static var misses = 0
     /// Live cache stats for the perf pass.
@@ -241,3 +281,25 @@ enum FeedRouteSnapshots {
 
 // (The `FeedRouteMap` view deleted 2026-07-30 — only the dormant card-feed used it.
 // `FeedRouteSnapshots` above stays: the wall, pager, and athlete grids all render through it.)
+
+/// Own the pause on the actual scroll surface: a filtered-out List can disappear while its
+/// enclosing sheet stays visible. Backgrounding must not leave a stale scrolling owner either.
+private struct CommunitySnapshotScrollActivity: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var source = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onScrollPhaseChange { _, phase in
+                FeedRouteSnapshots.setScrolling(phase != .idle, source: source)
+            }
+            .onDisappear { FeedRouteSnapshots.setScrolling(false, source: source) }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { FeedRouteSnapshots.setScrolling(false, source: source) }
+            }
+    }
+}
+
+extension View {
+    func communitySnapshotScrolling() -> some View { modifier(CommunitySnapshotScrollActivity()) }
+}

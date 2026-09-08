@@ -11,8 +11,10 @@ struct NewFlowsBenchmarkTests {
 
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema(PersistenceController.models)
-        return try ModelContainer(for: schema,
+        let container = try ModelContainer(for: schema,
                                   configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)])
+        ExerciseLibrarySeed.seedIfNeeded(into: container.mainContext)
+        return container
     }
 
     private let cal = Calendar.current

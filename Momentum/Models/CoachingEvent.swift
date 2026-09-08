@@ -67,9 +67,11 @@ final class CoachingEvent {
                              route: route)
         // And surface it live: a toast in the foreground, a (budgeted) push in the background.
         // Record sites run on engines and view models alike, so hop rather than assume an actor.
-        Task { @MainActor in
-            CoachSurface.deliver(kind: kind, headline: headline, detail: detail,
-                                 focusSessionID: focusSessionID)
+        PlanMutation.afterCommit(in: context) {
+            Task { @MainActor in
+                CoachSurface.deliver(kind: kind, headline: headline, detail: detail,
+                                     focusSessionID: focusSessionID)
+            }
         }
     }
 }

@@ -49,7 +49,9 @@ enum CoachActions {
             weeksAvailable: weeks,
             experience: experience,
             injuryProne: !profile.injuryHistory.isEmpty,
-            daysPerWeek: profile.daysPerWeek)
+            daysPerWeek: profile.daysPerWeek,
+            regularRunLimitS: profile.planPreferences?.regularRunLimitS,
+            longRunLimitS: profile.planPreferences?.longRunLimitS)
     }
 
     // MARK: - Preview (the card's diff lines — shown before Apply, computed not narrated)
@@ -105,11 +107,14 @@ enum CoachActions {
             return ["Protects your \(area.label.lowercased()) for \(severity.windowDays) days",
                     "Gated return when you're ready. Never a diagnosis"]
         case .pausePlan(let days):
-            var lines = ["Everything upcoming shifts \(days) day\(days == 1 ? "" : "s") later"]
+            let count = profile.plan.map { PlanCoaching.pausePlacements($0, days: days, from: today, calendar: calendar).count } ?? 0
+            var lines = ["\(count) sessions shift \(days) day\(days == 1 ? "" : "s") later"]
             if profile.raceDate != nil { lines.append("Race day stays fixed") }
             return lines
         case .resumePlan:
-            return ["Pulls your plan back to today", "Picks up where you left off"]
+            let count = profile.plan.map { PlanCoaching.resumePlacements($0, from: today, calendar: calendar).count } ?? 0
+            return ["Ends your pause", "\(count) sessions move earlier where the calendar has room",
+                    "Keeps recovery space and fixed race dates"]
         case .renewBlock:
             if profile.plan?.raceDate == nil {
                 return ["Reassesses your last 4 weeks of real running",
@@ -128,7 +133,27 @@ enum CoachActions {
     @discardableResult
     static func apply(_ intent: CoachIntent, profile: UserProfile, workouts: [Workout],
                       today: Date = Date(), in context: ModelContext,
-                      calendar: Calendar = .current) -> Outcome {
+                      calendar: Calendar = .current,
+                      commit: (ModelContext) throws -> Void = { try $0.save() }) -> Outcome {
+        do {
+            return try PlanMutation.perform(in: context, commit: commit) {
+                let result = stageApply(intent, profile: profile, workouts: workouts, today: today,
+                                        in: context, calendar: calendar)
+                if case .declined(let reason) = result { throw MutationFailure.declined(reason) }
+                return result
+            }
+        } catch MutationFailure.declined(let reason) {
+            return .declined(reason: reason)
+        } catch {
+            return .declined(reason: "Your change could not be saved. Your previous plan is still here. Please try again.")
+        }
+    }
+
+    private enum MutationFailure: Error { case declined(String) }
+
+    private static func stageApply(_ intent: CoachIntent, profile: UserProfile, workouts: [Workout],
+                                   today: Date, in context: ModelContext, calendar: Calendar) -> Outcome {
+        if let reason = IllnessResponse.blocked(intent, profile: profile) { return .declined(reason: reason) }
         switch intent {
         case .navigate(let dest):
             return .navigate(dest)
@@ -137,7 +162,7 @@ enum CoachActions {
             let old = profile.goal
             guard goal != old else { return .declined(reason: "That's already your goal. You're set.") }
             profile.goal = goal
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             return notify(Receipt(
                 headline: "Goal updated",
                 detail: "Your goal is now \(label(goal).lowercased()). I rebuilt your upcoming weeks around it. Completed work and your calibrated paces are kept."),
@@ -154,7 +179,7 @@ enum CoachActions {
             profile.raceDistanceM = distanceM
             if let goalTime { profile.goalFinishTimeS = goalTime }
             if profile.goal != .raceDistance { profile.goal = .raceDistance }
-            rebuild(profile, in: context)
+            guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             let label = RaceDistance.nearest(toMeters: distanceM).label
             let detail: String
             if check.verdict == .tooShort {
@@ -198,7 +223,7 @@ enum CoachActions {
                     _ = try PlanService.stageRebuild(for: profile, tuneUps: events, in: context)
                     _ = try command.apply(in: context, now: today)
                     _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)
-                    try context.save()
+                    try PlanMutation.save(context)
                 } catch {
                     context.rollback()
                     throw error
@@ -232,6 +257,9 @@ enum CoachActions {
 
         case .changeSessionLength(let minutes):
             profile.sessionMinutes = minutes
+            if let preferences = profile.planPreferences, preferences.regularRunLimitS != nil {
+                preferences.regularRunLimitS = Double(minutes * 60)
+            }
             guard rebuild(profile, in: context) else { return .declined(reason: rebuildFailed) }
             return notify(Receipt(
                 headline: "Session length updated",
@@ -266,7 +294,7 @@ enum CoachActions {
             // until refetch, which would let a stale card "clear" the same session twice.
             profile.plan?.sessions.removeAll { $0.id == s.id }
             context.delete(s)
-            try? context.save()
+            try? PlanMutation.save(context)
             return notify(Receipt(
                 headline: "Session cleared",
                 detail: "Cleared \(what) on \(when). Your streak holds. Rest days count too."),
@@ -350,7 +378,7 @@ enum CoachActions {
             }
             let shifted = PlanCoaching.pause(plan, days: days, from: today, in: context, calendar: calendar)
             guard shifted > 0 else { return .declined(reason: "There's nothing upcoming to pause.") }
-            var detail = "Everything upcoming moved \(days) day\(days == 1 ? "" : "s") later. Life happens; the plan bends."
+            var detail = "Moved \(shifted) session\(shifted == 1 ? "" : "s") \(days) day\(days == 1 ? "" : "s") later. Sessions without room to move stay on their dates; check the week when you return."
             if profile.raceDate != nil {
                 detail += " Race day stays fixed, so the runway is a little tighter. I'll be honest about it when you're back."
             }
@@ -360,10 +388,10 @@ enum CoachActions {
             guard let plan = profile.plan, plan.pausedUntil != nil else {
                 return .declined(reason: "Your plan isn't paused. You're already rolling.")
             }
-            PlanCoaching.resume(plan, from: today, in: context, calendar: calendar)
+            let moved = PlanCoaching.resume(plan, from: today, in: context, calendar: calendar)
             return notify(Receipt(
                 headline: "Welcome back",
-                detail: "Your plan picks up from today. First session back stays easy; we rebuild rhythm before intensity."),
+                detail: "Your pause is over. \(moved) session\(moved == 1 ? "" : "s") moved earlier where the calendar had room. Other dates stayed in place to protect recovery and fixed events. Check your next session; you can lighten the week for a gentler return."),
                 today: today, in: context)
 
         case .renewBlock:
@@ -374,7 +402,9 @@ enum CoachActions {
                 PlanBlockReview.post(PlanBlockReview.summary(plan: plan, in: context, today: today),
                                      unit: DistanceUnit(rawValue: profile.distanceUnit) ?? .auto,
                                      today: today, in: context)
-                PlanService.renewBlock(for: profile, startDate: today, in: context)
+                guard PlanService.renewBlock(for: profile, startDate: today, in: context) != nil else {
+                    return .declined(reason: rebuildFailed)
+                }
                 let block = (profile.plan?.blockIndex ?? 0) + 1
                 return notify(Receipt(
                     headline: "Block \(block) is built",
@@ -413,7 +443,7 @@ enum CoachActions {
             note.isActive = true
             context.insert(note)
             model.notes.append(note)
-            try? context.save()
+            try? PlanMutation.save(context)
             return .applied(Receipt(
                 headline: "Noted",
                 detail: "Kept: \"\(text)\". I'll coach with that in mind. Ask me what I know about you anytime, and tell me to forget anything."))
@@ -443,7 +473,7 @@ enum CoachActions {
     @discardableResult
     private static func rebuild(_ profile: UserProfile, in context: ModelContext) -> Bool {
         guard PlanService.rebuild(for: profile, in: context) != nil else { return false }
-        try? context.save()
+        try? PlanMutation.save(context)
         return true
     }
 

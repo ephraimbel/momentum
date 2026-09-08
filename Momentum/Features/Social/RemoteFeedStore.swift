@@ -34,6 +34,7 @@ final class RemoteFeedStore {
 
     /// Replace the feed with the first remote page for `scope`. No-op when unavailable.
     func refresh(scope: FeedScope) async {
+        let reactionRevision = reactions?.intentRevision
         requestGeneration += 1
         let generation = requestGeneration
         // This request supersedes any previous owner of the spinner. Reset first so a backend that
@@ -57,9 +58,12 @@ final class RemoteFeedStore {
         guard await backend.isAvailable,
               requestGeneration == generation, scopeLoaded == scope, !Task.isCancelled
         else { return }
+        let followRevision = follows?.intentRevision
         if let remoteFollowing = await backend.pullFollowing() {
             guard requestGeneration == generation, !Task.isCancelled else { return }
-            follows?.merge(remote: remoteFollowing)
+            if follows?.intentRevision == followRevision {
+                follows?.merge(remote: remoteFollowing)
+            }
         }
         guard requestGeneration == generation, !Task.isCancelled else { return }
         // Deliver anything the network never saw. Reaching here means a session exists, so this
@@ -71,6 +75,7 @@ final class RemoteFeedStore {
         guard requestGeneration == generation, scopeLoaded == scope, !Task.isCancelled else { return }
         let resolved = await materialize(page.rows, backend: backend)
         guard requestGeneration == generation, scopeLoaded == scope, !Task.isCancelled else { return }
+        mergeReactions(page.rows, since: reactionRevision)
         cursor = page.next
         items = resolved
         revision &+= 1
@@ -78,6 +83,7 @@ final class RemoteFeedStore {
 
     /// Append the next page (same scope), if any.
     func loadMore(scope: FeedScope) async {
+        let reactionRevision = reactions?.intentRevision
         guard let backend, scope == scopeLoaded, let cursor, !isLoading else { return }
         let generation = requestGeneration
         isLoading = true
@@ -89,6 +95,7 @@ final class RemoteFeedStore {
         let existing = Set(items.map(\.id))
         let resolved = await materialize(page.rows.filter { !existing.contains($0.id) }, backend: backend)
         guard requestGeneration == generation, scopeLoaded == scope, !Task.isCancelled else { return }
+        mergeReactions(page.rows, since: reactionRevision)
         self.cursor = page.next
         guard !resolved.isEmpty else { return }
         items += resolved
@@ -99,21 +106,30 @@ final class RemoteFeedStore {
     /// deliberately read-only: CommunityView owns the one temporary deep-link item so a concurrent
     /// scope refresh cannot erase or duplicate it in this paginated store.
     func resolve(postID: UUID) async -> FeedItem? {
+        let reactionRevision = reactions?.intentRevision
         guard let backend,
               let row = await backend.feedPost(id: postID),
               row.id == postID,
               !Task.isCancelled
         else { return nil }
-        return await materialize([row], backend: backend).first
+        let resolved = await materialize([row], backend: backend)
+        guard !Task.isCancelled else { return nil }
+        mergeReactions([row], since: reactionRevision)
+        return resolved.first
     }
 
     /// One remote athlete: identity + their RLS-visible posts, with honest aggregates computed
     /// from real posts only (never the synthesized sample body-of-work — that's for badged
     /// community athletes).
     func athlete(handle: String) async -> CommunityAthlete? {
-        guard let backend, let page = await backend.athletePage(handle: handle) else { return nil }
+        let reactionRevision = reactions?.intentRevision
+        guard let backend, let page = await backend.athletePage(handle: handle),
+              !Task.isCancelled else { return nil }
         let posts = await materialize(page.rows, backend: backend)
+        guard !Task.isCancelled else { return nil }
         let avatar = await avatarData(path: page.avatarPath, backend: backend)
+        guard !Task.isCancelled else { return nil }
+        mergeReactions(page.rows, since: reactionRevision)
         return CommunityAthlete(
             handle: page.handle,
             name: page.displayName.isEmpty ? "Athlete" : page.displayName,
@@ -131,7 +147,8 @@ final class RemoteFeedStore {
     /// Search real, discoverable athletes by name or @handle. Empty for guests/offline/dark —
     /// the seeded community results (searched locally by the caller) are the floor.
     func search(_ query: String) async -> [CommunityAthlete] {
-        guard let backend, let hits = await backend.searchAthletes(query: query, limit: 25) else { return [] }
+        guard let backend, let hits = await backend.searchAthletes(query: query, limit: 25),
+              !Task.isCancelled else { return [] }
         let rows = hits.enumerated().map { index, hit in
             (index: index, hit: hit,
              avatarURL: hit.avatarPath.flatMap { backend.publicAvatarURL(path: $0) })
@@ -151,6 +168,7 @@ final class RemoteFeedStore {
             }
             var resolved: [(Int, CommunityAthlete)] = []
             for await row in group { resolved.append(row) }
+            guard !Task.isCancelled else { return [] }
             return resolved.sorted { $0.0 < $1.0 }.map(\.1)
         }
     }
@@ -158,11 +176,13 @@ final class RemoteFeedStore {
     // MARK: Row → FeedItem (images through the cache; failures degrade to route/glyph media)
 
     private func materialize(_ rows: [SocialSyncEngine.FeedRow], backend: any SocialBackending) async -> [FeedItem] {
-        guard !rows.isEmpty else { return [] }
-        // Merge the viewer's reaction state first so counts render exactly.
-        reactions?.merge(viewerReacted: Set(rows.filter(\.viewerReacted).map { $0.id.uuidString }))
+        guard !rows.isEmpty, !Task.isCancelled else { return [] }
+        var seen: Set<UUID> = []
+        let rows = rows.filter { seen.insert($0.id).inserted }
         // One signing round trip for the whole page, then cached fetches in parallel.
-        let signed = await backend.signedPhotoURLs(paths: rows.flatMap(\.photoPaths))
+        let paths = Array(Set(rows.flatMap(\.photoPaths))).sorted()
+        let signed = paths.isEmpty ? [:] : await backend.signedPhotoURLs(paths: paths)
+        guard !Task.isCancelled else { return [] }
         let avatarURLs = Dictionary(
             rows.compactMap { row -> (String, URL)? in
                 guard let path = row.avatarPath,
@@ -187,6 +207,14 @@ final class RemoteFeedStore {
         return rows.compactMap { itemsByID[$0.id] }
     }
 
+    private func mergeReactions(_ rows: [SocialSyncEngine.FeedRow], since revision: Int?) {
+        // A page describes the state when fetched, before potentially slow image downloads.
+        // Never resurrect a reaction the viewer has since removed (even if its push finished).
+        guard reactions?.intentRevision == revision else { return }
+        // Commit side effects only after the caller verifies request ownership and cancellation.
+        reactions?.merge(viewerReacted: Set(rows.filter(\.viewerReacted).map { $0.id.uuidString }))
+    }
+
     nonisolated private static func photoData(paths: [String], signed: [String: URL]) async -> [Data] {
         await withTaskGroup(of: (Int, Data?).self) { group in
             for (index, path) in paths.enumerated() {
@@ -198,6 +226,7 @@ final class RemoteFeedStore {
                 if let data { resolved.append((index, data)) }
             }
             // Downloads finish nondeterministically; authored photo order remains the contract.
+            guard !Task.isCancelled else { return [] }
             return resolved.sorted { $0.0 < $1.0 }.map(\.1)
         }
     }
@@ -208,9 +237,12 @@ final class RemoteFeedStore {
     }
 
     nonisolated private static func imageData(path: String?, url: URL?) async -> Data? {
-        guard let path, !path.isEmpty, let url else { return nil }
+        guard !Task.isCancelled, let path, !path.isEmpty, let url else { return nil }
         return await RemoteImageCache.shared.data(for: path, fetch: {
-            try? await URLSession.shared.data(from: url).0
+            guard let (data, response) = try? await URLSession.shared.data(from: url),
+                  let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else { return nil }
+            return data
         })
     }
 }

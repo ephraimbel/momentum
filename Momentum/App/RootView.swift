@@ -18,6 +18,7 @@ struct RootView: View {
     // and set was persisted as it happened — this prompt is how they come back.
     @State private var recoveredWorkout: Workout?
     @State private var showRecoveryPrompt = false
+    @State private var planSaveFailed = false
     @State private var recoverySave: PresentedWorkout?
     /// Once per process: a fresh launch is the only moment the marker can't belong to a live workout.
     @MainActor private static var didCheckRecovery = false
@@ -111,9 +112,15 @@ struct RootView: View {
         #if DEBUG
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
-            .task(id: auth.userID) { await refreshSocialInbox() }
+            .task(id: auth.userID) {
+                await services.planSync.begin(account: auth.userID, isGuest: auth.isGuest, expectedOwner: auth.cloudOwnerID, in: context)
+                await refreshSocialInbox()
+            }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await refreshSocialInbox() } }
+                if phase == .active {
+                    services.planSync.schedule()
+                    Task { await refreshSocialInbox() }
+                }
                 if phase == .background, let fire = debugBackgroundFire {
                     debugBackgroundFire = nil
                     fire()
@@ -122,9 +129,15 @@ struct RootView: View {
         #else
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
-            .task(id: auth.userID) { await refreshSocialInbox() }
+            .task(id: auth.userID) {
+                await services.planSync.begin(account: auth.userID, isGuest: auth.isGuest, expectedOwner: auth.cloudOwnerID, in: context)
+                await refreshSocialInbox()
+            }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active { Task { await refreshSocialInbox() } }
+                if phase == .active {
+                    services.planSync.schedule()
+                    Task { await refreshSocialInbox() }
+                }
             }
         #endif
     }
@@ -228,7 +241,10 @@ struct RootView: View {
         @Bindable var coach = coach
         @Bindable var auth = auth
         @Bindable var router = router
-        return Group {
+        // Keep the onboarding overlay's host stable when the lingering welcome is removed.
+        // A Group distributes the overlay to its branches, recreating the flow (and dropping
+        // keyboard focus) when this condition flips during the welcome handoff.
+        let shell = ZStack {
             if !auth.isSignedIn || welcomeLingers {
                 // The welcome (2026-07-27): brand only, no account. "Get started" enters setup
                 // local-only and the account is offered on the LAST beat of onboarding. Told
@@ -436,6 +452,32 @@ struct RootView: View {
                 #endif
             }
         }
+        let presentations = shell
+        .modifier(PlanContinuityModifier(profile: profiles.first, onboarding: showOnboarding,
+            recording: router.workoutLaunch != nil, onStartLocal: { showOnboarding = true }))
+        .onChange(of: auth.cloudSessionGeneration) { _, _ in
+            Task { await services.planSync.begin(account: auth.userID, isGuest: auth.isGuest, expectedOwner: auth.cloudOwnerID, in: context) }
+        }
+        .onChange(of: services.planSync.restoreChecked) { _, checked in
+            if checked, services.planSync.status != .resetRequired, auth.isSignedIn, (try? context.fetchCount(FetchDescriptor<UserProfile>())) == 0 {
+                showOnboarding = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in services.planSync.schedule() }
+        .onReceive(NotificationCenter.default.publisher(for: PlanSyncService.didRestore)) { _ in
+            showOnboarding = false
+            if let profile = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first {
+                PlanAdjustmentService.propagate(profile: profile, workouts: profile.workouts, notifications: services.notifications)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PlanMutation.failureNotification)) { _ in
+            planSaveFailed = true
+        }
+        .alert("Your plan change wasn’t saved", isPresented: $planSaveFailed) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Your previous plan is still here. Please try the change again.")
+        }
         .alert("Unfinished \(recoveredWorkout?.type.title.lowercased() ?? "workout") found",
                isPresented: $showRecoveryPrompt, presenting: recoveredWorkout) { workout in
             Button("Save it") {
@@ -588,11 +630,12 @@ struct RootView: View {
         .background {
             Color.clear.sheet(isPresented: $auth.needsNewPassword) { SetNewPasswordView() }
         }
+        return presentations
         .onAppear {
             // A Siri receipt posted under quiet provisional delivery → ask properly (once) so
             // the next "Logged to Fuel" actually banners.
             NotificationService.promoteReceiptAuthorizationIfNeeded()
-            if auth.isSignedIn && profiles.isEmpty { showOnboarding = true }
+            if services.planSync.status != .resetRequired && auth.isSignedIn && profiles.isEmpty && (auth.isGuest || services.planSync.restoreChecked) { showOnboarding = true }
             // Ad-tracking consent (2026-08-13). Deliberately NOT at cold launch of a fresh install:
             // ATT gives each install exactly one prompt, and spending it on someone who has not yet
             // seen the app converts far worse than asking a runner who is already set up. Reaching
@@ -771,7 +814,7 @@ struct RootView: View {
         }
         // Just signed in (new athlete) → straight into onboarding.
         .onChange(of: auth.isSignedIn) { _, signedIn in
-            guard signedIn && profiles.isEmpty else { return }
+            guard services.planSync.status != .resetRequired, signedIn && profiles.isEmpty && auth.isGuest else { return }
             // No modal slide-up out of the welcome (owner call 2026-09-05). The welcome has just
             // faded its photographs to white; the flow now fades in over that same white and its
             // first question cascades up, so the hand-off reads as one continuous dissolve rather
@@ -796,7 +839,9 @@ struct RootView: View {
             }
         }
         // Returning to onboarding after a data wipe (Settings → Delete all data).
-        .onChange(of: profiles.isEmpty) { _, empty in if empty && auth.isSignedIn { showOnboarding = true } }
+        .onChange(of: profiles.isEmpty) { _, empty in
+            if services.planSync.status != .resetRequired && empty && auth.isSignedIn && (auth.isGuest || services.planSync.restoreChecked) { showOnboarding = true }
+        }
     }
 
     private var tabs: some View {
@@ -868,12 +913,17 @@ struct RootView: View {
 
     @ViewBuilder
     private func screen(for tab: AppTab) -> some View {
+        // `.trackScreen` sits on the tab's own root rather than on the `NavigationStack` around it,
+        // so popping back from a pushed detail re-registers the tab — the funnel path is what the
+        // athlete actually looked at, in order, not just what they opened first.
+        // Fuel is the exception: `FuelView` is presented as a sheet elsewhere too and tracks itself,
+        // so tracking it here as well would double-count every visit to the tab.
         switch tab {
-        case .today: TodayView()
-        case .plan: PlanView()
+        case .today: TodayView().trackScreen(.today)
+        case .plan: PlanView().trackScreen(.plan)
         case .progress: ProgressScreen()
         case .fuel: FuelView(showsDone: false)   // tab-hosted: the tab bar is the way out, no Done
-        case .profile: ProfileScreen()
+        case .profile: ProfileScreen().trackScreen(.profile)
         }
     }
 }

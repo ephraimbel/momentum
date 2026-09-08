@@ -119,6 +119,7 @@ struct WorkoutDetailView: View {
                 ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
             }
         }
+        .trackScreen(.workoutDetail)
     }
 
     /// Debrief with the coach — the discoverable entry (an inline row beats a toolbar glyph;

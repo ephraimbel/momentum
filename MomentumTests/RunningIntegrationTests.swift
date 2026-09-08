@@ -66,13 +66,17 @@ struct RunningIntegrationTests {
         ctx.insert(profile); ctx.insert(plan)
         profile.plan = plan
 
-        // Two completed tempo sessions, each run ~4% slower than the 300 s/km target (1560 s / 5 km).
+        // Two completed tempos with measured work reps, each ~4% slower than the target.
         var sessions: [PlannedSession] = []
         for _ in 0..<2 {
             let s = PlannedSession()
             s.discipline = .running; s.runType = .tempo; s.status = .completed; s.targetPaceSPerKm = 300
             let w = Workout(); w.type = .run; w.startedAt = Date(); w.durationS = 1560
             let gps = GPSDetail(); gps.distanceM = 5000; w.gps = gps
+            gps.structuredRepsData = try JSONEncoder().encode([
+                RepResult(repIndex: 1, repTotal: 1, title: nil, targetPaceSPerKm: 300,
+                          achievedPaceSPerKm: 312, distanceM: 5000, durationS: 1560)
+            ])
             s.completedWorkout = w
             ctx.insert(s); ctx.insert(w); ctx.insert(gps)
             sessions.append(s)
@@ -82,7 +86,7 @@ struct RunningIntegrationTests {
 
         // The real SwiftData query finds them and computes achieved pace correctly.
         let runs = PaceInsights.recentQualityRuns(plan)
-        #expect(runs.count == 2)
+        try #require(runs.count == 2)
         #expect(abs(runs[0].achievedPaceSPerKm - 312) < 1)     // 1560 / 5 km = 312 s/km
 
         // …and the classifier flags the targets as a touch hot (the signal auto-recalibration omits).

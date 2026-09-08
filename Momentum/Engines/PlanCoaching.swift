@@ -6,25 +6,45 @@ import SwiftData
 @MainActor
 enum PlanCoaching {
 
+    static func canStartPlannedSession(_ session: PlannedSession, profile: UserProfile?) -> Bool {
+        InjuryResponse.canStart(session, profile: profile) && IllnessResponse.canStart(session, profile: profile)
+    }
+
     static func todaySessions(_ plan: TrainingPlan?, on date: Date, calendar: Calendar = .current) -> [PlannedSession] {
         guard let plan else { return [] }
+        let profile = plan.modelContext.flatMap { context in
+            (try? context.fetch(FetchDescriptor<UserProfile>()))?.first { $0.plan?.id == plan.id }
+        }
+        let illness = IllnessResponse.state(for: profile)
+        if let illness, illness.phase == .resting || (illness.phase == .firstOuting && illness.firstOutingID != nil) { return [] }
         let day = calendar.startOfDay(for: date)
         return plan.sessions
             .filter { calendar.isDate($0.date, inSameDayAs: day) }
+            .filter { session in
+                if session.status == .completed { return true }
+                guard InjuryResponse.canStart(session, profile: profile) else { return false }
+                return illness.map { IllnessResponse.canStart(session, state: $0, now: date) } ?? true
+            }
             .sorted { $0.date < $1.date }
     }
 
     /// Link a finished workout to its planned session.
     static func markComplete(_ session: PlannedSession, with workout: Workout, in context: ModelContext) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { markComplete(session, with: workout, in: context) }
+        }
         session.completedWorkout = workout
         session.status = .completed
         workout.plannedSession = session
-        try? context.save()
+        try? PlanMutation.save(context)
     }
 
     /// Manual check-off from the Plan page (no workout attached). Toggling off unlinks any credited
     /// workout so the session reads as open again. No-shame: this never creates a "failed" state.
     static func setCompletion(_ session: PlannedSession, done: Bool, in context: ModelContext) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { setCompletion(session, done: done, in: context) }
+        }
         session.status = done ? .completed : .planned
         if done {
             session.rationale = nil          // clear any "moved" note — it's done now
@@ -32,16 +52,19 @@ enum PlanCoaching {
             session.completedWorkout?.plannedSession = nil
             session.completedWorkout = nil
         }
-        try? context.save()
+        try? PlanMutation.save(context)
     }
 
     /// Move a session to another day from the Plan page. A manual move clears the auto-"moved" note so
     /// it reads as a deliberate plan, not a slipped one.
     static func reschedule(_ session: PlannedSession, to date: Date, in context: ModelContext,
                            calendar: Calendar = .current) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { reschedule(session, to: date, in: context, calendar: calendar) }
+        }
         session.date = calendar.startOfDay(for: date)
         clearMovedNote(session)
-        try? context.save()
+        try? PlanMutation.save(context)
     }
 
     /// Drop only the auto-"moved" note, which is what a deliberate move is meant to clear.
@@ -67,12 +90,15 @@ enum PlanCoaching {
     /// over, for one tap. One write, one notification, one rebuild.
     static func reschedule(_ moves: [(session: PlannedSession, date: Date)],
                            in context: ModelContext, calendar: Calendar = .current) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { reschedule(moves, in: context, calendar: calendar) }
+        }
         guard !moves.isEmpty else { return }
         for move in moves {
             move.session.date = calendar.startOfDay(for: move.date)
             clearMovedNote(move.session)
         }
-        try? context.save()
+        try? PlanMutation.save(context)
     }
 
     /// Trade two planned sessions' days — the Plan board's drop-one-session-onto-another gesture.
@@ -82,6 +108,9 @@ enum PlanCoaching {
     /// one that slipped. Same-day pairs are a no-op rather than a silent write.
     static func swapDays(_ a: PlannedSession, _ b: PlannedSession, in context: ModelContext,
                          calendar: Calendar = .current) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { swapDays(a, b, in: context, calendar: calendar) }
+        }
         let dayA = calendar.startOfDay(for: a.date)
         let dayB = calendar.startOfDay(for: b.date)
         guard dayA != dayB else { return }
@@ -89,7 +118,7 @@ enum PlanCoaching {
         b.date = dayA
         clearMovedNote(a)
         clearMovedNote(b)
-        try? context.save()
+        try? PlanMutation.save(context)
     }
 
     /// Copy a planned session onto other days — "repeat this next week", "every Tuesday for a
@@ -106,6 +135,9 @@ enum PlanCoaching {
     @discardableResult
     static func duplicate(_ session: PlannedSession, onto days: [Date], to plan: TrainingPlan?,
                           in context: ModelContext, calendar: Calendar = .current) -> Int {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { duplicate(session, onto: days, to: plan, in: context, calendar: calendar) }
+        }
         guard let plan else { return 0 }
         var written = 0
         for day in days {
@@ -149,7 +181,7 @@ enum PlanCoaching {
             plan.sessions.append(copy)
             written += 1
         }
-        if written > 0 { try? context.save() }
+        if written > 0 { try? PlanMutation.save(context) }
         return written
     }
 
@@ -170,6 +202,9 @@ enum PlanCoaching {
     @discardableResult
     static func creditLaunched(_ session: PlannedSession, with workout: Workout, to plan: TrainingPlan?,
                                in context: ModelContext, calendar: Calendar = .current) -> PlannedSession? {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { creditLaunched(session, with: workout, to: plan, in: context, calendar: calendar) }
+        }
         let candidate = PlanCredit.Candidate(targetDistanceM: session.targetDistanceM,
                                              targetDurationS: session.targetDurationS)
         let ratio = PlanCredit.fulfillment(of: candidate, distanceM: workout.gps?.distanceM ?? 0,
@@ -192,6 +227,9 @@ enum PlanCoaching {
     @discardableResult
     static func creditWorkout(_ workout: Workout, to plan: TrainingPlan?, in context: ModelContext,
                               calendar: Calendar = .current) -> PlannedSession? {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { creditWorkout(workout, to: plan, in: context, calendar: calendar) }
+        }
         guard let plan else { return nil }
         if let hit = credit(among: todaySessions(plan, on: workout.startedAt, calendar: calendar),
                             workout: workout, in: context) {
@@ -258,7 +296,15 @@ enum PlanCoaching {
     /// Naturally idempotent: once reconciled, nothing is past-due, so a second pass can't re-shrink.
     static func reconcileMissed(_ plan: TrainingPlan?, today: Date, in context: ModelContext,
                                 calendar: Calendar = .current) {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: ()) { reconcileMissed(plan, today: today, in: context, calendar: calendar) }
+        }
         guard let plan else { return }
+        if IllnessResponse.state(for: plan) != nil {
+            IllnessResponse.retireMissed(plan, before: today)
+            try? PlanMutation.save(context)
+            return
+        }
         // While paused, sessions were deliberately shifted out — rolling them "forward" again would
         // undo the pause. Stand down until the window passes (resume clears it early). A window
         // that has passed clears itself here, so "Pause" is never refused for a pause that ended
@@ -271,18 +317,27 @@ enum PlanCoaching {
         var occupied = Set(plan.sessions.map { calendar.startOfDay(for: $0.date) })
         var changed = false
         var movedCount = 0
+        var skippedCount = 0
         // The first landed move, kept for the coaching headline ("Tuesday's run moved to Thursday").
         var firstMove: (id: UUID, from: String, to: String, word: String)?
         // Slips are counted by ORIGINAL weekday here, at the only moment it still exists — the
         // Athlete Model's avoid-day evidence (a recompute after the move sees only the new date).
         let athlete = (try? context.fetch(FetchDescriptor<UserProfile>()))?.first?.athlete
 
-        for session in plan.sessions
-            where session.status == .planned
-            && session.completedWorkout == nil
-            && session.runType != .race        // a missed race never auto-reschedules — that's the athlete's call
-            && calendar.startOfDay(for: session.date) < todayStart {
-
+        let overdue = plan.sessions.filter {
+            isOpen($0) && !isFixedDate($0) && calendar.startOfDay(for: $0.date) < todayStart
+        }.sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
+        let rebuildingAfterAbsence = overdue.count >= 3 && !plan.isSelfCoached
+        for session in overdue {
+            if rebuildingAfterAbsence {
+                // Training debt is not added to the return week. Keep the historical row,
+                // while the existing upcoming week supplies the budget for the reduction.
+                session.status = .missed
+                session.rationale = "Time away. Start with the week ahead; no need to make this one up."
+                skippedCount += 1
+                changed = true
+                continue
+            }
             let originalWeekday = calendar.component(.weekday, from: session.date) - 1
             if let athlete, athlete.missedWeekdayHistogram.indices.contains(originalWeekday) {
                 athlete.missedWeekdayHistogram[originalWeekday] += 1
@@ -290,7 +345,8 @@ enum PlanCoaching {
             var moved = false
             for delta in 0..<7 {
                 guard let cand = calendar.date(byAdding: .day, value: delta, to: todayStart) else { continue }
-                if !occupied.contains(cand) {
+                if let race = plan.raceDate, cand >= calendar.startOfDay(for: race) { break }
+                if !occupied.contains(cand), automaticMoveFits(session, on: cand, plan: plan, calendar: calendar) {
                     occupied.remove(calendar.startOfDay(for: session.date))
                     if firstMove == nil {
                         firstMove = (id: session.id,
@@ -303,25 +359,23 @@ enum PlanCoaching {
                     session.rationale = "Shifted to \(cand.formatted(.dateTime.weekday(.wide))). Still on track."
                     occupied.insert(cand)
                     moved = true
+                    movedCount += 1
                     changed = true
                     break
                 }
             }
             if !moved {
-                session.status = .moved
-                session.rationale = "Rolled forward. Your streak holds."
+                session.status = .missed
+                session.rationale = "No room to move this session. Continue with the week ahead."
+                skippedCount += 1
                 changed = true
             }
-            movedCount += 1
         }
 
         // Rebuild week after a real absence (PRD §9.4: ≥3 misses → the week restarts at ~70%).
-        // Shrinking load is a structural change, so it shares the ≤1-change/week `lastAdaptedAt` gate
-        // — never stack a rebuild-week on top of another ease/bump (or vice-versa) in the same week.
-        let recentlyAdapted = plan.lastAdaptedAt.map {
-            (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) < 7
-        } ?? false
-        if movedCount >= 3, !recentlyAdapted, !plan.isSelfCoached,
+        // Retiring overdue rows makes this safety reduction idempotent. Stamp the weekly gate
+        // afterward so a discretionary load increase cannot immediately reverse the return week.
+        if rebuildingAfterAbsence,
            let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) {
             let unit = displayUnit(in: context)
             let athleteState = athleteState(of: plan, in: context)
@@ -358,24 +412,28 @@ enum PlanCoaching {
             }
             plan.lastAdaptedAt = today   // arm the weekly gate so no other ease/bump stacks on this
             CoachingEvent.record(kind: .ease, headline: "Welcome back, a rebuild week",
-                                 detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. One good session earns them right back.",
+                                 detail: "You were away a bit, so this week restarts at about 70% and your paces ease a touch. Future running evidence will guide the next adjustment.",
                                  on: today, in: context, calendar: calendar)
-        } else if movedCount > 0 {
+        } else if movedCount + skippedCount > 0 {
             // No rebuild — just the quiet reflow. One receipt covers however many sessions slid,
             // so a three-day trip lands one line, not three.
             let headline: String
-            if movedCount == 1, let move = firstMove {
+            if movedCount == 0 {
+                headline = "Continue with the week ahead"
+            } else if movedCount == 1, let move = firstMove {
                 headline = "\(move.from)'s \(move.word) moved to \(move.to)"
             } else {
                 headline = "\(movedCount) sessions moved forward"
             }
             // A single move carries its session, so the notification opens the session that moved.
             CoachingEvent.record(kind: .moved, headline: headline,
-                                 detail: "Nothing was lost. Your week reflowed around the days you missed, and every session kept its purpose.",
+                                 detail: skippedCount > 0
+                                    ? "Some past sessions had no free day before the race or within the next week. They stay in your history; there is no need to make them up."
+                                    : "Your sessions moved into the available days ahead.",
                                  on: today, in: context, calendar: calendar,
                                  focusSessionID: movedCount == 1 ? firstMove?.id : nil)
         }
-        if changed { try? context.save() }
+        if changed { try? PlanMutation.save(context) }
     }
 
     /// The session noun for coaching lines ("Tuesday's run moved to Thursday").
@@ -408,6 +466,9 @@ enum PlanCoaching {
     static func apply(_ rec: ProgressInsights.Recommendation, to plan: TrainingPlan?,
                       from date: Date = Date(), in context: ModelContext,
                       calendar: Calendar = .current) -> Int {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { apply(rec, to: plan, from: date, in: context, calendar: calendar) }
+        }
         guard let plan else { return 0 }
         let todayStart = calendar.startOfDay(for: date)
         // Injury-converted sessions are off-limits: softening one would corrupt the swap (easy-run
@@ -471,8 +532,31 @@ enum PlanCoaching {
             return 0   // advisory only — nothing to change
         }
         plan.lastAdaptedAt = date   // record any adaptation so auto-adapt can't stack on it (≤1/week)
-        try? context.save()
+        try? PlanMutation.save(context)
         return future.count
+    }
+
+    /// Automatic catch-up never stacks demanding days. Athletes can still choose a manual move
+    /// after reading the existing recovery warning; the coach must choose conservatively itself.
+    static func automaticMoveFits(_ session: PlannedSession, on date: Date, plan: TrainingPlan,
+                                  calendar: Calendar = .current) -> Bool {
+        guard isDemanding(session) else { return true }
+        let target = calendar.startOfDay(for: date)
+        return !plan.sessions.contains { other in
+            guard other.id != session.id, other.status != .missed, isDemanding(other) else { return false }
+            let gap = calendar.dateComponents([.day], from: target, to: calendar.startOfDay(for: other.date)).day ?? 0
+            return abs(gap) <= 1
+        }
+    }
+
+    private static func isDemanding(_ session: PlannedSession) -> Bool {
+        if session.discipline == .running {
+            return session.runType == .long || session.runType == .race || session.runType?.isQuality == true
+                || isFixedDate(session)
+        }
+        return session.strengthTargets.contains { target in
+            (target.exercise?.primaryMuscles ?? []).contains { HybridSequencing.Item.legMuscles.contains($0) }
+        }
     }
 
     /// The goal race distance for "@ race pace" re-derivation — lives on the profile, not the plan.
@@ -510,18 +594,29 @@ enum PlanCoaching {
     @discardableResult
     static func recalibratePaces(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                                  in context: ModelContext, calendar: Calendar = .current) -> Recalibration? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { recalibratePaces(from: workout, plan: plan, today: today, in: context, calendar: calendar) }
+        }
         guard let plan, workout.type.discipline == .running, let gps = workout.gps else { return nil }
         guard !plan.isSelfCoached else { return nil }   // their targets are theirs — never rewritten
         var dist = gps.distanceM, time = workout.durationS
         let current = plan.p5kSPerKm
         // A planned checkpoint is read as the test inside the recording (the athlete warms up
         // first), never as the whole run at a blended pace (2026-09-07).
-        if let testM = PlanEngine.timeTrialDistanceM(intervals: workout.plannedSession?.intervals),
-           let reading = CheckpointResult.read(workout: workout, testDistanceM: testM) {
+        if let testM = PlanEngine.timeTrialDistanceM(intervals: workout.plannedSession?.intervals) {
+            guard let reading = CheckpointResult.read(workout: workout, testDistanceM: testM) else { return nil }
             dist = reading.distanceM; time = reading.timeS
         }
         // Need a meaningful distance to extrapolate a 5k from — Riegel off a 400 m rep is noise.
-        guard dist >= 2000, time > 0, current > 0 else { return nil }
+        guard dist.isFinite, time.isFinite, current.isFinite,
+              dist >= 2000, time > 0, current > 0,
+              workout.startedAt <= today,
+              today.timeIntervalSince(workout.startedAt) <= 14 * 86_400 else { return nil }
+        if workout.plannedSession?.runType == .race,
+           let expected = workout.plannedSession?.targetDistanceM, dist < expected * 0.98 { return nil }
+        let coachingState = PlanCoachingStateRecord.upsert(planID: plan.id, in: context)
+        guard coachingState.pendingP5kWorkoutID != workout.id, coachingState.paceEvidenceDates[workout.id.uuidString] == nil else { return nil }
 
         // Fitness signal only: a planned quality session, a hard reported effort, or a pace sustained
         // at roughly 5k effort or faster. An easy/long run (run deliberately slow) never qualifies.
@@ -548,12 +643,16 @@ enum PlanCoaching {
         let isRaceResult = workout.plannedSession?.runType == .race
             || (workout.plannedSession?.intervals?.contains("Time trial") ?? false)
         let hasFreshEvidence = plan.pendingP5kAt.map {
-            (calendar.dateComponents([.day], from: $0, to: today).day ?? .max) <= 14
+            let age = calendar.dateComponents([.day], from: $0, to: today).day ?? .max
+            return (0...14).contains(age) && coachingState.pendingP5kWorkoutID != nil
         } ?? false
+        coachingState.paceEvidenceDates = coachingState.paceEvidenceDates.filter { today.timeIntervalSince($0.value) <= 14 * 86_400 }
+        coachingState.paceEvidenceDates[workout.id.uuidString] = workout.startedAt
         guard isRaceResult || hasFreshEvidence else {
             plan.pendingP5kSPerKm = equivalent
             plan.pendingP5kAt = today
-            try? context.save()
+            coachingState.pendingP5kWorkoutID = workout.id
+            try? PlanMutation.save(context)
             CoachingEvent.record(kind: .recalibrate, headline: "Strong run banked",
                                  detail: "That looked faster than your training paces assume. One more strong session in the next two weeks and I'll sharpen them. Real fitness shows up twice.",
                                  on: today, in: context, calendar: calendar)
@@ -561,6 +660,7 @@ enum PlanCoaching {
         }
         plan.pendingP5kSPerKm = nil
         plan.pendingP5kAt = nil
+        coachingState.pendingP5kWorkoutID = nil
         plan.lastRecalibratedAt = today
         plan.p5kSPerKm = bounded
         let athleteState = athleteState(of: plan, in: context)
@@ -581,7 +681,7 @@ enum PlanCoaching {
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }
-        try? context.save()
+        try? PlanMutation.save(context)
         if updated > 0 {
             let delta = Int((current - bounded).rounded())
             let why = isRaceResult
@@ -614,6 +714,10 @@ enum PlanCoaching {
     @discardableResult
     static func recalibrateThreshold(from workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                                      in context: ModelContext, calendar: Calendar = .current) -> ThresholdRecalibration? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { recalibrateThreshold(from: workout, plan: plan, today: today, in: context, calendar: calendar) }
+        }
         guard let plan, !plan.isSelfCoached, workout.type.discipline == .running,
               let gps = workout.gps, gps.distanceM >= 3_000, workout.durationS > 0 else { return nil }
         let planned = workout.plannedSession?.runType
@@ -666,7 +770,7 @@ enum PlanCoaching {
                 unit: displayUnit(in: context), type: runType)
             updated += 1
         }
-        try? context.save()
+        try? PlanMutation.save(context)
         if updated > 0, let current {
             let delta = Int((current - newT).rounded())
             CoachingEvent.record(kind: .recalibrate, headline: "Your steady pace got faster",
@@ -710,22 +814,23 @@ enum PlanCoaching {
     @discardableResult
     static func easeQualityPaces(_ plan: TrainingPlan?, from date: Date = Date(),
                                  in context: ModelContext, calendar: Calendar = .current) -> Int {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { easeQualityPaces(plan, from: date, in: context, calendar: calendar) }
+        }
         guard let plan, plan.p5kSPerKm > 0 else { return 0 }
         guard canEasePaces(plan, today: date, calendar: calendar) else { return 0 }
         let newP5k = plan.p5kSPerKm * 1.02
-        let athleteState = athleteState(of: plan, in: context)
         let todayStart = calendar.startOfDay(for: date)
         var updated = 0
-        for s in plan.sessions
-            where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
-            guard let runType = s.runType, (s.targetPaceSPerKm ?? 0) > 0 else { continue }
-            s.targetPaceSPerKm = RunRounding.snapPace(
-                sPerKm: PlanEngine.sessionPace(runType, p5k: newP5k, intervals: s.intervals,
-                                               raceDistanceM: goalRaceDistanceM(in: context),
-                                               goalRacePaceSPerKm: plan.goalRacePaceSPerKm,
-                                               thresholdSPerKm: athleteState.thresholdSPerKm,
-                                               riegelExponent: athleteState.riegelExponent ?? DanielsPaces.populationRiegelExponent),
-                unit: displayUnit(in: context), type: runType)
+        for s in plan.sessions where isOpen(s) && calendar.startOfDay(for: s.date) >= todayStart {
+            guard let runType = s.runType, let old = s.targetPaceSPerKm,
+                  old.isFinite, old > 0 else { continue }
+            // Ease the actual prescription, preserving each week's gradual progression.
+            // Re-deriving from the terminal race goal could make an early session faster.
+            let eased = max(old, RunRounding.snapPace(sPerKm: old * 1.02,
+                            unit: displayUnit(in: context), type: runType))
+            guard eased > old else { continue }
+            s.targetPaceSPerKm = eased
             updated += 1
         }
         guard updated > 0 else { return 0 }   // nothing to change → don't move p5k either
@@ -736,7 +841,8 @@ enum PlanCoaching {
         // old targets ran hot; a pre-ease "strong run" must not confirm against the new baseline.
         plan.pendingP5kSPerKm = nil
         plan.pendingP5kAt = nil
-        try? context.save()
+        PlanCoachingStateRecord.upsert(planID: plan.id, in: context).pendingP5kWorkoutID = nil
+        try? PlanMutation.save(context)
         CoachingEvent.record(kind: .recalibrate, headline: "Eased your target paces",
                              detail: "You asked for honest targets, so I eased your paces by about \(max(1, delta)) s/km. The reps will land the way they should.",
                              on: date, in: context, calendar: calendar)
@@ -754,6 +860,10 @@ enum PlanCoaching {
     @discardableResult
     static func autoAdapt(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                           in context: ModelContext, calendar: Calendar = .current) -> ProgressInsights.Recommendation? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { autoAdapt(plan, workouts: workouts, today: today, in: context, calendar: calendar) }
+        }
         guard let plan, !plan.isSelfCoached else { return nil }   // self-coached: we never touch it
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
@@ -802,6 +912,10 @@ enum PlanCoaching {
     static func easeStrengthOnRPECreep(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                                        in context: ModelContext, calendar: Calendar = .current)
         -> (headline: String, detail: String)? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { easeStrengthOnRPECreep(plan, workouts: workouts, today: today, in: context, calendar: calendar) }
+        }
         guard let plan else { return nil }
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
@@ -831,7 +945,7 @@ enum PlanCoaching {
         }
         guard changed > 0 else { return nil }
         plan.lastAdaptedAt = today
-        try? context.save()
+        try? PlanMutation.save(context)
         let note = (headline: "Strength deload week",
                     detail: "Your effort's been pinned near max for two sessions, so I cut this week's sets about 40%. Strength is built in the recovery.")
         CoachingEvent.record(kind: .ease, headline: note.headline, detail: note.detail,
@@ -847,6 +961,10 @@ enum PlanCoaching {
     @discardableResult
     static func adaptToEffort(_ workout: Workout, plan: TrainingPlan?, today: Date = Date(),
                               in context: ModelContext, calendar: Calendar = .current) -> (headline: String, detail: String)? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: nil) { adaptToEffort(workout, plan: plan, today: today, in: context, calendar: calendar) }
+        }
         guard let plan, !plan.isSelfCoached, workout.type.discipline == .running else { return nil }
         let outcome = EffortAdaptation.judge(rpe: workout.perceivedEffort,
                                              runType: workout.plannedSession?.runType,
@@ -886,6 +1004,7 @@ enum PlanCoaching {
     /// Returns `nil` when there's nothing to offer. Deterministic — this is what `apply` would do.
     static func proposeAdjustment(_ plan: TrainingPlan?, workouts: [Workout], today: Date = Date(),
                                   calendar: Calendar = .current) -> Proposal? {
+        guard IllnessResponse.state(for: plan) == nil else { return nil }
         guard let plan, !plan.isSelfCoached else { return nil }   // no load proposals on their plan
         if let last = plan.lastAdaptedAt,
            (calendar.dateComponents([.day], from: last, to: today).day ?? .max) < 7 { return nil }
@@ -913,6 +1032,9 @@ enum PlanCoaching {
     @discardableResult
     static func easeWeek(_ plan: TrainingPlan?, from today: Date, in context: ModelContext,
                          calendar: Calendar = .current) -> Int {
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { easeWeek(plan, from: today, in: context, calendar: calendar) }
+        }
         guard let plan, !plan.isSelfCoached else { return 0 }
         let todayStart = calendar.startOfDay(for: today)
         guard let horizon = calendar.date(byAdding: .day, value: 7, to: todayStart) else { return 0 }
@@ -939,8 +1061,85 @@ enum PlanCoaching {
         CoachingEvent.record(kind: .ease, headline: "Eased for your busy week",
                              detail: "This week's sessions came down about 15% and hard work softened to easy. Next week picks back up as planned.",
                              on: today, in: context, calendar: calendar)
-        try? context.save()
+        try? PlanMutation.save(context)
         return week.count
+    }
+
+    /// Preview and apply share the final calendar, including sessions that cannot move.
+    /// Uniform shifts preserve existing spacing; fixed events can block a move and cause a
+    /// chain of other moves to become unsafe. Resolve that chain before writing any dates.
+    private static func safeShiftPlacements(
+        _ candidates: [(session: PlannedSession, date: Date)], in plan: TrainingPlan,
+        calendar: Calendar
+    ) -> [(session: PlannedSession, date: Date)] {
+        guard let reference = plan.sessions.first.map({ calendar.startOfDay(for: $0.date) }) else { return [] }
+        func dayIndex(_ date: Date) -> Int {
+            calendar.dateComponents([.day], from: reference, to: calendar.startOfDay(for: date)).day ?? 0
+        }
+        var dates = Dictionary(uniqueKeysWithValues: candidates.map { ($0.session.id, $0.date) })
+        let originalDays = Dictionary(uniqueKeysWithValues: plan.sessions.map {
+            ($0.id, dayIndex($0.date))
+        })
+        let proposedDays = Dictionary(uniqueKeysWithValues: candidates.map { ($0.session.id, dayIndex($0.date)) })
+        let demanding = Set(plan.sessions.filter { $0.status != .missed && isDemanding($0) }.map(\.id))
+        // Each iteration removes at least one proposed move, so this terminates after at most
+        // candidates.count iterations. Inspect a snapshot per pass: relationship order has no say.
+        while !dates.isEmpty {
+            var blocked = Set<UUID>()
+            for move in candidates where dates[move.session.id] != nil {
+                guard let original = originalDays[move.session.id], let target = proposedDays[move.session.id] else { continue }
+                for other in plan.sessions where other.id != move.session.id {
+                    guard let otherOriginal = originalDays[other.id] else { continue }
+                    let otherTarget = dates[other.id] != nil ? (proposedDays[other.id] ?? otherOriginal) : otherOriginal
+                    let oldGap = abs(original - otherOriginal)
+                    let newGap = abs(target - otherTarget)
+                    let newCollision = newGap == 0 && oldGap > 0
+                    let squeezedRecovery = demanding.contains(move.session.id) && demanding.contains(other.id)
+                        && newGap <= 1 && newGap < oldGap
+                    if newCollision || squeezedRecovery {
+                        blocked.insert(move.session.id)
+                        break
+                    }
+                }
+            }
+            guard !blocked.isEmpty else { break }
+            for id in blocked { dates.removeValue(forKey: id) }
+        }
+        return candidates.filter { dates[$0.session.id] != nil }
+    }
+
+    static func pausePlacements(_ plan: TrainingPlan, days: Int, from today: Date,
+                                calendar: Calendar = .current) -> [(session: PlannedSession, date: Date)] {
+        guard (1...28).contains(days) else { return [] }
+        let start = calendar.startOfDay(for: today)
+        let raceDay = plan.raceDate.map { calendar.startOfDay(for: $0) }
+        let candidates: [(session: PlannedSession, date: Date)] = plan.sessions
+            .sorted { ($0.date, $0.id.uuidString) > ($1.date, $1.id.uuidString) }
+            .compactMap { session in
+                guard isOpen(session), !isFixedDate(session), calendar.startOfDay(for: session.date) >= start,
+                      let date = calendar.date(byAdding: .day, value: days, to: session.date) else { return nil }
+                if let raceDay, calendar.startOfDay(for: date) >= raceDay { return nil }
+                return (session, date)
+            }
+        return safeShiftPlacements(candidates, in: plan, calendar: calendar)
+    }
+
+    static func resumePlacements(_ plan: TrainingPlan, from today: Date,
+                                 calendar: Calendar = .current) -> [(session: PlannedSession, date: Date)] {
+        guard let until = plan.pausedUntil else { return [] }
+        let start = calendar.startOfDay(for: today)
+        let remaining = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: until)).day ?? 0
+        guard remaining > 0 else { return [] }
+        let shiftedDates = plan.coachingState?.pauseShiftedDates ?? [:]
+        let candidates: [(session: PlannedSession, date: Date)] = plan.sessions
+            .sorted { ($0.date, $0.id.uuidString) < ($1.date, $1.id.uuidString) }
+            .compactMap { session in
+                guard isOpen(session), !isFixedDate(session), shiftedDates[session.id.uuidString] == session.date,
+                      let date = calendar.date(byAdding: .day, value: -remaining, to: session.date),
+                      calendar.startOfDay(for: date) >= start else { return nil }
+                return (session, date)
+            }
+        return safeShiftPlacements(candidates, in: plan, calendar: calendar)
     }
 
     /// Pause the plan (travel, illness, life): shift every future, still-planned session forward by
@@ -950,26 +1149,25 @@ enum PlanCoaching {
     @discardableResult
     static func pause(_ plan: TrainingPlan?, days: Int, from today: Date,
                       in context: ModelContext, calendar: Calendar = .current) -> Int {
-        guard let plan, days > 0 else { return 0 }
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { pause(plan, days: days, from: today, in: context, calendar: calendar) }
+        }
+        guard let plan, (1...28).contains(days) else { return 0 }
         let todayStart = calendar.startOfDay(for: today)
+        if let paused = plan.pausedUntil, calendar.startOfDay(for: paused) > todayStart { return 0 }
         guard let until = calendar.date(byAdding: .day, value: days, to: todayStart) else { return 0 }
         var shifted = 0
         // Race day never moves, and a tune-up sits on its own calendar date: a pause shifts the
         // training around them, never the start lines (every line of copy promises exactly that).
-        let raceDay = plan.raceDate.map { calendar.startOfDay(for: $0) }
-        for s in plan.sessions
-            where s.status != .completed && s.completedWorkout == nil
-                  && !isFixedDate(s)
-                  && calendar.startOfDay(for: s.date) >= todayStart {
-            guard let moved = calendar.date(byAdding: .day, value: days, to: s.date) else { continue }
-            // A session cannot train for a race after the race: one that would land past race
-            // day stays where it is (and rolls to missed on its own if the athlete is away).
-            if let raceDay, calendar.startOfDay(for: moved) > raceDay { continue }
-            s.date = moved
+        let coachingState = PlanCoachingStateRecord.upsert(planID: plan.id, in: context)
+        coachingState.pauseShiftedDates = [:]
+        for move in pausePlacements(plan, days: days, from: today, calendar: calendar) {
+            coachingState.pauseShiftedDates[move.session.id.uuidString] = move.date
+            move.session.date = move.date
             shifted += 1
         }
-        plan.pausedUntil = until
-        try? context.save()
+        if shifted > 0 { plan.pausedUntil = until }
+        try? PlanMutation.save(context)
         return shifted
     }
 
@@ -979,24 +1177,16 @@ enum PlanCoaching {
     @discardableResult
     static func resume(_ plan: TrainingPlan?, from today: Date,
                        in context: ModelContext, calendar: Calendar = .current) -> Int {
-        guard let plan, let until = plan.pausedUntil else { return 0 }
-        let todayStart = calendar.startOfDay(for: today)
-        let remaining = calendar.dateComponents([.day], from: todayStart,
-                                                to: calendar.startOfDay(for: until)).day ?? 0
-        plan.pausedUntil = nil
-        guard remaining > 0 else { try? context.save(); return 0 }
-        var moved = 0
-        for s in plan.sessions
-            where s.status != .completed && s.completedWorkout == nil
-                  && !isFixedDate(s)
-                  && calendar.startOfDay(for: s.date) >= todayStart {
-            guard let back = calendar.date(byAdding: .day, value: -remaining, to: s.date),
-                  calendar.startOfDay(for: back) >= todayStart else { continue }
-            s.date = back
-            moved += 1
+        if !PlanMutation.isStaging(context) {
+            return PlanMutation.attempt(in: context, fallback: 0) { resume(plan, from: today, in: context, calendar: calendar) }
         }
-        try? context.save()
-        return moved
+        guard let plan, plan.pausedUntil != nil else { return 0 }
+        let moves = resumePlacements(plan, from: today, calendar: calendar)
+        for move in moves { move.session.date = move.date }
+        plan.pausedUntil = nil
+        PlanCoachingStateRecord.upsert(planID: plan.id, in: context).pauseShiftedDates = [:]
+        try? PlanMutation.save(context)
+        return moves.count
     }
 
     /// A session tied to a calendar date the athlete did not choose to move: the goal race, or a

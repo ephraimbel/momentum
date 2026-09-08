@@ -100,9 +100,19 @@ def place_at(tok, lat, lon):
     qs = urllib.parse.urlencode({"types": "place,locality", "limit": "1",
                                  "language": "en", "access_token": tok})
     url = f"https://api.mapbox.com/geocoding/v5/mapbox.places/{lon:.5f},{lat:.5f}.json?{qs}"
-    with urllib.request.urlopen(url, timeout=20) as resp:
-        data = json.load(resp)
-    feats = data.get("features") or []
+    # Retried, because a dropped sample is a LOST PLACE: the grid visits each point once, so a
+    # single timeout quietly thins a metro's town list rather than failing loudly.
+    data = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(url, timeout=25) as resp:
+                data = json.load(resp)
+            break
+        except Exception:  # noqa: BLE001 - transient; back off and try again
+            if attempt == 2:
+                raise
+            time.sleep(1.5 * (attempt + 1))
+    feats = (data or {}).get("features") or []
     if not feats:
         return None                      # open water, or genuinely nobody there
     f = feats[0]

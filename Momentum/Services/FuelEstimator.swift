@@ -68,7 +68,7 @@ struct FuelEstimator {
     /// absent: those bytes went out, the model may be running right now, and a meal that times out
     /// on every visit is exactly the standing API tax the cap is here to stop.
     private static let neverSent: Set<URLError.Code> = [
-        .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost,
+        .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost,
         .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .secureConnectionFailed,
         .appTransportSecurityRequiresSecureConnection,
     ]
@@ -109,14 +109,15 @@ struct FuelEstimator {
     /// of metadata by `MealPhoto`; it rides the request body as base64 and is never stored
     /// server-side. Without it the request is byte-identical to the text-only contract.
     func estimate(text: String, imageJPEG: Data? = nil, sessionLabel: String?, durationS: Double?) async -> Outcome {
+        guard !Task.isCancelled else { return .unavailable }
         guard let endpoint, let bearer else { return .unavailable }
         if let until = Self.estimateLimitedUntil {
             if Date() < until { return .unavailable }
             Self.estimateLimitedUntil = nil
         }
-        // An image the app would not send is not sent (the server refuses it anyway): the words
-        // go alone. With no words either there is nothing to judge, so the attempt is spent
-        // rather than refunded forever: a meal that can never be asked must come to rest.
+        // Never silently discard a supplied photo and estimate its caption as the whole meal.
+        // "Half of this" or "no dressing" is not a standalone food description.
+        if let imageJPEG, !MealPhoto.isSendable(imageJPEG) { return .declined }
         let image = imageJPEG.flatMap { MealPhoto.isSendable($0) ? $0 : nil }
         if image == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .declined }
         var req = URLRequest(url: endpoint, timeoutInterval: image == nil ? timeoutS : photoTimeoutS)
@@ -130,6 +131,7 @@ struct FuelEstimator {
             req.httpBody = try await Task.detached(priority: .userInitiated) {
                 try Self.encodedBody(text: text, imageJPEG: image, sessionLabel: sessionLabel, durationS: durationS)
             }.value
+            guard !Task.isCancelled else { return .unavailable }
             let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse else { return .declined }
             if http.statusCode == 429 {
@@ -194,7 +196,7 @@ struct FuelEstimator {
     /// Apply an estimate onto a meal — unless the athlete already set numbers by hand (manual wins).
     /// Items land as the breakdown; the meal's totals are Σ items (one source of truth).
     static func apply(_ e: Estimate, to meal: Meal) {
-        guard meal.source != "manual", isValid(e) else { return }
+        guard !meal.isDeleted, meal.isEstimable, isValid(e) else { return }
         meal.items = e.items.map {
             MealItem(name: $0.name, qty: $0.qty, unit: $0.unit, kcal: $0.kcal,
                      carbsG: $0.carbs_g, proteinG: $0.protein_g, fatG: $0.fat_g,
@@ -213,7 +215,8 @@ struct FuelEstimator {
     /// Reject the entire response before touching a saved meal. A malformed item must not
     /// produce a negative total, an overflow, or a resolved-but-empty journal entry.
     static func isValid(_ estimate: Estimate) -> Bool {
-        guard !estimate.items.isEmpty, estimate.items.count <= 100,
+        guard estimate.reason == nil || estimate.reason == "",
+              !estimate.items.isEmpty, estimate.items.count <= 40,
               estimate.confidence.isFinite, (0...1).contains(estimate.confidence) else { return false }
         return estimate.items.allSatisfy { item in
             let numbers = [item.kcal, item.carbs_g, item.protein_g, item.fat_g, item.sodium_mg, item.fluids_ml]

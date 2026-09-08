@@ -7,6 +7,81 @@ final class PlanShelfUITests: XCTestCase {
 
     override func setUp() { super.setUp(); continueAfterFailure = false }
 
+    @MainActor
+    func testBuilderDistinguishesNoRunningFromUnknownAndCreatesAPreview() {
+        let app = launch(["--reset-store", "--seed-demo", "--debug-pro", "--plan-tab", "--plan-builder"])
+        let path = app.descendants(matching: .any)["builder-path-start"].firstMatch
+        XCTAssertTrue(path.waitForExistence(timeout: 20)); path.tap()
+        let next = app.descendants(matching: .any)["builder-continue"].firstMatch
+        next.tap(); next.tap()
+        let none = app.buttons.matching(NSPredicate(format: "label == %@", "Not running")).firstMatch
+        XCTAssertTrue(none.waitForExistence(timeout: 10))
+        if !none.isHittable { app.swipeUp() }
+        none.tap()
+        XCTAssertTrue(none.isSelected)
+        let unsure = app.buttons.matching(NSPredicate(format: "label == %@", "Not sure")).firstMatch
+        XCTAssertFalse(unsure.isSelected)
+        unsure.tap()
+        XCTAssertTrue(unsure.isSelected)
+        XCTAssertFalse(none.isSelected)
+        none.tap()
+        shot(app, "builder-explicit-zero-running")
+        next.tap(); next.tap(); next.tap()
+        let start = app.descendants(matching: .any)["builder-start"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 15))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: start)
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 20), .completed)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Every number is a floor")).firstMatch.exists)
+        shot(app, "builder-returning-preview")
+        app.descendants(matching: .any)["builder-draft"].firstMatch.tap()
+        XCTAssertTrue(app.tabBars.buttons["Plan"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor
+    func testInterruptedDeviceResetSurvivesRelaunchAndFinishesIntoSetup() {
+        let app = launch(["--reset-store", "--seed-demo", "--debug-pro", "--plan-reset-interrupted"])
+        XCTAssertTrue(app.buttons["plan.reset.finish"].waitForExistence(timeout: 20))
+        shot(app, "interrupted-device-reset")
+        app.terminate()
+        app.launchArguments = ["--seed-demo", "--debug-pro"]
+        app.launch()
+        let finish = app.buttons["plan.reset.finish"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 20), "Reset intent must survive a fresh process without the seed flag.")
+        finish.tap()
+        XCTAssertTrue(app.textFields["Your name"].waitForExistence(timeout: 20), "Completing the reset should open fresh onboarding.")
+        XCTAssertFalse(app.buttons["plan.reset.finish"].exists)
+        shot(app, "completed-device-reset-setup")
+    }
+
+    @MainActor
+    func testIllnessPausePersistsAndOpensTheSharedRecoveryCheckIn() {
+        let app = launch(["--reset-store", "--seed-demo", "--debug-pro", "--plan-tab", "--plan-manage"])
+        XCTAssertTrue(app.staticTexts["manage plan"].waitForExistence(timeout: 20))
+        let unwell = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "I'm not feeling well")).firstMatch
+        XCTAssertTrue(unwell.waitForExistence(timeout: 10))
+        unwell.tap()
+        let pause = app.buttons["illness.pause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 5))
+        shot(app, "illness-before-pause")
+        pause.tap()
+        XCTAssertTrue(app.staticTexts["manage plan"].waitForExistence(timeout: 10))
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["illness.banner"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["--seed-demo", "--debug-pro", "--plan-tab"]
+        app.launch()
+        let banner = app.buttons["illness.banner"]
+        XCTAssertTrue(banner.waitForExistence(timeout: 20))
+        banner.tap()
+        XCTAssertTrue(app.staticTexts["Rest comes first"].waitForExistence(timeout: 5))
+        app.buttons["illness.checkin"].tap()
+        XCTAssertTrue(app.alerts["Your next step"].waitForExistence(timeout: 5),
+                      "An unanswered check-in must not resume training.")
+        app.alerts.buttons["OK"].tap()
+        shot(app, "illness-restored-checkin")
+        XCTAssertTrue(app.staticTexts["Rest comes first"].exists)
+    }
+
     private func shot(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

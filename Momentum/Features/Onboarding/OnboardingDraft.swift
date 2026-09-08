@@ -28,8 +28,14 @@ struct OnboardingDraft: Codable {
     var liftExperience: String?
     var injuryAreas: [String] = []
     var daysPerWeek: Int?
+    var daysPerWeekChosen: Bool?
+    var runningBackgroundChosen: Bool?
+    var returningRunner: Bool?
     var equipment: String?
     var sessionMinutes: Int?
+    var limitRegularRunTime: Bool?
+    var longRunLimitMinutes: Int?
+    var benchmarkPerformedAt: Date?
     var hasRace = false
     var raceDate: Date?
     var reason = "health"
@@ -92,8 +98,14 @@ extension OnboardingViewModel {
             liftExperience: liftExperience.rawValue,
             injuryAreas: injuryAreas.map(\.rawValue),
             daysPerWeek: daysPerWeek,
+            daysPerWeekChosen: daysPerWeekChosen,
+            runningBackgroundChosen: runningBackgroundChosen,
+            returningRunner: returningRunner,
             equipment: equipment.rawValue,
             sessionMinutes: sessionMinutes,
+            limitRegularRunTime: limitRegularRunTime,
+            longRunLimitMinutes: longRunLimitMinutes,
+            benchmarkPerformedAt: benchmarkPerformedAt,
             hasRace: hasRace,
             raceDate: raceDate,
             reason: reason,
@@ -136,7 +148,9 @@ extension OnboardingViewModel {
         // loop after Delete-all-data (audit 2026-08-11). This is an explicit set, not an
         // `allCases` position check: the stable enum order intentionally differs from the live
         // flow order, where Notifications and Primers now come BEFORE Building.
-        if [Step.building, .reveal, .account].contains(placedStep) { return false }
+        // No profile exists when this is called. Restore answers and rebuild instead of
+        // throwing away a completed interview after an interruption during the reveal.
+        let needsRebuild = [Step.building, .reveal, .review, .account].contains(placedStep)
         name = d.name
         handle = d.handle
         activities = Set(d.activities.compactMap(ActivityChoice.init(rawValue:))).union([.run])
@@ -145,8 +159,14 @@ extension OnboardingViewModel {
         liftExperience = d.liftExperience.flatMap(ExperienceLevel.init(rawValue:)) ?? liftExperience
         injuryAreas = Set(d.injuryAreas.compactMap(InjuryArea.init(rawValue:)))
         daysPerWeek = d.daysPerWeek ?? daysPerWeek
+        daysPerWeekChosen = d.daysPerWeekChosen ?? false
+        runningBackgroundChosen = d.runningBackgroundChosen ?? (d.paceFeel != nil || d.calibrationMode == "time")
+        returningRunner = d.returningRunner ?? false
         equipment = d.equipment.flatMap(Equipment.init(rawValue:)) ?? equipment
         sessionMinutes = d.sessionMinutes ?? sessionMinutes
+        limitRegularRunTime = d.limitRegularRunTime ?? false
+        longRunLimitMinutes = d.longRunLimitMinutes
+        benchmarkPerformedAt = d.benchmarkPerformedAt
         hasRace = d.hasRace
         raceDate = d.raceDate ?? raceDate
         reason = d.reason
@@ -174,7 +194,7 @@ extension OnboardingViewModel {
         recentRunSeconds = d.recentRunSeconds ?? recentRunSeconds
         healthRestingHR = d.importedRestingHR
         plannedRaceName = d.plannedRaceName
-        let currentStep = Self.currentStep(for: placedStep)
+        let currentStep = needsRebuild ? Step.building : Self.currentStep(for: placedStep)
         step = currentStep
         // Cross-version skew guard: single fields fall back to defaults on unknown rawValues
         // (that's the draft's resilience design), which can leave `placedStep` gated OFF under

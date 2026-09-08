@@ -723,7 +723,7 @@ struct PlanCoachingTests {
 
         PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
 
-        #expect(missed.allSatisfy { $0.status == .moved })
+        #expect(missed.allSatisfy { $0.status == .missed })
         #expect(upcoming.runType == .easy)                        // hard work softened for re-entry
         #expect(upcoming.targetDistanceM == 5500)                 // 8000 × 0.7 = 5600, snapped to a clean 5.5 km
         #expect(upcoming.rationale?.lowercased().contains("rebuild") == true)
@@ -1280,5 +1280,233 @@ struct PlanCoachingTests {
         mile.plannedSession = mileSession; mileSession.completedWorkout = mile
         #expect(PlanCoaching.recalibratePaces(from: mile, plan: plan, in: ctx) == nil)
         #expect(plan.p5kSPerKm == before)
+    }
+}
+
+extension PlanCoachingTests {
+    @Test func retryingOneWorkoutCannotConfirmFitnessTwice() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let future = plannedRun(in: ctx, daysFromNow: 2, type: .tempo, distanceM: 5000)
+        let plan = makePlan(in: ctx, sessions: [future])
+        plan.p5kSPerKm = 330
+        let evidence = run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9)
+        #expect(PlanCoaching.recalibratePaces(from: evidence, plan: plan, in: ctx) == nil)
+        #expect(plan.coachingState?.pendingP5kWorkoutID == evidence.id)
+        #expect(PlanCoaching.recalibratePaces(from: evidence, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 330)
+    }
+
+    @Test func abandonedCheckpointDoesNotSharpenPaces() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let test = plannedRun(in: ctx, daysFromNow: 0, type: .tempo, distanceM: 5000)
+        test.intervals = "Time trial: 5K at race effort"
+        let plan = makePlan(in: ctx, sessions: [test]); plan.p5kSPerKm = 330
+        let evidence = run(in: ctx, distanceM: 3000, durationS: 780, rpe: 9)
+        evidence.plannedSession = test
+        #expect(CheckpointResult.read(workout: evidence, testDistanceM: 5000) == nil)
+        #expect(PlanCoaching.recalibratePaces(from: evidence, plan: plan, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == 330)
+    }
+
+    @Test func comebackWeekDoesNotCollectTrainingDebt() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let past = [-5, -3, -1].map { plannedRun(in: ctx, daysFromNow: $0, type: .easy, distanceM: 5000) }
+        let upcoming = [0, 2, 4, 6].map { plannedRun(in: ctx, daysFromNow: $0, type: .easy, distanceM: 5000) }
+        let plan = makePlan(in: ctx, sessions: past + upcoming)
+        PlanCoaching.reconcileMissed(plan, today: Date(), in: ctx)
+        #expect(past.allSatisfy { $0.status == .missed })
+        let today = Calendar.current.startOfDay(for: Date())
+        let remaining = plan.sessions.filter { $0.date >= today }
+        #expect(remaining.count == 4)
+        #expect(remaining.reduce(0.0) { $0 + ($1.targetDistanceM ?? 0) } <= 14000)
+    }
+
+    @Test func pauseResumeLeavesUnshiftedRaceWeekSessionsAlone() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let early = plannedRun(in: ctx, daysFromNow: 2, type: .easy, distanceM: 5000)
+        let late = plannedRun(in: ctx, daysFromNow: 9, type: .easy, distanceM: 3000)
+        let race = plannedRun(in: ctx, daysFromNow: 10, type: .race, distanceM: 10000)
+        let plan = makePlan(in: ctx, sessions: [early, late, race]); plan.raceDate = race.date
+        let originalLate = late.date
+        _ = PlanCoaching.pause(plan, days: 3, from: Date(), in: ctx)
+        #expect(late.date == originalLate)
+        _ = PlanCoaching.resume(plan, from: Date(), in: ctx)
+        #expect(late.date == originalLate)
+        #expect(plan.pausedUntil == nil)
+    }
+
+    @Test func easingRacePaceWorkNeverMakesAnEarlyWeekFaster() throws {
+        let container = try makeContainer()
+        let ctx = container.mainContext
+        let session = plannedRun(in: ctx, daysFromNow: 2, type: .tempo, distanceM: 5000)
+        session.targetPaceSPerKm = 350
+        session.intervals = "5km @ race pace"
+        let plan = makePlan(in: ctx, sessions: [session]); plan.p5kSPerKm = 300
+        plan.goalRacePaceSPerKm = 290
+        #expect(PlanCoaching.easeQualityPaces(plan, in: ctx) == 1)
+        #expect((session.targetPaceSPerKm ?? 0) > 350)
+    }
+}
+
+extension PlanCoachingTests {
+    @Test func replayingAnAppliedRaceAfterTheCooldownDoesNotSharpenAgain() throws {
+        let container = try makeContainer(); let ctx = container.mainContext
+        let session = plannedRun(in: ctx, daysFromNow: 0, type: .race, distanceM: 5000)
+        let plan = makePlan(in: ctx, sessions: [session]); plan.p5kSPerKm = 330
+        let race = run(in: ctx, distanceM: 5000, durationS: 1500, rpe: 9)
+        race.plannedSession = session
+        #expect(PlanCoaching.recalibratePaces(from: race, plan: plan, in: ctx) != nil)
+        let after = plan.p5kSPerKm
+        let later = Calendar.current.date(byAdding: .day, value: 8, to: Date())!
+        #expect(PlanCoaching.recalibratePaces(from: race, plan: plan, today: later, in: ctx) == nil)
+        #expect(plan.p5kSPerKm == after)
+    }
+}
+
+@MainActor
+struct AutomaticMoveRecoveryTests {
+    @Test func coachDoesNotMoveQualityBesideALongRunButCanMoveAnEasyRun() {
+        let cal = Calendar.current, day = cal.startOfDay(for: Date())
+        let plan = TrainingPlan(), quality = PlannedSession(), long = PlannedSession(), easy = PlannedSession()
+        quality.discipline = .running; quality.runType = .intervals
+        long.discipline = .running; long.runType = .long
+        easy.discipline = .running; easy.runType = .easy
+        long.date = cal.date(byAdding: .day, value: 1, to: day)!
+        plan.sessions = [quality, long, easy]
+        #expect(!PlanCoaching.automaticMoveFits(quality, on: day, plan: plan))
+        #expect(PlanCoaching.automaticMoveFits(easy, on: day, plan: plan))
+        #expect(PlanCoaching.automaticMoveFits(quality, on: cal.date(byAdding: .day, value: 3, to: day)!, plan: plan))
+    }
+}
+
+@MainActor
+struct PauseCalendarSafetyTests {
+    private var calendar: Calendar {
+        var value = Calendar(identifier: .gregorian)
+        value.timeZone = TimeZone(identifier: "America/Chicago")!
+        return value
+    }
+    private var today: Date {
+        calendar.date(from: DateComponents(year: 2026, month: 9, day: 7))!
+    }
+    private func date(_ offset: Int) -> Date {
+        calendar.date(byAdding: .day, value: offset, to: today)!
+    }
+    private func session(_ offset: Int, _ type: RunType = .easy) -> PlannedSession {
+        let session = PlannedSession()
+        session.date = date(offset); session.discipline = .running; session.runType = type
+        session.targetDistanceM = 5_000
+        return session
+    }
+    private func fixture(_ sessions: [PlannedSession]) throws -> (ModelContainer, TrainingPlan) {
+        let schema = Schema(PersistenceController.models)
+        let container = try ModelContainer(for: schema, configurations: [
+            ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        ])
+        let plan = TrainingPlan()
+        container.mainContext.insert(plan)
+        for session in sessions { container.mainContext.insert(session) }
+        plan.sessions = sessions
+        try container.mainContext.save()
+        return (container, plan)
+    }
+
+    @Test func pauseProtectsRecoveryAroundFixedEventsAndMatchesPreview() throws {
+        let quality = session(0, .intervals), long = session(3, .long), race = session(5, .race)
+        let (container, plan) = try fixture([quality, long, race])
+        let preview = PlanCoaching.pausePlacements(plan, days: 1, from: today, calendar: calendar)
+        #expect(preview.map(\.session.id) == [quality.id])
+        #expect(PlanCoaching.pause(plan, days: 1, from: today, in: container.mainContext, calendar: calendar) == preview.count)
+        for move in preview { #expect(move.session.date == move.date) }
+        #expect(long.date == date(3))
+        #expect(race.date == date(5))
+    }
+
+    @Test func blockedMovesCascadeWithoutDependingOnRelationshipOrder() throws {
+        let first = session(0), second = session(2), tuneUp = session(4)
+        tuneUp.intervals = "Tune-up: 5K"
+        let (container, plan) = try fixture([first, second, tuneUp])
+        defer { withExtendedLifetime(container) {} }
+        #expect(PlanCoaching.pausePlacements(plan, days: 2, from: today, calendar: calendar).isEmpty)
+        plan.sessions.reverse()
+        #expect(PlanCoaching.pausePlacements(plan, days: 2, from: today, calendar: calendar).isEmpty)
+        #expect(first.date == date(0)); #expect(second.date == date(2))
+    }
+
+    @Test func simultaneousMovesCanUseDatesTheirNeighborsVacate() throws {
+        let first = session(0, .intervals), second = session(2, .long)
+        let (container, plan) = try fixture([first, second])
+        #expect(PlanCoaching.pause(plan, days: 2, from: today, in: container.mainContext, calendar: calendar) == 2)
+        #expect(first.date == date(2)); #expect(second.date == date(4))
+    }
+
+    @Test func earlyResumeProtectsRecoveryAroundNewSessionsAndMatchesPreview() throws {
+        let quality = session(0, .intervals), easy = session(2)
+        let (container, plan) = try fixture([quality, easy])
+        let context = container.mainContext
+        #expect(PlanCoaching.pause(plan, days: 7, from: today, in: context, calendar: calendar) == 2)
+        let addedLong = session(3, .long)
+        context.insert(addedLong); plan.sessions.append(addedLong)
+        try context.save()
+        let preview = PlanCoaching.resumePlacements(plan, from: date(2), calendar: calendar)
+        #expect(preview.map(\.session.id) == [easy.id])
+        #expect(PlanCoaching.resume(plan, from: date(2), in: context, calendar: calendar) == preview.count)
+        for move in preview { #expect(move.session.date == move.date) }
+        #expect(quality.date == date(7)); #expect(addedLong.date == date(3))
+        #expect(plan.pausedUntil == nil)
+        #expect(plan.coachingState?.pauseShiftedDates.isEmpty == true)
+    }
+
+    @Test func resumeDoesNotMoveSkippedCompletedOrIndependentlyMovedSessions() throws {
+        let skipped = session(0), completed = session(2), moved = session(4)
+        let (container, plan) = try fixture([skipped, completed, moved])
+        let context = container.mainContext
+        #expect(PlanCoaching.pause(plan, days: 7, from: today, in: context, calendar: calendar) == 3)
+        skipped.status = .missed; completed.status = .completed
+        moved.date = date(15)
+        try context.save()
+        #expect(PlanCoaching.resumePlacements(plan, from: date(2), calendar: calendar).isEmpty)
+        #expect(PlanCoaching.resume(plan, from: date(2), in: context, calendar: calendar) == 0)
+        #expect(skipped.date == date(7)); #expect(completed.date == date(9)); #expect(moved.date == date(15))
+    }
+
+    @Test func repeatedPausePreservesOriginalResumeProvenance() throws {
+        let run = session(0)
+        let (container, plan) = try fixture([run])
+        let context = container.mainContext
+        #expect(PlanCoaching.pause(plan, days: 7, from: today, in: context, calendar: calendar) == 1)
+        let provenance = plan.coachingState?.pauseShiftedDates
+        #expect(PlanCoaching.pause(plan, days: 3, from: date(1), in: context, calendar: calendar) == 0)
+        #expect(plan.coachingState?.pauseShiftedDates == provenance)
+        #expect(plan.pausedUntil == date(7)); #expect(run.date == date(7))
+    }
+
+    @Test(arguments: [0, -1, 29, Int.max])
+    func unsupportedPauseLengthsLeaveThePlanUnchanged(days: Int) throws {
+        let run = session(0)
+        let (container, plan) = try fixture([run])
+        #expect(PlanCoaching.pausePlacements(plan, days: days, from: today, calendar: calendar).isEmpty)
+        #expect(PlanCoaching.pause(plan, days: days, from: today, in: container.mainContext, calendar: calendar) == 0)
+        #expect(run.date == today); #expect(plan.pausedUntil == nil)
+        #expect(plan.coachingState == nil)
+    }
+
+    @Test(arguments: [3, 10])
+    func pauseAndResumeUseCalendarDaysAcrossDaylightSaving(month: Int) throws {
+        let start = calendar.date(from: DateComponents(year: 2026, month: month, day: month == 3 ? 7 : 31))!
+        let run = session(0)
+        run.date = calendar.date(byAdding: .hour, value: 12, to: start)!
+        let original = run.date
+        let (container, plan) = try fixture([run])
+        #expect(PlanCoaching.pause(plan, days: 2, from: start, in: container.mainContext, calendar: calendar) == 1)
+        #expect(calendar.component(.hour, from: run.date) == 12)
+        let back = calendar.date(byAdding: .day, value: 1, to: start)!
+        #expect(PlanCoaching.resume(plan, from: back, in: container.mainContext, calendar: calendar) == 1)
+        #expect(run.date == calendar.date(byAdding: .day, value: 1, to: original))
+        #expect(calendar.component(.hour, from: run.date) == 12)
     }
 }

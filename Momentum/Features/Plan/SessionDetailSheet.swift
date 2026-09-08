@@ -19,6 +19,7 @@ struct SessionDetailSheet: View {
     @State private var rescheduling = false
     @State private var adjusting = false
     @State private var confirmRemove = false
+    @State private var showingReplacement = false
     @State private var detent: PresentationDetent = .medium
 
     /// The structured-workout expansion, memoized per input change — `body` needed it in two
@@ -78,6 +79,13 @@ struct SessionDetailSheet: View {
         .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.background)
+        .sheet(isPresented: $showingReplacement) {
+            if let plan = profile?.plan {
+                WorkoutLibrarySheet(plan: plan, defaultDate: session.date, replacing: session) {
+                    showingReplacement = false
+                }
+            }
+        }
         // Arriving from "Move" opens on the day picker, and at `.large` — the wrapped strip is three
         // rows of days, so at the medium detent the thing the athlete came for starts below the fold.
         .onAppear {
@@ -89,6 +97,7 @@ struct SessionDetailSheet: View {
             Button("Remove", role: .destructive) { Haptics.medium(); onRemove(); dismiss() }
             Button("Cancel", role: .cancel) {}
         }
+        .trackScreen(.planSession)
     }
 
     // MARK: Header
@@ -125,7 +134,7 @@ struct SessionDetailSheet: View {
         let (text, icon): (String, String) = switch session.status {
         case .completed: ("Completed", "checkmark.circle.fill")
         case .moved: ("Moved", "arrow.turn.up.right")
-        case .missed: ("Rolled forward", "arrow.turn.up.right")
+        case .missed: ("Skipped", "arrow.right")
         case .planned: ("Planned", "circle")
         }
         return HStack(spacing: 6) {
@@ -260,8 +269,8 @@ struct SessionDetailSheet: View {
                 ForEach(next14, id: \.self) { day in
                     let on = Calendar.current.isDate(day, inSameDayAs: session.date)
                     Button {
+                        guard PlanMutation.edit(in: context, { PlanCoaching.reschedule(session, to: day, in: context) }) else { return }
                         Haptics.selection()
-                        PlanCoaching.reschedule(session, to: day, in: context)
                         withAnimation(.easeOut(duration: 0.2)) { rescheduling = false }
                     } label: {
                         VStack(spacing: 3) {
@@ -315,12 +324,12 @@ struct SessionDetailSheet: View {
     }
 
     private func adjustDistance(by deltaUnits: Double) {
-        Haptics.light()
-        let imperial = distanceUnit.resolved() == .imperial
-        let perUnit = imperial ? Formatters.metersPerMile : 1000
-        let current = session.targetDistanceM ?? 5000
-        session.targetDistanceM = max(perUnit * 0.5, current + deltaUnits * perUnit)
-        try? context.save()
+        let saved = PlanMutation.attempt(in: context, fallback: false) {
+            let perUnit = distanceUnit.resolved() == .imperial ? Formatters.metersPerMile : 1000
+            session.targetDistanceM = max(perUnit * 0.5, (session.targetDistanceM ?? 5000) + deltaUnits * perUnit)
+            return true
+        }
+        if saved { Haptics.light() }
     }
 
     private func stepButton(_ s: String, _ a: @escaping () -> Void) -> some View {
@@ -337,19 +346,28 @@ struct SessionDetailSheet: View {
             // Primary — do the workout now (when it isn't already done).
             if !done {
                 Button { Haptics.medium(); onStart(session); dismiss() } label: {
-                    Label("Start", systemImage: "play.fill")
+                    Label(PlanCoaching.canStartPlannedSession(session, profile: profile) ? "Start" : "Recovery check-in needed", systemImage: "play.fill")
                         .font(.rounded(Theme.FontSize.body, weight: .bold))
                         .frame(maxWidth: .infinity).frame(height: 52)
                         .foregroundStyle(Theme.background)
                         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous), tone: .ink)
                 }
                 .buttonStyle(.plain)
+                .disabled(!PlanCoaching.canStartPlannedSession(session, profile: profile))
+            }
+
+            if !done, session.completedWorkout == nil, session.discipline == .running,
+               session.runType != .race, profile?.plan != nil {
+                secondary("Replace workout", systemImage: "arrow.triangle.2.circlepath") {
+                    showingReplacement = true
+                }
             }
 
             // Check off / undo.
             Button {
-                Haptics.success()
-                withAnimation(Motion.standard) { PlanCoaching.setCompletion(session, done: !done, in: context) }
+                if PlanMutation.edit(in: context, { PlanCoaching.setCompletion(session, done: !done, in: context) }) {
+                    Haptics.success()
+                }
             } label: {
                 Label(done ? "Mark not done" : "Mark done", systemImage: done ? "arrow.uturn.left" : "checkmark")
                     .font(.rounded(Theme.FontSize.body, weight: .bold))

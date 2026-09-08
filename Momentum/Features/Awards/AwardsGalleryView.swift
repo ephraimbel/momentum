@@ -65,6 +65,7 @@ struct AwardsGalleryView: View {
                              distanceUnit: DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto)
                 .presentationDetents([.medium])
         }
+        .trackScreen(.awards)
     }
 
     // MARK: Chrome

@@ -253,7 +253,7 @@ enum LegacyPlanInvariantValidator {
                         record(.downWeekDidNotReduce, week: weekIndex,
                                "An eased week does not dip below the preceding loading week.")
                     }
-                } else if week.runVolumeM > 0 {
+                } else if week.runVolumeM > 0, raceSessions.isEmpty {
                     lastLoadingRunVolume = week.runVolumeM
                 }
             }
@@ -374,8 +374,32 @@ enum LegacyPlanInvariantValidator {
                                      startDate: Date,
                                      calendar: Calendar,
                                      record: (PlanValidationCode, Int?, Int?, String) -> Void) {
-        let races: [(week: Int, session: GeneratedSession)] = plan.weeks.flatMap { week in
+        let allRaces: [(week: Int, session: GeneratedSession)] = plan.weeks.flatMap { week in
             week.sessions.filter { $0.runType == .race }.map { (week.index, $0) }
+        }
+        let start = calendar.startOfDay(for: startDate)
+        let tuneUps = inputs.tuneUpRaces.filter { event in
+            let offset = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: event.date)).day ?? -1
+            return offset >= 0 && offset < plan.weeks.count * 7
+                && (inputs.raceDate.map { event.date < $0 } ?? true)
+        }
+        for event in tuneUps {
+            let offset = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: event.date)).day ?? -1
+            let matching = allRaces.filter { $0.week * 7 + $0.session.dayOffset == offset
+                && $0.session.intervals?.hasPrefix("Tune-up") == true }
+            if matching.count != 1 {
+                record(.raceMissing, offset / 7, offset % 7, "The scheduled tune-up must appear exactly once.")
+            }
+            for race in matching where abs((race.session.targetDistanceM ?? 0) - event.distanceM) > 1 {
+                record(.raceDistanceMismatch, race.week, race.session.dayOffset, "Tune-up distance differs from its event.")
+            }
+        }
+        let races = allRaces.filter { race in
+            guard race.session.intervals?.hasPrefix("Tune-up") == true else { return true }
+            return !tuneUps.contains { event in
+                let offset = calendar.dateComponents([.day], from: start, to: calendar.startOfDay(for: event.date)).day ?? -1
+                return offset == race.week * 7 + race.session.dayOffset
+            }
         }
         guard let raceDate = inputs.raceDate,
               let raceDistance = inputs.raceDistanceM,

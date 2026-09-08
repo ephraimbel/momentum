@@ -56,6 +56,17 @@ struct ProgressScreen: View {
     enum Segment: String, CaseIterable, Identifiable {
         case trends = "Trends", health = "Health", history = "History"
         var id: Self { self }
+
+        /// The funnel name for this segment. Progress is three genuinely different rooms behind one
+        /// tab, and they hold attention very differently — rolled together under `progress` the tab
+        /// looks healthy while one of the three is where people actually stop.
+        var screen: AppScreen {
+            switch self {
+            case .trends: .progressTrends
+            case .health: .progressHealth
+            case .history: .progressHistory
+            }
+        }
     }
 
     /// One-shot mailbox from `AppRouter` (raw-value string keeps the router file decoupled):
@@ -465,6 +476,8 @@ struct ProgressScreen: View {
             services.athleteModel.seedOnboarding(for: p, in: context)
             services.athleteModel.ingest(profile: p, in: context)
         }
+        // Track the selected room on entry AND on segment changes, with one presentation owner.
+        .trackScreen(segment.screen)
     }
 
     private var header: some View {

@@ -20,10 +20,14 @@ final class Services {
     let health: any HealthServing
     let ai: any AIServing
     let sync: any SyncServing
+    let planSync: PlanSyncService
     let paywall: any PaywallServing
     let notifications: any NotificationServing
     let athleteModel: any AthleteModelServing
     let analytics: any AnalyticsServing
+    /// Screen + session tracking. Concrete rather than protocol-typed: it is a thin recorder over
+    /// `analytics`, so a "stub" of it is just one built over `StubAnalyticsService`.
+    let screens: ScreenTracker
     let voiceCoach: any VoiceCoachServing
     let presence: any PresenceServing
     let social: any SocialBackending
@@ -38,19 +42,25 @@ final class Services {
         notifications: any NotificationServing,
         athleteModel: any AthleteModelServing,
         analytics: any AnalyticsServing = StubAnalyticsService(),
+        screens: ScreenTracker? = nil,
         voiceCoach: any VoiceCoachServing = StubVoiceCoachService(),
         presence: any PresenceServing = StubPresenceService(),
-        social: any SocialBackending = StubSocialBackend()
+        social: any SocialBackending = StubSocialBackend(),
+        planSync: PlanSyncService? = nil
     ) {
         self.location = location
         self.motion = motion
         self.health = health
         self.ai = ai
         self.sync = sync
+        self.planSync = planSync ?? PlanSyncService(enabled: false)
         self.paywall = paywall
         self.notifications = notifications
         self.athleteModel = athleteModel
         self.analytics = analytics
+        // Built from the SAME analytics instance when the caller doesn't supply one, so screen and
+        // session events share the sink (and therefore the batch) with everything else.
+        self.screens = screens ?? ScreenTracker(analytics: analytics)
         self.voiceCoach = voiceCoach
         self.presence = presence
         self.social = social
@@ -73,9 +83,11 @@ final class Services {
             notifications: NotificationService(),
             athleteModel: AthleteModelService(),
             analytics: analytics,
+            screens: ScreenTracker(analytics: analytics),
             voiceCoach: VoiceCoachService(),
             presence: LivePresenceService(),
-            social: SupabaseSocialBackend(paywall: paywall)
+            social: SupabaseSocialBackend(paywall: paywall),
+            planSync: PlanSyncService(enabled: Bundle.main.object(forInfoDictionaryKey: "PlanContinuityEnabled") as? Bool == true)
         )
     }
 }

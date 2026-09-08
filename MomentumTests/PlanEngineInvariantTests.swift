@@ -318,3 +318,16 @@ struct PlanEngineInvariantTests {
         #expect(a == b)
     }
 }
+
+extension PlanEngineInvariantTests {
+    @Test func persistenceRejectsInvalidNumbersBeforeReplacingAPlan() throws {
+        let session = GeneratedSession(dayOffset: 1, discipline: .running, runType: .easy, targetDistanceM: 5000)
+        var plan = GeneratedPlan(p5kSPerKm: 330, weeks: [.init(index: 0, isDeload: false, isTaper: false, sessions: [session])])
+        try PlanPrescriptionValidation.validate(plan)
+        plan.weeks[0].sessions[0].targetPaceSPerKm = .nan
+        #expect(throws: PlanPrescriptionValidation.Failure.self) { try PlanPrescriptionValidation.validate(plan) }
+        plan.weeks[0].sessions[0].targetPaceSPerKm = 360
+        plan.weeks[0].sessions[0].dayOffset = 7
+        #expect(throws: PlanPrescriptionValidation.Failure.self) { try PlanPrescriptionValidation.validate(plan) }
+    }
+}

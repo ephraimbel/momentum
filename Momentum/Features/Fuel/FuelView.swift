@@ -516,6 +516,7 @@ struct FuelView: View {
             }
             #endif
         }
+        .trackScreen(.fuel)
     }
 
     // MARK: Readout (SwiftData → engine inputs via the shared builder; the engine stays pure)
@@ -1159,6 +1160,10 @@ struct FuelView: View {
                         Task { @MainActor in await addPhoto { MealPhoto.prepare(image: image) } }
                     }
                     .ignoresSafeArea()
+                    // Tracked at the presentation site because the camera itself is UIKit's, not
+                    // ours. It answers the question the estimator's cost makes worth asking: how
+                    // many athletes open the camera and never finish a meal.
+                    .trackScreen(.mealPhoto)
                 }
             Color.clear
                 .alert(cameraAlertTitle, isPresented: cameraAlertShown) {

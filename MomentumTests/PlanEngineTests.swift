@@ -1216,3 +1216,81 @@ struct RealLibraryPrescriptionTests {
         #expect(squat.prescriptionText == "4 × 8–12")
     }
 }
+
+extension PlanEngineTests {
+    @Test func partialPreferredDaysRemainPartOfTheWeek() {
+        let runs = (0..<4).map { _ in GeneratedSession(dayOffset: -1, discipline: .running, runType: .easy, targetDistanceM: 5000) }
+        let scheduled = PlanEngine.schedule(runs: runs, lifts: [], preferredDayOffsets: [1, 5])
+        let days = Set(scheduled.map(\.dayOffset))
+        #expect(days.count == 4)
+        #expect(days.contains(1) && days.contains(5))
+    }
+}
+
+struct PlanAvailabilityBudgetTests {
+    @Test func lowerWeeklyCeilingAndCompleteWorkoutsFitAcrossRunnerLevels() throws {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        for experience in [ExperienceLevel.new, .some, .experienced] {
+            for unit in [DistanceUnit.metric, .imperial] {
+                var input = PlanInputs(disciplines: [.running], goal: .raceDistance, daysPerWeek: 4,
+                    equipment: .bodyweight, sessionMinutes: 45,
+                    raceDate: Calendar.current.date(byAdding: .day, value: 112, to: start),
+                    runningExperience: experience, liftingExperience: .new)
+                input.raceDistanceM = 21097.5
+                input.currentWeeklyVolumeM = 40000
+                input.longestRunM = 15000
+                input.targetWeeklyVolumeM = 24000
+                input.distanceUnit = unit
+                input.regularRunLimitS = 1800; input.longRunLimitS = 3600
+                let plan = PlanEngine.generate(profile: input, catalog: [], startDate: start)
+                let validation = LegacyPlanInvariantValidator.validate(plan, inputs: input, calibration: .none, startDate: start)
+                #expect(validation.isValid, "\(validation.hardViolations)")
+                for week in plan.weeks {
+                    let training = week.sessions.filter { $0.runType != .race }
+                    #expect(training.reduce(0) { $0 + ($1.targetDistanceM ?? 0) } <= 24000.01)
+                    for run in training {
+                        let limit = run.runType == .long ? 3600.0 : 1800.0
+                        let seconds: Double
+                        if let guided = StructuredWorkoutBuilder.build(from: run, p5kSPerKm: plan.p5kSPerKm,
+                                                                       raceDistanceM: input.raceDistanceM) {
+                            seconds = RunPrescriptionBudget.duration(guided, easyPace: PlanEngine.pace(.easy, p5k: plan.p5kSPerKm))
+                            #expect(RunPrescriptionBudget.distance(guided, easyPace: PlanEngine.pace(.easy, p5k: plan.p5kSPerKm)) <= (run.targetDistanceM ?? .infinity) + 0.1)
+                        } else { seconds = (run.targetDistanceM ?? 0) / 1000 * (run.targetPaceSPerKm ?? 0) }
+                        #expect(seconds <= limit + 0.1, "\(run.runType?.rawValue ?? "run") exceeds its time limit")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func shortenedIntervalsKeepWholeRepsAndRecoveryWithinTheTotalBudget() throws {
+        let original = StructuredWorkoutBuilder.intervals(reps: 8, repTarget: .distance(400),
+            repPace: 280, easyPace: 400, recoveryPace: 430, unitLabel: "400m")
+        let fitted = RunPrescriptionBudget.fit(original, distanceM: 5000, durationS: 1800, easyPace: 400)
+        #expect(RunPrescriptionBudget.duration(fitted, easyPace: 400) <= 1800.01)
+        #expect(RunPrescriptionBudget.distance(fitted, easyPace: 400) <= 5000.01)
+        let reps = fitted.steps.filter { $0.repIndex != nil && $0.kind == .work }
+        #expect(!reps.isEmpty && reps.count < 8)
+        for rep in reps { #expect(rep.target == .distance(400)); #expect(rep.repTotal == reps.count) }
+        #expect(fitted.steps.first?.kind == .warmup && fitted.steps.last?.kind == .cooldown)
+    }
+
+    @Test func undersizedCheckpointCannotStillAdvertiseAFullTimeTrial() {
+        let source = GeneratedSession(dayOffset: 0, discipline: .running, runType: .tempo,
+            targetDistanceM: 2000, targetPaceSPerKm: 300, intervals: "Time trial: 5K at race effort", isHardRun: true)
+        let result = RunPrescriptionBudget.constrain(source, p5k: 300, raceDistanceM: 5000, goalPace: nil, limitS: 1200)
+        #expect(result.runType == .easy && result.intervals == nil && !result.isHardRun)
+    }
+}
+
+struct PlanAvailabilityOutlookTests {
+    @Test func aShortLongRunLimitCannotPromiseComfortableMarathonPreparation() {
+        let result = PlanFeasibility.assess(raceDistanceM: 42195, goalFinishTimeS: 14400,
+            currentP5kSPerKm: 300, currentWeeklyVolumeM: 60000, weeksAvailable: 40,
+            experience: .experienced, daysPerWeek: 5, regularRunLimitS: 1800, longRunLimitS: 3600)
+        #expect(result.verdict != .onTrack)
+        #expect(result.realisticFinishS == nil)
+        #expect(result.detail.contains("time limits"))
+        #expect(result.recommended != .aggressive)
+    }
+}

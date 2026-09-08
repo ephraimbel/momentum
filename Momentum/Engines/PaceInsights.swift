@@ -31,7 +31,7 @@ enum PaceInsights {
 
     /// Classify recent quality runs. Needs ≥ 2 valid runs to say anything; otherwise "monitoring".
     static func evaluate(_ runs: [QualityRun]) -> Result {
-        let valid = runs.filter { $0.targetPaceSPerKm > 0 && $0.achievedPaceSPerKm > 0 }
+        let valid = runs.filter { $0.targetPaceSPerKm.isFinite && $0.achievedPaceSPerKm.isFinite && $0.targetPaceSPerKm > 0 && $0.achievedPaceSPerKm > 0 }
         guard valid.count >= 2 else {
             return Result(verdict: .monitoring, headline: "Gathering pace data",
                           detail: "Log a couple of quality sessions and I'll read how your pacing's landing.")
@@ -69,10 +69,17 @@ enum PaceInsights {
             guard let target = s.targetPaceSPerKm, target > 0,
                   let w = s.completedWorkout, let gps = w.gps,
                   gps.distanceM > 0, w.durationS > 0 else { continue }
-            let achieved = w.durationS / (gps.distanceM / 1000.0)
-            collected.append((w.startedAt, QualityRun(targetPaceSPerKm: target, achievedPaceSPerKm: achieved)))
+            // Structured reps carry their own targets. Whole-run pace includes warmups and
+            // recovery, so it cannot establish that interval targets were too hard.
+            if let review = SessionPaceReview.analyze(gps.structuredReps) {
+                collected.append((w.startedAt, QualityRun(targetPaceSPerKm: target,
+                                                         achievedPaceSPerKm: target + review.meanDeltaSPerKm)))
+            } else if rt == .race {
+                let achieved = w.durationS / (gps.distanceM / 1000.0)
+                collected.append((w.startedAt, QualityRun(targetPaceSPerKm: target, achievedPaceSPerKm: achieved)))
+            }
         }
         collected.sort { $0.date > $1.date }
-        return collected.prefix(limit).map(\.run)
+        return collected.prefix(max(0, limit)).map(\.run)
     }
 }

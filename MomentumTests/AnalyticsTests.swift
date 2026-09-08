@@ -24,6 +24,11 @@ struct AnalyticsEventTests {
         #expect(AnalyticsEvent.prHit(type: "strength").name == "pr_hit")
         #expect(AnalyticsEvent.planSessionAdapted.name == "plan_session_adapted")
         #expect(AnalyticsEvent.shareCreated(style: "Story").name == "share_created")
+        #expect(AnalyticsEvent.screenViewed(screen: "today", session: "a1b2c3d4", sequence: 1).name
+                == "screen_view")
+        #expect(AnalyticsEvent.sessionEnded(lastScreen: "plan", views: 4, durationS: 90,
+                                            reason: "background", session: "a1b2c3d4").name
+                == "session_end")
     }
 
     @Test func parametersCarryOnlyNonPIIDimensions() {
@@ -46,6 +51,15 @@ struct AnalyticsEventTests {
                 == ["placement": "full_plan", "pricing_live": "false"])
         #expect(AnalyticsEvent.onboardingPermission(kind: "notifications", status: "skipped").parameters
                 == ["kind": "notifications", "status": "skipped"])
+        // The drop-off pair. These key names are the column expressions in
+        // `20260907000001_screen_dropoff.sql` (`params->>'screen'`, `params->>'last_screen'`,
+        // `params->>'seq'`, `params->>'duration_s'`); renaming one here silently empties a view.
+        #expect(AnalyticsEvent.screenViewed(screen: "plan_session", session: "a1b2c3d4", sequence: 7).parameters
+                == ["screen": "plan_session", "session": "a1b2c3d4", "seq": "7"])
+        #expect(AnalyticsEvent.sessionEnded(lastScreen: "fuel", views: 3, durationS: 45,
+                                            reason: "abandoned", session: "a1b2c3d4").parameters
+                == ["last_screen": "fuel", "views": "3", "duration_s": "45",
+                    "reason": "abandoned", "session": "a1b2c3d4"])
     }
 }
 

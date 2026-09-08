@@ -435,8 +435,13 @@ enum WorkoutLibrary {
         case let .distanceReps(repM, note):
             let n = reps(entry.dial)
             let grammar = "\(n)×\(StructuredWorkoutBuilder.repDistanceLabel(repM)) \(note)"
+            let repPace = PlanEngine.sessionPace(.intervals, p5k: p5k, intervals: grammar)
+            let guided = StructuredWorkoutBuilder.intervals(reps: n, repTarget: .distance(repM), repPace: repPace,
+                easyPace: easy, recoveryPace: PlanEngine.pace(.recovery, p5k: p5k),
+                unitLabel: StructuredWorkoutBuilder.repDistanceLabel(repM),
+                recoveryOverrideS: grammar.lowercased().contains("threshold") ? 60 : nil)
             return Prescription(name: entry.name, runType: .intervals, intervals: grammar,
-                                targetDistanceM: 2000 + Double(n) * repM, targetDurationS: nil,
+                                targetDistanceM: RunPrescriptionBudget.distance(guided, easyPace: easy), targetDurationS: nil,
                                 targetPaceSPerKm: PlanEngine.sessionPace(.intervals, p5k: p5k, intervals: grammar),
                                 rationale: entry.rationale)
 
@@ -454,8 +459,12 @@ enum WorkoutLibrary {
         case let .cruiseReps(repM):
             let n = reps(entry.dial)
             let grammar = "\(n)×\(StructuredWorkoutBuilder.repDistanceLabel(repM)) @ threshold"
+            let repPace = PlanEngine.sessionPace(.intervals, p5k: p5k, intervals: grammar)
+            let guided = StructuredWorkoutBuilder.intervals(reps: n, repTarget: .distance(repM), repPace: repPace,
+                easyPace: easy, recoveryPace: PlanEngine.pace(.recovery, p5k: p5k),
+                unitLabel: StructuredWorkoutBuilder.repDistanceLabel(repM), recoveryOverrideS: 60)
             return Prescription(name: entry.name, runType: .intervals, intervals: grammar,
-                                targetDistanceM: 2000 + Double(n) * repM, targetDurationS: nil,
+                                targetDistanceM: RunPrescriptionBudget.distance(guided, easyPace: easy), targetDurationS: nil,
                                 targetPaceSPerKm: PlanEngine.sessionPace(.intervals, p5k: p5k, intervals: grammar),
                                 rationale: entry.rationale)
 
@@ -527,6 +536,26 @@ enum WorkoutLibrary {
 }
 
 extension WorkoutLibrary.Prescription {
+    func fitting(plan: TrainingPlan, profile: UserProfile?, unit: DistanceUnit) -> Self {
+        let preferences = profile?.planPreferences
+        let limit = runType == .long ? preferences?.longRunLimitS : preferences?.regularRunLimitS
+        let input = GeneratedSession(dayOffset: 0, discipline: .running, runType: runType,
+            targetDistanceM: targetDistanceM, targetDurationS: targetDurationS,
+            targetPaceSPerKm: targetPaceSPerKm, intervals: intervals, rationale: rationale)
+        let fitted = RunPrescriptionBudget.constrain(input, p5k: plan.p5kSPerKm,
+            raceDistanceM: profile?.raceDistanceM, goalPace: plan.goalRacePaceSPerKm, limitS: limit, unit: unit)
+        var result = self
+        result.runType = fitted.runType ?? runType; result.intervals = fitted.intervals
+        result.targetDistanceM = fitted.targetDistanceM; result.targetDurationS = fitted.targetDurationS
+        result.targetPaceSPerKm = fitted.targetPaceSPerKm ?? targetPaceSPerKm
+        result.rationale = fitted.rationale ?? rationale
+        if fitted.intervals != intervals || fitted.runType != runType {
+            result.name = fitted.runType == .easy ? "Easy run" : name
+            result.rationale = "Adjusted to fit your complete workout budget. " + result.rationale
+        }
+        return result
+    }
+
     /// A `PlannedSession` carrying this prescription — the exact field shapes the plan generator
     /// writes, so preview, live guidance, adaptation, and scoring all read it identically. Not
     /// inserted anywhere; the caller owns persistence (or discards it — previews do).

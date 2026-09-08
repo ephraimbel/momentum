@@ -143,7 +143,9 @@ struct PlanFeasibility: Sendable {
                        daysPerWeek: Int? = nil,
                        intensity: PlanIntensity = .balanced,
                        currentRaceTimeS: Double? = nil,
-                       targetWeeklyVolumeM: Double? = nil) -> PlanFeasibility {
+                       targetWeeklyVolumeM: Double? = nil,
+                       regularRunLimitS: Double? = nil,
+                       longRunLimitS: Double? = nil) -> PlanFeasibility {
 
         guard let distanceM = raceDistanceM, distanceM > 0 else {
             return PlanFeasibility(verdict: .noRace, weeksAvailable: weeksAvailable, weeksNeeded: 0,
@@ -251,6 +253,35 @@ struct PlanFeasibility: Sendable {
                                      recommended: recommended, headline: headline, detail: detail,
                                      options: options, realisticFinishS: shown.realisticFinishS)
         result.weeklyCapShortfallM = capShortfall
+        // Availability is separate from calendar runway. Compare with the same race-specific
+        // long-run ceiling and peak-volume policy the generator uses, at current fitness.
+        let p5k = currentP5kSPerKm ?? PlanEngine.levelP5k(experience)
+        if p5k.isFinite, p5k > 0 {
+            let longPace = PlanEngine.pace(.long, p5k: p5k)
+            let peakM = peakWeeklyVolumeM(distanceM: distanceM, experience: experience, intensity: intensity,
+                                          goalFinishTimeS: goalFinishTimeS, currentWeeklyM: currentWeeklyVolumeM)
+            let wantedLongS = min(intensity == .podium ? 12600 : 10800,
+                                  PlanEngine.longRunPeak(forRaceM: distanceM, podium: intensity == .podium,
+                                                        weekVolumeM: peakM) / 1000 * longPace)
+            let longLimited = longRunLimitS.map { $0.isFinite && $0 > 0 && $0 + 1 < wantedLongS } ?? false
+            let weeklyLimited: Bool = {
+                guard let regular = regularRunLimitS, let long = longRunLimitS, let days = daysPerWeek,
+                      days > 0, regular > 0, long > 0 else { return false }
+                let budgetS = regular * Double(max(0, days - 1)) + long
+                return budgetS < peakM / 1000 * PlanEngine.pace(.easy, p5k: p5k)
+            }()
+            if longLimited || weeklyLimited {
+                var limited = PlanFeasibility(verdict: verdict == .onTrack ? .tight : verdict,
+                    weeksAvailable: weeksAvailable, weeksNeeded: shown.weeksNeeded,
+                    recommended: recommended == .aggressive ? .balanced : recommended,
+                    headline: verdict == .onTrack ? "Your time limits constrain this goal" : headline,
+                    detail: detail + " At your current paces, your time limits restrict the usual preparation for this distance. More weeks alone may not close that gap.",
+                    options: options + ["Review your time limits, or choose a shorter race or a completion-focused goal."],
+                    realisticFinishS: nil)
+                limited.weeklyCapShortfallM = capShortfall
+                return limited
+            }
+        }
         return result
     }
 

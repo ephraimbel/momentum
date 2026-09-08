@@ -23,6 +23,14 @@ struct AnalyticsSinkTests {
         #expect(await sink.queuedCount == 2)
     }
 
+    @Test func temporaryHTTPFailuresKeepTheBatchForRetry() {
+        for status in [401, 403, 408, 425, 429, 500, 503] {
+            #expect(!AnalyticsSink.shouldRemoveBatch(status: status))
+        }
+        #expect(AnalyticsSink.shouldRemoveBatch(status: 201))
+        #expect(AnalyticsSink.shouldRemoveBatch(status: 400))
+    }
+
     /// A termination between flushes must not cost events: a new sink over the same defaults
     /// resumes the queue. This is the whole reason the buffer is persisted rather than in-memory.
     @Test func queueSurvivesRelaunch() async {

@@ -21,6 +21,9 @@ struct OnboardingDraftTests {
         vm.daysPerWeek = 5
         vm.equipment = .dumbbellsOnly
         vm.sessionMinutes = 60
+        vm.limitRegularRunTime = true
+        vm.longRunLimitMinutes = 90
+        vm.benchmarkPerformedAt = Date(timeIntervalSince1970: 1_700_000_000)
         vm.hasRace = true
         vm.raceDate = Date(timeIntervalSinceReferenceDate: 1_000_000)
         vm.reason = "performance"
@@ -62,6 +65,9 @@ struct OnboardingDraftTests {
         #expect(restored.daysPerWeek == 5)
         #expect(restored.equipment == .dumbbellsOnly)
         #expect(restored.sessionMinutes == 60)
+        #expect(restored.limitRegularRunTime)
+        #expect(restored.longRunLimitMinutes == 90)
+        #expect(restored.benchmarkPerformedAt == original.benchmarkPerformedAt)
         #expect(restored.hasRace == true)
         #expect(restored.raceDate == Date(timeIntervalSinceReferenceDate: 1_000_000))
         #expect(restored.reason == "performance")
@@ -159,11 +165,15 @@ struct OnboardingDraftTests {
         }
     }
 
-    @Test func outputBeatsCannotResumeWithoutAProfile() {
-        for step in [OnboardingViewModel.Step.building, .reveal, .account] {
+    @Test func outputBeatsRestoreAnswersAndRebuildWithoutAProfile() {
+        for step in [OnboardingViewModel.Step.building, .reveal, .review, .account] {
             var draft = fullyAnswered().draft()
             draft.savedStep = String(describing: step)
-            #expect(OnboardingViewModel().restore(from: draft) == false)
+            let restored = OnboardingViewModel()
+            #expect(restored.restore(from: draft))
+            #expect(restored.step == .building)
+            #expect(restored.name == "Maya Rivera")
+            #expect(restored.weeklyRunVolumeM == 45_000)
         }
     }
 
@@ -219,4 +229,22 @@ struct OnboardingDraftTests {
         #expect(restored.intensity == .podium)
     }
 
+}
+
+extension OnboardingDraftTests {
+    @Test func resumingNeverOverwritesChosenTrainingDays() {
+        let vm = fullyAnswered()
+        vm.daysPerWeek = 3
+        vm.daysPerWeekChosen = true
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: vm.draft()))
+        restored.applyRecommendedDaysIfUntouched()
+        #expect(restored.daysPerWeek == 3)
+        var legacy = vm.draft()
+        legacy.daysPerWeekChosen = nil
+        let migrated = OnboardingViewModel()
+        #expect(migrated.restore(from: legacy))
+        migrated.applyRecommendedDaysIfUntouched()
+        #expect(migrated.daysPerWeek == 3)
+    }
 }

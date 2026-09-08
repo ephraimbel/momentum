@@ -71,7 +71,10 @@ final class AppNotification {
                                   dedupeToken: dedupeToken, targetPostID: targetPostID,
                                   targetHandle: targetHandle)
         context.insert(row)
-        if let route { NotificationRouteStore.set(route, for: row.id) }
-        try? context.save()
+        if let route {
+            let id = row.id
+            PlanMutation.afterCommit(in: context) { NotificationRouteStore.set(route, for: id) }
+        }
+        try? PlanMutation.save(context)
     }
 }

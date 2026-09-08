@@ -211,7 +211,7 @@ struct PlanBuilderFlow: View {
             .alert("That didn’t work", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
                 Button("OK", role: .cancel) { failure = nil }
             } message: { Text(failure ?? "Please try again.") }
-            .task { await loadEvidence() }
+            .task(id: blueprint.fitnessDeclaredAt) { await loadEvidence() }
             .onAppear {
                 #if DEBUG
                 // --plan-builder-preview: a 10K in ten weeks, straight to the preview step.
@@ -248,6 +248,7 @@ struct PlanBuilderFlow: View {
                  ? "Nothing has been written yet. A draft keeps everything you chose."
                  : "The plan keeps its last saved version unless you save these changes.")
         }
+        .trackScreen(.planBuilder)
     }
 
     private var stepStrip: some View {
@@ -618,7 +619,7 @@ struct PlanBuilderFlow: View {
         guard blueprint.isRace, blueprint.raceDate != nil else { return nil }
         var read = blueprint
         read.weeklyRunVolumeM = evidence?.weeklyM ?? blueprint.weeklyRunVolumeM
-        return PlanLifecycleService.feasibility(for: read, profile: profile)
+        return PlanLifecycleService.feasibility(for: read, profile: profile, today: previewStart)
     }
 
     private func feasibilityCard(_ f: PlanFeasibility) -> some View {
@@ -676,20 +677,30 @@ struct PlanBuilderFlow: View {
                         }
                         .padding(Theme.Space.md)
                         .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                        Text("From your recent Momentum runs. The plan starts from these, with what you set below as a guardrail.")
+                        Text("From your recent Momentum runs. Update the answers below if your current running has changed.")
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
-                        Text("No recent runs logged in Momentum, so the plan starts from what you tell us and recalibrates from the runs you log.")
+                        Text("Tell us what you averaged over the last four weeks. These answers set your starting point; future logged runs refine it. Choose Not sure if you do not know.")
                             .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Text("RUNNING PER WEEK").font(.rounded(10, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
                         .padding(.top, Theme.Space.xs)
-                    distanceChoices(weeklyChoices, current: blueprint.weeklyRunVolumeM) { blueprint.weeklyRunVolumeM = $0 }
+                    distanceChoices(weeklyChoices, current: blueprint.weeklyRunVolumeM) {
+                        blueprint.weeklyRunVolumeM = $0
+                        if $0 == 0 { blueprint.longestRunM = 0 }
+                        blueprint.fitnessDeclaredAt = Date()
+                    }.accessibilityIdentifier("builder-weekly-running")
                     Text("LONGEST RECENT RUN").font(.rounded(10, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
                         .padding(.top, Theme.Space.xs)
-                    distanceChoices(longestChoices, current: blueprint.longestRunM) { blueprint.longestRunM = $0 }
+                    distanceChoices(longestChoices, current: blueprint.longestRunM) {
+                        blueprint.longestRunM = $0
+                        if let value = $0, value > 0, blueprint.weeklyRunVolumeM == 0 {
+                            blueprint.weeklyRunVolumeM = nil
+                        }
+                        blueprint.fitnessDeclaredAt = Date()
+                    }.accessibilityIdentifier("builder-longest-running")
                 }
             }
         }
@@ -705,7 +716,7 @@ struct PlanBuilderFlow: View {
     private var unitLabel: String { distanceUnit == .metric ? "km" : "mi" }
 
     private var weeklyChoices: [Double] {
-        var values: [Double] = [0, 10, 20, 30, 40, 50, 60, 80].map { $0 * metersPerUnit }
+        var values: [Double] = [0, 1, 3, 5, 8, 10, 20, 30, 40, 50, 60, 80].map { $0 * metersPerUnit }
         if let current = blueprint.weeklyRunVolumeM, !values.contains(where: { abs($0 - current) < 1 }) {
             values.append(current); values.sort()
         }
@@ -713,7 +724,7 @@ struct PlanBuilderFlow: View {
     }
 
     private var longestChoices: [Double] {
-        var values: [Double] = [0, 3, 5, 8, 10, 13, 16, 20, 25, 30].map { $0 * metersPerUnit }
+        var values: [Double] = [0, 1, 2, 3, 5, 8, 10, 13, 16, 20, 25, 30].map { $0 * metersPerUnit }
         if let current = blueprint.longestRunM, !values.contains(where: { abs($0 - current) < 1 }) {
             values.append(current); values.sort()
         }
@@ -722,9 +733,18 @@ struct PlanBuilderFlow: View {
 
     private func distanceChoices(_ values: [Double], current: Double?, set: @escaping (Double?) -> Void) -> some View {
         FlowLayout(spacing: Theme.Space.sm) {
+            Button { Haptics.selection(); set(nil) } label: {
+                Text("Not sure")
+                    .font(.rounded(Theme.FontSize.caption, weight: .bold))
+                    .foregroundStyle(current == nil ? Theme.background : Theme.ink)
+                    .padding(.horizontal, 14).frame(minHeight: 44)
+                    .background {
+                        if current == nil { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
+                    }
+            }.buttonStyle(.plain).accessibilityAddTraits(current == nil ? .isSelected : [])
             ForEach(values, id: \.self) { v in
-                let on = current.map { abs($0 - v) < 1 } ?? (v == 0)
-                Button { Haptics.selection(); set(v == 0 ? nil : v) } label: {
+                let on = current.map { abs($0 - v) < 1 } ?? false
+                Button { Haptics.selection(); set(v) } label: {
                     Text(v == 0 ? "Not running" : "\(Int((v / metersPerUnit).rounded())) \(unitLabel)")
                         .font(.rounded(Theme.FontSize.caption, weight: .bold)).monospacedDigit()
                         .foregroundStyle(on ? Theme.background : Theme.ink)
@@ -753,11 +773,17 @@ struct PlanBuilderFlow: View {
 
     private func loadEvidence() async {
         let worker = PlanFitnessWorker(modelContainer: context.container)
-        guard let snapshot = try? await worker.snapshot(declaredWeeklyM: profile.weeklyRunVolumeM,
-                                                        declaredLongestM: profile.longestRunM,
-                                                        profileCreatedAt: profile.createdAt),
+        guard let snapshot = try? await worker.snapshot(declaredWeeklyM: blueprint.fitnessDeclaredAt != nil ? blueprint.weeklyRunVolumeM : (blueprint.weeklyRunVolumeM ?? profile.weeklyRunVolumeM),
+                                                        declaredLongestM: blueprint.fitnessDeclaredAt != nil ? blueprint.longestRunM : (blueprint.longestRunM ?? profile.longestRunM),
+                                                        profileCreatedAt: profile.createdAt,
+                                                        trainingEvidenceFrom: profile.continuity?.trainingEvidenceFrom,
+                                                        declaredAt: blueprint.fitnessDeclaredAt ?? profile.fitnessDeclaredAt),
               !Task.isCancelled else { return }
         evidence = snapshot
+        if draft == nil, blueprint.fitnessDeclaredAt == profile.fitnessDeclaredAt {
+            blueprint.weeklyRunVolumeM = snapshot.weeklyM
+            blueprint.longestRunM = snapshot.longestM
+        }
     }
 
     // MARK: - Step 4: week
@@ -914,15 +940,20 @@ struct PlanBuilderFlow: View {
 
     private var ceilingChoices: some View {
         let weekly = Int((((evidence?.weeklyM ?? blueprint.weeklyRunVolumeM) ?? 0) / metersPerUnit / 5).rounded()) * 5
-        var values = [0] + [10, 20, 30, 40].map { weekly + $0 }
+        var values = [0] + stride(from: 5, through: max(40, weekly + 40), by: 5).map { $0 }
         if let t = blueprint.targetWeeklyRunVolumeM {
             let v = Int((t / metersPerUnit).rounded())
             if !values.contains(v) { values.append(v); values.sort() }
         }
         let current = blueprint.targetWeeklyRunVolumeM.map { Int(($0 / metersPerUnit).rounded()) } ?? 0
-        return segmented(values, current: current, label: { $0 == 0 ? "Coach" : "\($0) \(unitLabel)" },
-                         spoken: { $0 == 0 ? "The coach decides" : "\($0) \(unitLabel) a week" }) { v in
-            blueprint.targetWeeklyRunVolumeM = v == 0 ? nil : Double(v) * metersPerUnit
+        return VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Picker("Weekly running ceiling", selection: Binding(get: { current }, set: { v in
+                blueprint.targetWeeklyRunVolumeM = v == 0 ? nil : Double(v) * metersPerUnit
+            })) {
+                ForEach(values, id: \.self) { v in
+                    Text(v == 0 ? "Let the coach choose" : "\(v) \(unitLabel) a week").tag(v)
+                }
+            }.pickerStyle(.menu).accessibilityIdentifier("builder-weekly-ceiling")
         }
     }
 
@@ -985,6 +1016,15 @@ struct PlanBuilderFlow: View {
                 PlanPreviewContent(blueprint: blueprint, preview: preview, distanceUnit: distanceUnit)
                     .opacity(previewing ? 0.6 : 1)
                     .animation(Motion.crossfade, value: previewing)
+            }
+            if IllnessResponse.state(for: profile) != nil {
+                Text("Your recovery check-in still controls when and how you return. This is the underlying training block; starting it does not clear illness restrictions or make missed training due.")
+                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .accessibilityIdentifier("builder-recovery-context")
+            } else if profile.activeInjuryArea != nil {
+                Text("Your current injury guidance stays active. Starting this plan keeps the affected sessions protected until you complete your return check-in.")
+                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                    .accessibilityIdentifier("builder-recovery-context")
             }
             Text("Nothing changes until you start it. A draft never starts on its own; a scheduled plan starts on its day.")
                 .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)

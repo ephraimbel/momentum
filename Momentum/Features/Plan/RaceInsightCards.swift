@@ -11,15 +11,17 @@ struct RacePredictionCard: View {
     let p5kSPerKm: Double
     var distanceUnit: DistanceUnit = .auto
     var now: Date = Date()
+    var exponent: Double = RacePredictor.riegelExponent
+    var evidenceNote: String = "Provisional estimate from your starting profile. Logged efforts help refine it."
 
     var body: some View {
-        if let finish = RacePredictor.finishTimeS(raceDistanceM: raceDistanceM, p5kSPerKm: p5kSPerKm) {
-            let pace = RacePredictor.projectedPaceSPerKm(raceDistanceM: raceDistanceM, p5kSPerKm: p5kSPerKm)
+        if let finish = RacePredictor.finishTimeS(raceDistanceM: raceDistanceM, p5kSPerKm: p5kSPerKm, exponent: exponent) {
+            let pace: Double? = finish / (raceDistanceM / 1000)
             let days = RacePredictor.daysUntil(raceDate: raceDate, from: now)
             let label = RacePredictor.label(forRaceM: raceDistanceM)
             VStack(alignment: .leading, spacing: Theme.Space.sm) {
                 HStack {
-                    Text("RACE PROJECTION").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
+                    Text("CURRENT FITNESS ESTIMATE").font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4)
                         .foregroundStyle(Theme.inkTertiary)
                     Spacer()
                     Text(label).font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.inkSecondary)
@@ -34,6 +36,9 @@ struct RacePredictionCard: View {
                     }
                     Spacer()
                 }
+                Text(evidenceNote + " It can move either way as your fitness changes.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
                 HStack(spacing: Theme.Space.sm) {
                     if let days {
                         // The shared countdown grammar (days inside two weeks, weeks beyond) — this
