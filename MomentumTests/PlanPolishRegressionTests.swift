@@ -75,12 +75,18 @@ struct PlanPolishRegressionTests {
         let plan = try #require(profile.plan)
         let raceDay = cal.startOfDay(for: try #require(plan.raceDate))
         // Put an open, ordinary session two days before the race, then pause a week.
-        let session = try #require(plan.sessions.first { $0.status != .completed && $0.runType != .race && $0.discipline != .strength })
+        // Non-completed also includes missed/skipped sessions, which a pause intentionally
+        // leaves untouched. Select the open ordinary session this regression promises to test.
+        let session = try #require(plan.sessions.first {
+            ($0.status == .planned || $0.status == .moved) && $0.completedWorkout == nil
+                && $0.runType != nil && !PlanCoaching.isFixedDate($0) && $0.discipline != .strength
+        })
         session.date = cal.date(byAdding: .day, value: -2, to: raceDay)!
         try ctx.save()
         // The proposal says so before the pause is applied (a paused plan cannot be paused again).
         let p = PlanAdjustmentService.proposal(.pausePlan(days: 7), title: "Pause", request: "away",
                                                profile: profile, workouts: [], today: today, in: ctx)
+        #expect(p.isAvailable)
         #expect(p.lines.contains { $0.contains("no room to move") })
         PlanCoaching.pause(plan, days: 7, from: today, in: ctx)
         #expect(cal.startOfDay(for: session.date) == cal.date(byAdding: .day, value: -2, to: raceDay)!,

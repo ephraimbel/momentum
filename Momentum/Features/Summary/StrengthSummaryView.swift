@@ -26,7 +26,7 @@ struct StrengthSummaryContent: View {
     @State private var expandedExercises: Set<Int> = []
     /// The session's seven-day window for the closing week card — fetched here (on the
     /// always-present task) and handed down; see `CardioSummaryContent.weekWorkouts`.
-    @State private var weekWorkouts: [Workout] = []
+    @State private var weekWorkouts: [WorkoutWeekSnapshot.Entry] = []
     /// The plan connection at the payoff moment — same slot as the run summary's line.
     @State private var planLine: String?
 
@@ -68,9 +68,8 @@ struct StrengthSummaryContent: View {
                     }
                     planLine = "\(dayPrefix(s.date)) \(kind): checked off your plan."
                 }
-                if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
-                    weekWorkouts = (try? context.fetch(desc)) ?? []
-                }
+                weekWorkouts = (try? WorkoutWeekSnapshot.load(
+                    anchor: workout.startedAt, container: context.container)) ?? []
             }
         } else {
             Text("No strength data").foregroundStyle(Theme.inkTertiary)

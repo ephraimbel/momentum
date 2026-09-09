@@ -10,6 +10,7 @@ import Foundation
 /// pushes immediately so the frozen/running state is never stale.
 @MainActor
 final class CardioActivityController {
+    private static var ownership = LiveActivityOwnership()
     private var activity: Activity<CardioActivityAttributes>?
     private var lastPush = Date.distantPast
     private var lastPaused = false
@@ -32,6 +33,7 @@ final class CardioActivityController {
             activity = try Activity.request(
                 attributes: attributes,
                 content: .init(state: state, staleDate: Date().addingTimeInterval(180)))
+            if let activity { Self.ownership.record(activity.id) }
             lastPush = Date()
             lastPaused = state.paused
             lastStep = state.stepText
@@ -70,11 +72,10 @@ final class CardioActivityController {
 
     /// End activities left over from a previous process. After a force-quit mid-run the lock-screen
     /// card would otherwise keep ticking its native clock with nothing recording behind it — and
-    /// linger for hours. Called once at launch. The orphan list is snapshotted synchronously, before
-    /// this process could possibly start a legitimate activity — so a deep-link launch that goes
-    /// straight into a run can never have its fresh card swept by this task running late.
+    /// linger for hours. Exclude activities created by this process: deferred launch work can
+    /// yield or resume after backgrounding, after a legitimate activity has already started.
     static func endOrphans() {
-        let orphans = Activity<CardioActivityAttributes>.activities
+        let orphans = Activity<CardioActivityAttributes>.activities.filter { ownership.isOrphan($0.id) }
         guard !orphans.isEmpty else { return }
         Task {
             for orphan in orphans {

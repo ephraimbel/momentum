@@ -1,0 +1,241 @@
+import XCTest
+@testable @_spi(Marshalling) import MapboxMaps
+
+final class CameraOptionsTests: XCTestCase {
+    var center: CLLocationCoordinate2D!
+    var padding: UIEdgeInsets!
+    var anchor: CGPoint!
+    var zoom: CGFloat!
+    var bearing: CLLocationDirection!
+    var pitch: CGFloat!
+    var verticalFov: CGFloat!
+
+    override func setUp() {
+        super.tearDown()
+        center = CLLocationCoordinate2D(
+            latitude: 24,
+            longitude: -179)
+        padding = UIEdgeInsets(
+            top: 55,
+            left: 44,
+            bottom: 0,
+            right: 100)
+        anchor = CGPoint(
+            x: 55,
+            y: 100)
+        zoom = 3.34
+        bearing = 359.0
+        pitch = 39
+        verticalFov = 60.0
+    }
+
+    override func tearDown() {
+        pitch = nil
+        bearing = nil
+        zoom = nil
+        anchor = nil
+        padding = nil
+        center = nil
+        super.tearDown()
+    }
+
+    func testMemberwiseInitDefaults() {
+        let cameraOptions = CameraOptions()
+
+        XCTAssertNil(cameraOptions.center)
+        XCTAssertNil(cameraOptions.padding)
+        XCTAssertNil(cameraOptions.anchor)
+        XCTAssertNil(cameraOptions.zoom)
+        XCTAssertNil(cameraOptions.bearing)
+        XCTAssertNil(cameraOptions.pitch)
+    }
+
+    func testMemberwiseInit() {
+        let cameraOptions = CameraOptions(
+            center: center,
+            padding: padding,
+            anchor: anchor,
+            zoom: zoom,
+            bearing: bearing,
+            pitch: pitch,
+            verticalFov: verticalFov)
+
+        XCTAssertEqual(cameraOptions.center?.latitude, center.latitude)
+        XCTAssertEqual(cameraOptions.center?.longitude, center.longitude)
+        XCTAssertEqual(cameraOptions.padding, padding)
+        XCTAssertEqual(cameraOptions.anchor, anchor)
+        XCTAssertEqual(cameraOptions.zoom, zoom)
+        XCTAssertEqual(cameraOptions.bearing, bearing)
+        XCTAssertEqual(cameraOptions.pitch, pitch)
+        XCTAssertEqual(cameraOptions.verticalFov, verticalFov)
+    }
+
+    func testInitWithObjCValue() {
+        let objcCameraOptions = CoreCameraOptions(
+            center: Coordinate2D(value: center),
+            padding: padding.toMBXEdgeInsetsValue(),
+            anchor: anchor.screenCoordinate,
+            zoom: zoom.NSNumber,
+            bearing: bearing.NSNumber,
+            pitch: pitch.NSNumber,
+            verticalFov: verticalFov.NSNumber)
+
+        let cameraOptions = CameraOptions.Marshaller.toSwift(objcCameraOptions)
+
+        XCTAssertEqual(cameraOptions.center?.latitude, center.latitude)
+        XCTAssertEqual(cameraOptions.center?.longitude, center.longitude)
+        XCTAssertEqual(cameraOptions.padding, padding)
+        XCTAssertEqual(cameraOptions.anchor, anchor)
+        XCTAssertEqual(cameraOptions.zoom, zoom)
+        XCTAssertEqual(cameraOptions.bearing, bearing)
+        XCTAssertEqual(cameraOptions.pitch, pitch)
+        XCTAssertEqual(cameraOptions.verticalFov, verticalFov)
+    }
+
+    func testInitWithObjCValueWithNils() {
+        let objcCameraOptions = CoreCameraOptions(
+            center: nil,
+            padding: nil,
+            anchor: nil,
+            zoom: nil,
+            bearing: nil,
+            pitch: nil,
+            verticalFov: nil)
+
+        let cameraOptions = CameraOptions.Marshaller.toSwift(objcCameraOptions)
+
+        XCTAssertNil(cameraOptions.center)
+        XCTAssertNil(cameraOptions.padding)
+        XCTAssertNil(cameraOptions.anchor)
+        XCTAssertNil(cameraOptions.zoom)
+        XCTAssertNil(cameraOptions.bearing)
+        XCTAssertNil(cameraOptions.pitch)
+        XCTAssertNil(cameraOptions.verticalFov)
+    }
+
+    func testEquatable() {
+        let cameraOptions = CameraOptions(
+            center: center,
+            padding: padding,
+            anchor: anchor,
+            zoom: zoom,
+            bearing: bearing,
+            pitch: pitch,
+            verticalFov: verticalFov)
+
+        XCTAssertEqual(cameraOptions, cameraOptions)
+        XCTAssertEqual(CameraOptions(), CameraOptions())
+
+        var other = cameraOptions
+        other.center?.latitude += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.center?.longitude += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.padding?.top += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.padding?.left += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.padding?.bottom += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.padding?.right += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.anchor?.x += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.anchor?.y += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.zoom? += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.bearing? += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.pitch? += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.verticalFov? += 1
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.center = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.padding = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.anchor = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.zoom = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.bearing = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.pitch = nil
+        XCTAssertNotEqual(cameraOptions, other)
+
+        other = cameraOptions
+        other.verticalFov = nil
+        XCTAssertNotEqual(cameraOptions, other)
+    }
+
+    func testConversionToMapboxCoreMapsCameraOptions() {
+        let cameraOptions = CameraOptions(
+            center: center,
+            padding: padding,
+            anchor: anchor,
+            zoom: zoom,
+            bearing: bearing,
+            pitch: pitch)
+
+        let objcCameraOptions: CoreCameraOptions = CameraOptions.Marshaller.toObjc(cameraOptions)
+
+        XCTAssertEqual(objcCameraOptions.center?.value.latitude, center.latitude)
+        XCTAssertEqual(objcCameraOptions.center?.value.longitude, center.longitude)
+        XCTAssertEqual(objcCameraOptions.padding, padding.toMBXEdgeInsetsValue())
+        XCTAssertEqual(objcCameraOptions.anchor, anchor.screenCoordinate)
+        XCTAssertEqual(objcCameraOptions.zoom, zoom.NSNumber)
+        XCTAssertEqual(objcCameraOptions.bearing, bearing.NSNumber)
+        XCTAssertEqual(objcCameraOptions.pitch, pitch.NSNumber)
+        XCTAssertNil(objcCameraOptions.verticalFov)
+    }
+
+    func testConversionToMapboxCoreMapsCameraOptionsWithNils() {
+        let cameraOptions = CameraOptions()
+
+        let objcCameraOptions: CoreCameraOptions = CameraOptions.Marshaller.toObjc(cameraOptions)
+
+        XCTAssertNil(objcCameraOptions.center)
+        XCTAssertNil(objcCameraOptions.center)
+        XCTAssertNil(objcCameraOptions.padding)
+        XCTAssertNil(objcCameraOptions.anchor)
+        XCTAssertNil(objcCameraOptions.zoom)
+        XCTAssertNil(objcCameraOptions.bearing)
+        XCTAssertNil(objcCameraOptions.pitch)
+        XCTAssertNil(objcCameraOptions.verticalFov)
+    }
+}

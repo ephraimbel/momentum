@@ -494,7 +494,7 @@ struct WeekContextCard: View {
     /// The workout's seven-day window, fetched by the host. It's injected (not fetched here) so the load
     /// runs on the host's always-present `.task`: a `.task` on this card alone never fires while the
     /// card is collapsed for want of data, and the card would then never learn it has data to show.
-    var weekWorkouts: [Workout]
+    var weekWorkouts: [WorkoutWeekSnapshot.Entry]
     var distanceUnit: DistanceUnit = .auto
     var metric: Metric = .distance
     var weightUnit: WeightUnit = .default()
@@ -505,7 +505,8 @@ struct WeekContextCard: View {
     /// `raw` is the metric's SI value for the day (metres or kilograms). `idx` (0…6, oldest →
     /// newest) is the bar's x position — the chart plots INDEXES, not dates (see the chart note).
     private struct DayBar: Identifiable {
-        let id = UUID(); let idx: Int; let dayStart: Date; let raw: Double; let isAnchor: Bool
+        let idx: Int; let dayStart: Date; let raw: Double; let isAnchor: Bool
+        var id: Date { dayStart }
         /// The x the chart actually plots. `Double` so the mark, the scale domain and the axis
         /// values all live in ONE numeric space — see the chart note below.
         var x: Double { Double(idx) }
@@ -525,10 +526,10 @@ struct WeekContextCard: View {
         }
     }
     /// A day's SI value under the chosen metric.
-    private func rawValue(_ w: Workout) -> Double {
+    private func rawValue(_ w: WorkoutWeekSnapshot.Entry) -> Double {
         switch metric {
-        case .distance: return w.gps?.distanceM ?? 0
-        case .volume: return w.strength?.totalVolumeKg ?? 0
+        case .distance: return w.distanceM
+        case .volume: return w.volumeKg
         }
     }
     /// Bar/total numeral — tonnage runs four to five digits, so it reads compact ("12.4k").
@@ -537,15 +538,6 @@ struct WeekContextCard: View {
         case .distance: return v >= 10 ? "\(Int(v.rounded()))" : String(format: "%.1f", v)
         case .volume: return v >= 1000 ? String(format: "%.1fk", v / 1000) : "\(Int(v.rounded()))"
         }
-    }
-
-    /// The 7-day window (ending on the run's day) the card plots — the host fetches this and passes it
-    /// in. nil only if date math fails (never in practice).
-    static func windowDescriptor(anchor: Date, calendar: Calendar = .current) -> FetchDescriptor<Workout>? {
-        let anchorDay = calendar.startOfDay(for: anchor)
-        guard let start = calendar.date(byAdding: .day, value: -6, to: anchorDay),
-              let end = calendar.date(byAdding: .day, value: 1, to: anchorDay) else { return nil }
-        return FetchDescriptor<Workout>(predicate: #Predicate { $0.startedAt >= start && $0.startedAt < end })
     }
 
     /// Bucket the window into seven daily distances (oldest → newest); the last bucket is the run's own
@@ -570,7 +562,6 @@ struct WeekContextCard: View {
             // Need at least two active days for a "week" to mean anything — a lone bar is just the run
             // we're already looking at, so the card would add nothing.
             if days.filter({ $0.raw > 0 }).count >= 2 {
-                let maxDist = days.map { disp($0.raw) }.max() ?? 0
                 let total = days.reduce(0) { $0 + $1.raw }
                 card(total: total) {
                     // NOT a Chart. Seven equal columns, each holding its bar AND its weekday
@@ -620,7 +611,8 @@ struct WeekContextCard: View {
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
                             .fill(d.isAnchor ? AnyShapeStyle(IridescentMaterial())
                                              : AnyShapeStyle(Theme.ink.opacity(0.18)))
-                            .frame(width: 20, height: animate ? barHeight(value, ceiling: ceiling) : 0)
+                            .frame(width: 20, height: barHeight(value, ceiling: ceiling))
+                            .scaleEffect(y: animate ? 1 : 0, anchor: .bottom)
                     }
                     .frame(height: Self.plotHeight)
                     Text(d.dayStart, format: .dateTime.weekday(.narrow))

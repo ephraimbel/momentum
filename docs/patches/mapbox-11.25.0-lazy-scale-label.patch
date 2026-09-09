@@ -1,0 +1,126 @@
+--- a/Sources/MapboxMaps/Ornaments/ScaleBar/MapboxScaleBarOrnamentView.swift
++++ b/Sources/MapboxMaps/Ornaments/ScaleBar/MapboxScaleBarOrnamentView.swift
+@@ -68,7 +68,11 @@
+         return view
+     }()
+ 
+-    private let formatter = DistanceFormatter()
++    private lazy var formatter: DistanceFormatter = {
++        let formatter = DistanceFormatter()
++        formatter.locale = .autoupdatingCurrent
++        return formatter
++    }()
+ 
+     internal var row: Row = (0, 0) {
+         didSet {
+@@ -79,7 +83,7 @@
+         }
+     }
+ 
+-    private var prototypeLabel: MapboxScaleBarLabel = {
++    private lazy var prototypeLabel: MapboxScaleBarLabel = {
+         let label = MapboxScaleBarLabel()
+         label.font = UIFont.systemFont(ofSize: 8, weight: .medium)
+         label.clipsToBounds = false
+@@ -114,10 +118,16 @@
+             }
+ 
+             updateVisibility()
++            resetLabelImageCache()
++            updateScaleBar()
++        }
++    }
++
++    internal override var isHidden: Bool {
++        didSet {
++            guard oldValue && !isHidden else { return }
+             needsRecalculateSize = true
+             updateScaleBar()
+-
+-            resetLabelImageCache()
+         }
+     }
+ 
+@@ -157,8 +167,7 @@
+         staticContainerView.bottomAnchor.constraint(equalTo: bottomAnchor).isActive = true
+         staticContainerView.addSubview(dynamicContainerView)
+ 
+-        addZeroLabel()
+-
++        // Momentum: render label images during visible layout, never during MapView setup.
+         NotificationCenter.default.addObserver(self,
+                                                selector: #selector(resetLabelImageCache),
+                                                name: NSLocale.currentLocaleDidChangeNotification,
+@@ -199,10 +208,6 @@
+         // This will most likely be a constant, as we take a max using a "hint" for
+         // the initial value
+ 
+-        if shouldLayoutBars {
+-            updateLabels()
+-        }
+-
+         let halfLabelWidth = ceil(lastLabelWidth / 2)
+ 
+         size = CGSize(width: totalBarWidth + halfLabelWidth, height: 16)
+@@ -212,7 +217,7 @@
+     internal override func layoutSubviews() {
+         super.layoutSubviews()
+ 
+-        guard needsRecalculateSize else {
++        guard !isHidden && needsRecalculateSize else {
+             return
+         }
+ 
+@@ -224,6 +229,7 @@
+         }
+ 
+         if shouldLayoutBars {
++            updateLabels()
+             shouldLayoutBars = false
+             bars.forEach { $0.removeFromSuperview() }
+             _bars = nil
+@@ -233,6 +239,11 @@
+         let barWidth = totalBarWidth / CGFloat(bars.count)
+         let isRightToLeft = usesRightToLeftLayout()
+         let halfLabelWidth = ceil(lastLabelWidth / 2)
++        let measuredSize = CGSize(width: totalBarWidth + halfLabelWidth, height: 16)
++        if size != measuredSize {
++            size = measuredSize
++            invalidateIntrinsicContentSize()
++        }
+         //
+         let scaleBarOffsetForRight = staticContainerView.frame.width - totalBarWidth - halfLabelWidth
+         let barOffset = isRightToLeft || isOnRight ? scaleBarOffsetForRight : 0.0
+@@ -294,11 +305,8 @@
+ 
+     // MARK: - Labels methods
+ 
+-    private func addZeroLabel() {
+-        labelImageCache[0] = renderImageFor(text: "0")
+-    }
+-
+-    private func renderImageFor(text: String) -> UIImage {
++    // Internal so regression tests can verify that hidden ornaments never rasterize text.
++    internal func renderImageFor(text: String) -> UIImage {
+         prototypeLabel.text = text
+         prototypeLabel.setNeedsDisplay()
+         prototypeLabel.sizeToFit()
+@@ -312,14 +320,16 @@
+ 
+     @objc private func resetLabelImageCache() {
+         labelImageCache.removeAll()
+-        addZeroLabel()
++        shouldLayoutBars = true
++        needsRecalculateSize = true
++        setNeedsLayout()
+     }
+ 
+     private func cachedLabelImage(for distance: CLLocationDistance) -> UIImage {
+         if let image = labelImageCache[distance] {
+             return image
+         } else {
+-            let text = formatter.string(fromDistance: distance, units: units)
++            let text = distance == 0 ? "0" : formatter.string(fromDistance: distance, units: units)
+             let image = renderImageFor(text: text)
+             labelImageCache[distance] = image
+             return image

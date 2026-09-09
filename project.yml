@@ -24,8 +24,8 @@ settings:
 # fill in your pk.* token.
 packages:
   MapboxMaps:
-    url: https://github.com/mapbox/mapbox-maps-ios.git
-    from: "11.0.0"
+    # Pinned 11.25.0 with lazy scale-bar rasterization; see Vendor/MapboxMaps/MOMENTUM-PATCH.md.
+    path: Vendor/MapboxMaps
   # Social backend + auth + storage (docs/SOCIAL-BACKEND-SETUP.md). Config-gated: the app ships
   # dark until SUPABASE_URL/SUPABASE_ANON_KEY are set in Secrets.xcconfig.
   Supabase:

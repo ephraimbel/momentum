@@ -124,43 +124,29 @@ struct MomentumApp: App {
     /// these used to run synchronously inside `init` — together they put the ads SDKs, Supabase,
     /// WCSession, ActivityKit and MetricKit on the cold-start critical path (perf audit 2026-08-13).
     /// None has a deadline measured in milliseconds; all are one-shots or start listeners.
-    @MainActor private static var didRunDeferredLaunchWork = false
-    private func runDeferredLaunchWork() {
-        guard !Self.didRunDeferredLaunchWork else { return }
-        Self.didRunDeferredLaunchWork = true
-        TikTokAdsService.configure()   // TikTok ads attribution — dark until Secrets.xcconfig keys are set
-        MetaAdsService.configure()     // Meta ads attribution — same dark-seam contract
-        auth.refresh()                 // sign out if the Apple credential was revoked (Supabase touch)
-        // Crash + performance monitoring (PRD §13.5). Passing the analytics service is what gets
-        // MetricKit's crash/hang counts OFF the device — without it they only ever reached os_log.
-        MetricsMonitor.shared.start(reporting: services.analytics)
-        // A previous launch could not open the store and moved it aside (`PersistenceController`).
-        // Report it exactly once — it is the only signal that a shipped migration broke somebody's
-        // install — but leave the record in place, because Settings goes on offering the file back
-        // until the athlete dismisses it themselves.
-        if let quarantine = PersistenceController.quarantineRecord, !quarantine.reported {
-            services.analytics.log(.storeQuarantined(recovered: quarantine.recovered))
-            SentryMonitor.capture(.storeQuarantined,
-                                  tags: ["recovered": String(quarantine.recovered),
-                                         "error_code": quarantine.errorCode ?? "unknown"])
-            PersistenceController.markQuarantineReported()
-        }
-        // The legacy plan remains live while its running-domain sidecars are repaired. This starts
-        // after first paint and uses its own SwiftData executor, so even a large old store cannot
-        // hold launch or the UI thread.
-        PersistenceController.shared.scheduleRunningPlanBackfill()
-        // No paired watch means this is a no-op.
-        PhoneWatchSync.shared.activate()
-        // A force-quit mid-workout strands its Live Activity — end leftovers before anything can
-        // start a new one (the workout itself is recovered separately via WorkoutRecovery). A new
-        // activity can only start from a workout start, which is never reachable this early.
-        CardioActivityController.endOrphans()
-        RestActivityController.endOrphans()
-        // Warm the anatomy geometry off the main thread: `BodyAnatomy`'s statics parse ~131 KB of
-        // SVG path data on first touch, which used to land inside Progress's first frame.
-        Task.detached(priority: .utility) { BodyAnatomy.warm() }
-        // Arm tomorrow's ~6:30 readiness refresh (re-armed on every launch and every run).
-        MorningReadinessRefresh.schedule()
+    @State private var deferredLaunchWork = DeferredLaunchWork()
+    private func runDeferredLaunchWork() async {
+        await deferredLaunchWork.run([
+            .init(phase: .tikTok) { TikTokAdsService.configure() },
+            .init(phase: .meta) { MetaAdsService.configure() },
+            .init(phase: .auth) { auth.refresh() },
+            .init(phase: .metrics) { MetricsMonitor.shared.start(reporting: services.analytics) },
+            .init(phase: .quarantine) {
+                if let quarantine = PersistenceController.quarantineRecord, !quarantine.reported {
+                    services.analytics.log(.storeQuarantined(recovered: quarantine.recovered))
+                    SentryMonitor.capture(.storeQuarantined,
+                                          tags: ["recovered": String(quarantine.recovered),
+                                                 "error_code": quarantine.errorCode ?? "unknown"])
+                    PersistenceController.markQuarantineReported()
+                }
+            },
+            .init(phase: .planBackfill) { PersistenceController.shared.scheduleRunningPlanBackfill() },
+            .init(phase: .watch) { PhoneWatchSync.shared.activate() },
+            .init(phase: .cardioActivities) { CardioActivityController.endOrphans() },
+            .init(phase: .restActivities) { RestActivityController.endOrphans() },
+            .init(phase: .anatomy) { Task.detached(priority: .utility) { BodyAnatomy.warm() } },
+            .init(phase: .readiness) { MorningReadinessRefresh.schedule() },
+        ], observe: { phase, began in SentryMonitor.recordLaunchPhase(phase, began: began) })
     }
 
     @AppStorage(AppAppearance.storageKey) private var appearanceRaw = AppAppearance.system.rawValue
@@ -258,11 +244,11 @@ struct MomentumApp: App {
                     services.analytics.flush()
                 }
             }
-            // The deferred half of launch (see `runDeferredLaunchWork`). 600 ms is past the first
-            // paint and the tab bar's settle, but well inside the first human interaction.
-            .task {
-                try? await Task.sleep(for: .milliseconds(600))
-                runDeferredLaunchWork()
+            // Cancel promptly when inactive; foregrounding resumes only unfinished stages.
+            // The coordinator waits for first paint and yields between SDK bring-up calls.
+            .task(id: scenePhase) {
+                guard scenePhase == .active else { return }
+                await runDeferredLaunchWork()
             }
     }
 }

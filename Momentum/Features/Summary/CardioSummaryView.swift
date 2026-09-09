@@ -49,7 +49,7 @@ struct CardioSummaryContent: View {
     @State private var healthHR: [(date: Date, bpm: Double)] = []
     /// The run's seven-day window, fetched here (on this always-present task) and handed to the
     /// "This week" context card — the card can't fetch it itself while collapsed for want of data.
-    @State private var weekWorkouts: [Workout] = []
+    @State private var weekWorkouts: [WorkoutWeekSnapshot.Entry] = []
 
     var body: some View {
         if let gps = workout.gps {
@@ -96,9 +96,8 @@ struct CardioSummaryContent: View {
                 if showsVerdict { planLine = computePlanConnection(gps) }
                 // The "This week" card's seven-day window — fetched here so the load runs even while
                 // that card is collapsed (a .task on the card itself wouldn't fire until it has data).
-                if let desc = WeekContextCard.windowDescriptor(anchor: workout.startedAt) {
-                    weekWorkouts = (try? context.fetch(desc)) ?? []
-                }
+                weekWorkouts = (try? WorkoutWeekSnapshot.load(
+                    anchor: workout.startedAt, container: context.container)) ?? []
                 // The record scan + verdict, OFF the main actor (2026-08-06): `detect` replays
                 // every prior run's samples through the Kalman filter, and running it here on the
                 // main context froze the summary right after first paint — the page appeared, then

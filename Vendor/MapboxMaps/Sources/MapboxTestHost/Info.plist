@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>MBXAccessToken</key>
+	<string>MAPBOX_ACCESS_TOKEN</string>
+	<!-- Required by AttributionTests.testAttributionParseDoesNotPerformNetworkIO,
+	     which binds a local NWListener on 127.0.0.1 to verify that
+	     Attribution.parse performs no outbound network IO. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+</dict>
+</plist>

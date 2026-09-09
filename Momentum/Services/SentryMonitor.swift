@@ -117,6 +117,21 @@ enum SentryMonitor {
         #endif
     }
 
+    /// A finite list of startup stages, without identity, model values or UI content. These
+    /// breadcrumbs make a future event-loop-only hang actionable without enabling tracing.
+    @MainActor static func recordLaunchPhase(_ phase: DeferredLaunchWork.Phase, began: Bool) {
+        #if canImport(Sentry)
+        guard SentrySDK.isEnabled else { return }
+        SentrySDK.configureScope { scope in
+            scope.setTag(value: began ? phase.rawValue : "between_steps", key: "launch_phase")
+        }
+        let crumb = Breadcrumb(level: .info, category: "app.launch")
+        crumb.message = phase.rawValue
+        crumb.setData(value: began ? "started" : "completed", key: "state")
+        SentrySDK.addBreadcrumb(crumb)
+        #endif
+    }
+
     static func configuration(from info: [String: Any], environment: String) -> Configuration? {
         guard let raw = info["SentryDSN"] as? String else { return nil }
         let dsn = raw.trimmingCharacters(in: .whitespacesAndNewlines)
