@@ -1,5 +1,7 @@
 import SwiftUI
 import Observation
+import SwiftData
+import UserNotifications
 
 /// A transient, glanceable confirmation — the receipt-capsule grammar ("Marathon logged · 26.2 mi")
 /// promoted from WorkoutRunner's one-off into the app's single toast voice (enterprise pass
@@ -22,12 +24,14 @@ struct AppToast: Identifiable, Equatable {
     var icon: String
     var line: String
     var route: Route
+    var notificationID: UUID?
 
-    init(icon: String, line: String, route: Route = .none) {
+    init(icon: String, line: String, route: Route = .none, notificationID: UUID? = nil) {
         id = UUID()
         self.icon = icon
         self.line = line
         self.route = route
+        self.notificationID = notificationID
     }
 }
 
@@ -42,18 +46,46 @@ final class ToastCenter {
     @ObservationIgnored private var queue: [AppToast] = []
     @ObservationIgnored private var holders: Set<String> = []
     @ObservationIgnored private var pump: Task<Void, Never>?
+    @ObservationIgnored var nextCoachingToast: (() -> AppToast?)?
+    @ObservationIgnored private var coachingRequested = false
+    @ObservationIgnored private var coachingWake: Task<Void, Never>?
+
+    func requestCoaching(delay: Double = 1.2) {
+        coachingRequested = true
+        coachingWake?.cancel()
+        coachingWake = Task { @MainActor [weak self] in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard !Task.isCancelled else { return }
+            self?.coachingWake = nil
+            self?.promoteIfIdle()
+        }
+    }
+
+    func cancelCoaching() {
+        coachingWake?.cancel(); coachingWake = nil; coachingRequested = false
+        if current?.notificationID != nil { dismissCurrent() }
+    }
 
     /// How long a toast holds the screen (WorkoutRunner's receipt timing — kept app-wide).
     static let dwell: Double = 3.2
 
+    private static var coachingDwell: Double {
+#if DEBUG
+        // The gesture test must dismiss explicitly, not accidentally pass via the timer.
+        // Simulator accessibility queries can consume the entire normal five-second dwell.
+        if ProcessInfo.processInfo.arguments.contains("--coach-dismiss-demo") { return 60 }
+#endif
+        return 5
+    }
+
     /// Enqueue a toast. `delay` lets a caller land it after a moment that's still animating;
     /// `front` puts it ahead of anything waiting (the save receipt leads the coaching line).
     func show(icon: String, line: String, route: AppToast.Route = .none,
-              delay: Double = 0, front: Bool = false) {
-        guard delay > 0 else { enqueue(AppToast(icon: icon, line: line, route: route), front: front); return }
+              delay: Double = 0, front: Bool = false, notificationID: UUID? = nil) {
+        guard delay > 0 else { enqueue(AppToast(icon: icon, line: line, route: route, notificationID: notificationID), front: front); return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            self?.enqueue(AppToast(icon: icon, line: line, route: route), front: front)
+            self?.enqueue(AppToast(icon: icon, line: line, route: route, notificationID: notificationID), front: front)
         }
     }
 
@@ -80,17 +112,23 @@ final class ToastCenter {
     }
 
     private func promoteIfIdle(afterGap: Bool = false) {
-        guard pump == nil, current == nil, holders.isEmpty, !queue.isEmpty else { return }
+        guard pump == nil, current == nil, holders.isEmpty, (!queue.isEmpty || (coachingRequested && coachingWake == nil)) else { return }
         pump = Task { @MainActor [weak self] in
             if afterGap { try? await Task.sleep(for: .seconds(0.35)) }
             guard let self, !Task.isCancelled else { return }
-            guard self.current == nil, self.holders.isEmpty, !self.queue.isEmpty else {
+            guard self.current == nil, self.holders.isEmpty else {
                 self.pump = nil
                 return
             }
-            let next = self.queue.removeFirst()
+            let next: AppToast?
+            if !self.queue.isEmpty { next = self.queue.removeFirst() }
+            else if self.coachingRequested && self.coachingWake == nil {
+                self.coachingRequested = false
+                next = self.nextCoachingToast?()
+            } else { next = nil }
+            guard let next else { self.pump = nil; return }
             withAnimation(.easeOut(duration: 0.3)) { self.current = next }
-            try? await Task.sleep(for: .seconds(Self.dwell))
+            try? await Task.sleep(for: .seconds(next.notificationID == nil ? Self.dwell : Self.coachingDwell))
             guard !Task.isCancelled else { return }
             withAnimation(.easeIn(duration: 0.3)) { self.current = nil }
             self.pump = nil
@@ -104,14 +142,41 @@ final class ToastCenter {
 /// standardizes, so every confirmation in the app speaks with one voice.
 struct ToastHost: View {
     @Environment(AppRouter.self) private var router
+    @Environment(\.modelContext) private var context
+    @Environment(Services.self) private var services
     private var center: ToastCenter { .shared }
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if let toast = center.current {
+            if scenePhase == .active, let toast = center.current {
                 capsule(toast)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .id(toast.id)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
             }
+        }
+        .onAppear {
+            if scenePhase != .active { center.hold("app-inactive") }
+            CoachSurface.configure(in: context)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                CoachSurface.configure(in: context)
+                center.release("app-inactive")
+            } else {
+                center.hold("app-inactive")
+                if phase == .background { CoachSurface.backgrounded() }
+            }
+        }
+    }
+
+    private func record(_ toast: AppToast, opened: Bool) {
+        guard let id = toast.notificationID else { return }
+        if opened {
+            CoachMessageLifecycle.record(id, action: .opened, in: context, source: "toast")
+        } else if !CoachSurface.displayed(id, in: context) {
+            center.dismissCurrent()
         }
     }
 
@@ -123,11 +188,17 @@ struct ToastHost: View {
             Text(toast.line)
                 .font(.rounded(Theme.FontSize.caption, weight: .semibold)).monospacedDigit()
                 .foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.85)
+                .lineLimit(toast.notificationID == nil ? 1 : 2).minimumScaleFactor(0.85)
             if toast.route != .none {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(Theme.inkTertiary)
+            }
+            if toast.notificationID != nil {
+                Button { dismiss(toast) } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
+                        .frame(width: 32, height: 32).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityLabel("Dismiss coaching message")
             }
         }
         .padding(.horizontal, Theme.Space.md)
@@ -136,11 +207,23 @@ struct ToastHost: View {
         .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.sm)
-        .onTapGesture { act(on: toast) }
+        .onAppear { record(toast, opened: false) }
+        .onTapGesture { record(toast, opened: true); act(on: toast) }
+        .accessibilityAction(named: "Dismiss") { dismiss(toast) }
+        .gesture(DragGesture(minimumDistance: 20).onEnded { value in
+            if value.translation.height < -20 || abs(value.translation.width) > 40 { dismiss(toast) }
+        })
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(toast.line)
         .accessibilityAddTraits(toast.route == .none ? .isStaticText : .isButton)
         .accessibilityIdentifier("app-toast")
+    }
+
+    private func dismiss(_ toast: AppToast) {
+        if let id = toast.notificationID {
+            CoachMessageLifecycle.record(id, action: .dismissed, in: context, source: "toast")
+        }
+        center.dismissCurrent()
     }
 
     /// A tapped toast lands somewhere useful — recovery decisions open the Health hub (the "why"

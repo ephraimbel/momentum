@@ -48,13 +48,20 @@ enum CoachTodayBriefing {
     static func sections(profile: UserProfile, today: Date = Date(),
                          calendar: Calendar = .current) -> [CoachSection] {
         let unit = DistanceUnit(rawValue: profile.distanceUnit) ?? .auto
+        if let plan = profile.plan, AdaptivePlanService.isDue(plan, now: today)
+            || plan.adaptiveState?.reviews.last(where: { $0.id == plan.adaptiveState?.lastWeekKey })?.viewedAt == nil
+                && plan.adaptiveState?.reviews.isEmpty == false {
+            return [CoachSection(icon: "calendar", title: "Your weekly review",
+                                 detail: "Open Plan to review your recent training and explore this week's workouts.")]
+        }
         guard let session = PlanCoaching.todaySessions(profile.plan, on: today, calendar: calendar)
-            .first(where: { $0.status != .completed }) else {
+            .first(where: { $0.status != .completed && AdaptivePlanService.showsDetails($0, plan: profile.plan, now: today, calendar: calendar) }) else {
             // A rest day is a coached day too — say what it's for and what's next.
             var out = [CoachSection(icon: "moon.zzz", title: "Rest day",
                                     detail: "Nothing on the plan today. Rest is where the training lands, so take it seriously.")]
             if let next = profile.plan?.sessions
-                .filter({ $0.status == .planned && $0.date > calendar.startOfDay(for: today) })
+                .filter({ $0.status == .planned && $0.date > calendar.startOfDay(for: today)
+                    && AdaptivePlanService.showsDetails($0, plan: profile.plan, now: today, calendar: calendar) })
                 .min(by: { $0.date < $1.date }) {
                 out.append(CoachSection(icon: "arrow.right", title: "Up next",
                                         detail: "\(PlanCoaching.brief(for: next, distanceUnit: unit)) on \(next.date.formatted(.dateTime.weekday(.wide)))."))

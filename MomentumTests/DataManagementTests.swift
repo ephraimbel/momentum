@@ -30,6 +30,9 @@ struct DataManagementTests {
         let run = Workout(); run.type = .run; run.startedAt = Date(); run.durationS = 1800
         let g = GPSDetail(); g.distanceM = 5000; run.gps = g
         ctx.insert(run)
+        AdaptivePlanService.initialize(plan, profileID: profile.id, now: run.startedAt, in: ctx)
+        var feedback = WorkoutRecoveryDraft(); feedback.recovery = 2; feedback.pain = false
+        feedback.persist(for: run)
         let sidecarIDs = insertPlannerSidecars(in: ctx, profileID: profile.id,
                                                planID: plan.id, sessionID: session.id)
         try ctx.save()
@@ -39,7 +42,10 @@ struct DataManagementTests {
         let snapshot = try decoder.decode(DataManager.Snapshot.self, from: data)
 
         #expect(snapshot.app == "momentum")
-        #expect(snapshot.schemaVersion == 2)
+        #expect(snapshot.schemaVersion == 3)
+        #expect(snapshot.adaptivePlans?.first?.planID == plan.id)
+        #expect(snapshot.workoutFeedback?.first?.workoutID == run.id)
+        #expect(snapshot.workoutFeedback?.first?.pain == false)
         #expect(snapshot.profile?.displayName == "Sam")
         #expect(snapshot.workouts.count == 1)
         #expect(snapshot.workouts.first?.distanceM == 5000)

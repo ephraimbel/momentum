@@ -13,6 +13,8 @@ enum AnalyticsEvent: Equatable {
     /// opened the app, looked at the welcome and left fired NOTHING: they weren't a drop-off in the
     /// funnel, they weren't even an install. That is the exact shape of a cold ad click, so paid
     /// traffic was leaking out of a door we could not see.
+    case subscriptionStateObserved(state: String, environment: String)
+    case adaptive(action: String, week: String, reason: String, goal: Goal? = nil, workout: WorkoutType? = nil, status: SessionStatus? = nil)
     case appLaunched(first: Bool)
     /// What happened at the welcome gate — the screen before `onboarding_step(0)`. Pair with
     /// `app_launched(first=true)`: installs that fired the launch but never a welcome action are
@@ -77,6 +79,8 @@ enum AnalyticsEvent: Equatable {
     /// The canonical event name (PRD §13.5).
     var name: String {
         switch self {
+        case .subscriptionStateObserved: "subscription_state_observed"
+        case .adaptive(let action, _, _, _, _, _): action
         case .appLaunched:       "app_launched"
         case .welcomeAction:     "welcome_action"
         case .onboardingStep:    "onboarding_step"
@@ -109,6 +113,11 @@ enum AnalyticsEvent: Equatable {
     /// Non-PII dimensions for this event.
     var parameters: [String: String] {
         switch self {
+        case .subscriptionStateObserved(let state, let environment): ["subscription_state": state, "store_environment": environment]
+        case .adaptive(_, let week, let reason, let goal, let workout, let status):
+            ["plan_week": week, "reason": reason].merging(
+                ["goal_type": goal?.rawValue, "workout_type": workout?.rawValue, "completion_status": status?.rawValue].compactMapValues { $0 },
+                uniquingKeysWith: { _, latest in latest })
         case .appLaunched(let first):          ["first": String(first)]
         case .welcomeAction(let a):            ["action": a]
         case .onboardingStep(let n, let i, let p, let t):
@@ -172,6 +181,8 @@ final class AnalyticsService: AnalyticsServing {
     private let northStar: NorthStarTracker
     private let sink: AnalyticsSink?
     private var pendingEnqueue: Task<Void, Never>?
+    private var subscriptionObserver: NSObjectProtocol?
+    private var adaptiveObserver: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     init(northStar: NorthStarTracker = NorthStarTracker(), sink: AnalyticsSink? = AnalyticsSink()) {
@@ -186,6 +197,17 @@ final class AnalyticsService: AnalyticsServing {
         // The install denominator. Logged here rather than in a view because it must fire even when
         // the athlete never reaches a screen that is instrumented — which was precisely the bug.
         log(.appLaunched(first: isFirstLaunch))
+        adaptiveObserver = NotificationCenter.default.addObserver(forName: .momentumAdaptiveEvent, object: nil, queue: .main) { [weak self] note in
+            guard let action = note.userInfo?["action"] as? String else { return }
+            let week = note.userInfo?["week"] as? String ?? "current"
+            let reason = note.userInfo?["reason"] as? String ?? "plan"
+            Task { @MainActor [weak self] in self?.log(.adaptive(action: action, week: week, reason: reason)) }
+        }
+        subscriptionObserver = NotificationCenter.default.addObserver(forName: .momentumSubscriptionObserved, object: nil, queue: .main) { [weak self] note in
+            let state = note.userInfo?["state"] as? String ?? "unknown"
+            let environment = note.userInfo?["environment"] as? String ?? "unknown"
+            Task { @MainActor [weak self] in self?.log(.subscriptionStateObserved(state: state, environment: environment)) }
+        }
     }
 
     func log(_ event: AnalyticsEvent) {
@@ -202,7 +224,12 @@ final class AnalyticsService: AnalyticsServing {
         }
 
         if let sink {
-            let name = event.name, parameters = event.parameters
+            let name = event.name
+            var parameters = event.parameters
+            parameters["plan_experience"] = "adaptive_weekly_v1"
+            parameters["has_completed_workout"] = String(northStar.funnel.firstWorkout != nil)
+            parameters["subscription_state"] = parameters["subscription_state"] ?? UserDefaults.standard.string(forKey: "analytics.subscription.state") ?? "unknown"
+            parameters["store_environment"] = parameters["store_environment"] ?? UserDefaults.standard.string(forKey: "analytics.subscription.environment") ?? "unknown"
             let occurredAt = Date(), previous = pendingEnqueue
             pendingEnqueue = Task {
                 await previous?.value
@@ -245,4 +272,18 @@ final class StubAnalyticsService: AnalyticsServing {
     func log(_ event: AnalyticsEvent) {}
     func flush() {}
     func northStarStatus() -> NorthStarFunnel.Status { .pending }
+}
+
+extension Notification.Name {
+    static let momentumAdaptiveEvent = Notification.Name("momentum.adaptiveEvent")
+    static let momentumSubscriptionObserved = Notification.Name("momentum.subscriptionObserved")
+}
+
+/// Bridges deterministic model transactions to the existing injected analytics service.
+/// Call only after commit; payloads contain categories, never coaching text or feedback answers.
+enum AdaptiveAnalytics {
+    static func emit(_ action: String, week: String = "current", reason: String = "plan") {
+        NotificationCenter.default.post(name: .momentumAdaptiveEvent, object: nil,
+            userInfo: ["action": action, "week": week, "reason": reason])
+    }
 }

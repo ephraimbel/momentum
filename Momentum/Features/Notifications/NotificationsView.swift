@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 /// The bell inbox — everything momentum has told the athlete (reminders, coaching nudges, streak
 /// alerts, achievements) in one place, newest first. Opening it clears the unread badge.
@@ -14,6 +15,7 @@ struct NotificationsView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @Environment(AppRouter.self) private var router
+    @Environment(Services.self) private var services
 
     var body: some View {
         VStack(spacing: 0) {
@@ -164,11 +166,17 @@ struct NotificationsView: View {
     @ViewBuilder
     private func row(_ n: AppNotification) -> some View {
         if let destination = destination(for: n) {
-            Button { open(destination) } label: { rowContent(n, chevron: true) }
+            Button { record(n, opened: true); open(destination) } label: { rowContent(n, chevron: true) }
                 .buttonStyle(.plain)
+                .onScrollVisibilityChange(threshold: 0.5) { visible in if visible { record(n, opened: false) } }
         } else {
-            rowContent(n, chevron: false)
+            rowContent(n, chevron: false).onScrollVisibilityChange(threshold: 0.5) { visible in if visible { record(n, opened: false) } }
         }
+    }
+
+    private func record(_ n: AppNotification, opened: Bool) {
+        CoachMessageLifecycle.record(n.id, action: opened ? .opened : .displayed,
+                                     in: context, source: "inbox")
     }
 
     private func rowContent(_ n: AppNotification, chevron: Bool) -> some View {

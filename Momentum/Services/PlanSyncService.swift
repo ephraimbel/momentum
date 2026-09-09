@@ -28,10 +28,15 @@ protocol PlanCloudTransport {
 final class HTTPPlanCloudTransport: PlanCloudTransport {
     enum Failure: Error { case unavailable, unauthenticated, rejected(Int), malformedResponse }
     private let session: URLSession
-    init(session: URLSession = .shared) { self.session = session }
+    private let baseURL: String?
+    private let apiKey: String?
+    init(session: URLSession = .shared,
+         baseURL: String? = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,
+         apiKey: String? = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String) {
+        self.session = session; self.baseURL = baseURL; self.apiKey = apiKey
+    }
     private func request(path: String, identity: PlanCloudIdentity, body: Data? = nil) async throws -> Data {
-        guard let base = Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String,
-              let key = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String,
+        guard let base = baseURL, let key = apiKey,
               let url = URL(string: base + "/rest/v1/" + path), !key.isEmpty else { throw Failure.unavailable }
         var request = URLRequest(url: url); request.timeoutInterval = 20
         request.httpMethod = body == nil ? "GET" : "POST"; request.httpBody = body

@@ -6,6 +6,8 @@ import CryptoKit
 /// their recording device. Recent Momentum workouts carry the evidence needed for adaptation.
 @MainActor
 struct PlanCloudSnapshot: Codable {
+    var adaptive: AdaptiveState? = nil
+    var recoveryFeedback: [RecoveryFeedback]? = nil
     var version = 1
     var profile: Profile
     var coach: CoachUndo.Snapshot
@@ -423,6 +425,20 @@ struct PlanCloudSnapshot: Codable {
         let workoutIDs = Set(workouts.map(\.id))
         merged.workouts += other.workouts.filter { !workoutIDs.contains($0.id) }
         merged.workouts.sort { $0.id.uuidString < $1.id.uuidString }
+        var feedback = Dictionary((recoveryFeedback ?? []).map { ($0.id, $0) },
+                                  uniquingKeysWith: { a, b in a.submittedAt >= b.submittedAt ? a : b })
+        for incoming in other.recoveryFeedback ?? [] {
+            if feedback[incoming.id].map({ $0.submittedAt < incoming.submittedAt }) ?? true {
+                feedback[incoming.id] = incoming
+            }
+        }
+        if !feedback.isEmpty {
+            merged.recoveryFeedback = feedback.values.sorted { $0.id.uuidString < $1.id.uuidString }
+        }
+        // Selecting the prescription from another device must not discard its symptom hold.
+        if other.adaptive?.requiresRecoveryCheckin == true {
+            merged.adaptive?.requiresRecoveryCheckin = true
+        }
         let exerciseIDs = Set(exercises.map(\.id))
         merged.exercises += other.exercises.filter { !exerciseIDs.contains($0.id) }
         merged.exercises.sort { $0.id.uuidString < $1.id.uuidString }
@@ -488,12 +504,33 @@ struct PlanCloudSnapshot: Codable {
             decisions: try context.fetch(FetchDescriptor<PlanDecisionRecord>()).filter { $0.profileID == profile.id }
                 .sorted { $0.id.uuidString < $1.id.uuidString }.map(DataManager.PlanDecisionDTO.init))
         value.trainingEvidenceFrom = profile.continuity?.trainingEvidenceFrom
+        value.adaptive = profile.plan?.adaptiveState.map(AdaptiveState.init)
+        if context.container.schema.entities.contains(where: { $0.name == "WorkoutFeedbackRecord" }) {
+            value.recoveryFeedback = try context.fetch(FetchDescriptor<WorkoutFeedbackRecord>())
+                .filter { row in evidence.contains { $0.id == row.id } }
+                .sorted { $0.id.uuidString < $1.id.uuidString }.map(RecoveryFeedback.init)
+        }
         try value.validate()
         return value
     }
 
     func validate() throws {
         guard version == 1 else { throw Failure.unsupportedVersion }
+        if let adaptive {
+            guard adaptive.planID == coach.plan?.id, adaptive.reviewsData.count < 1_000_000,
+                  (adaptive.baselineData?.count ?? 0) < 100_000,
+                  (1...7).contains(adaptive.firstWeekday), (1...7).contains(adaptive.minimumDays),
+                  TimeZone(identifier: adaptive.timeZoneID) != nil else { throw Failure.invalidSnapshot }
+            _ = try JSONDecoder().decode([AdaptivePlanRecord.Review].self, from: adaptive.reviewsData)
+        }
+        if let recoveryFeedback {
+            guard recoveryFeedback.count <= 10_000,
+                  Set(recoveryFeedback.map(\.id)).count == recoveryFeedback.count,
+                  recoveryFeedback.allSatisfy({ ($0.recovery.map { (1...3).contains($0) } ?? true)
+                    && ($0.plannedDistanceM.map { $0.isFinite && $0 >= 0 } ?? true)
+                    && ($0.plannedDurationS.map { $0.isFinite && $0 > 0 } ?? true)
+                    && ($0.plannedPaceSPerKm.map { $0.isFinite && $0 > 0 } ?? true) }) else { throw Failure.invalidSnapshot }
+        }
         func finite(_ values: [Double?]) -> Bool { values.allSatisfy { $0.map { $0.isFinite && $0 >= 0 } ?? true } }
         func dates(_ values: [Date?]) -> Bool { values.allSatisfy { $0?.timeIntervalSinceReferenceDate.isFinite ?? true } }
         guard (1...7).contains(profile.daysPerWeek), (1...360).contains(profile.sessionMinutes),
@@ -611,6 +648,10 @@ struct PlanCloudSnapshot: Codable {
         for old in try context.fetch(FetchDescriptor<PlanShelfRecord>()) { context.delete(old) }
         for item in shelf { context.insert(item.make(profileID: athlete.id)) }
         try restoreSidecars(in: context)
+        if context.container.schema.entities.contains(where: { $0.name == "AdaptivePlanRecord" }) {
+            try adaptive?.restore(profile: athlete, in: context)
+            for item in recoveryFeedback ?? [] { item.restore(in: context) }
+        }
         // Reconcile sidecars against the enforced prescription, including a conflict that
         // retained stricter local recovery than the chosen cloud plan.
         _ = try RunningPlanBackfill.prepareAfterLegacyPlanMutation(in: context)

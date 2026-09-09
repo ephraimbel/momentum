@@ -50,6 +50,14 @@ struct SessionDetailSheet: View {
     private var done: Bool { session.status == .completed }
 
     var body: some View {
+        if let plan = profile?.plan, !AdaptivePlanService.showsDetails(session, plan: plan) {
+            AdaptiveWeekView(plan: plan,
+                weekStart: AdaptiveTrainingWeek.week(containing: session.date, calendar: plan.adaptiveState?.calendar ?? .current).start,
+                unit: distanceUnit)
+        } else { detailBody }
+    }
+
+    private var detailBody: some View {
         VStack(spacing: 0) {
             header
             ScrollView {

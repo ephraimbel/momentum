@@ -54,6 +54,7 @@ struct RunningSchemaMigrationSpikeTests {
             PlanPreferencesRecord.self,
             PlanContinuityRecord.self,
             PlanFitnessDeclarationRecord.self,
+            AdaptivePlanRecord.self, WorkoutFeedbackRecord.self, CoachMessageReceipt.self,
         ]
         let actualIDs = PersistenceController.models.map { ObjectIdentifier($0) }
         let expectedIDs = expected.map { ObjectIdentifier($0) }
@@ -82,7 +83,7 @@ struct RunningSchemaMigrationSpikeTests {
 
         let storeURL = directory.appendingPathComponent("V1.store")
         try FileManager.default.copyItem(at: fixtureURL, to: storeURL)
-        let schema = Schema(versionedSchema: SchemaV9.self)
+        let schema = Schema(versionedSchema: SchemaV10.self)
         let configuration = ModelConfiguration(
             "ArchivedRunningSchemaV1",
             schema: schema,
@@ -173,7 +174,7 @@ struct RunningSchemaMigrationSpikeTests {
             try store.mainContext.save()
         }
         do {
-            let schema = Schema(versionedSchema: SchemaV9.self)
+            let schema = Schema(versionedSchema: SchemaV10.self)
             let store = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
                                            configurations: [ModelConfiguration(schema: schema, url: url)])
             let plan = try #require(try store.mainContext.fetch(FetchDescriptor<TrainingPlan>()).first)
@@ -186,7 +187,7 @@ struct RunningSchemaMigrationSpikeTests {
             record.pauseShiftedDates = [sessionID.uuidString: date]
             try store.mainContext.save()
         }
-        let schema = Schema(versionedSchema: SchemaV9.self)
+        let schema = Schema(versionedSchema: SchemaV10.self)
         let reopened = try ModelContainer(for: schema, migrationPlan: MomentumMigrationPlan.self,
                                           configurations: [ModelConfiguration(schema: schema, url: url)])
         let record = try #require(PlanCoachingStateRecord.fetch(planID: planID, in: reopened.mainContext))
@@ -240,7 +241,7 @@ struct RunningSchemaMigrationSpikeTests {
         let storeURL = directory.appendingPathComponent("V1.store")
         let ids = try writeV1Fixture(to: storeURL)
 
-        let schema = Schema(versionedSchema: SchemaV9.self)
+        let schema = Schema(versionedSchema: SchemaV10.self)
         let configuration = ModelConfiguration(
             "RunningMigrationSpike",
             schema: schema,

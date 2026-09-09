@@ -42,6 +42,8 @@ struct SettingsView: View {
     // Notification choices (enterprise pass 2026-08-15) — mirrors of `NotificationPrefs`, kept in
     // view state so the toggles animate; every write lands in UserDefaults AND resyncs the
     // schedulers, so a flip takes effect immediately (off also clears what's pending).
+    @AppStorage(NotificationQuietHours.startKey) private var quietStart = 22
+    @AppStorage(NotificationQuietHours.endKey) private var quietEnd = 6
     @State private var notifySessions = NotificationPrefs.sessionRemindersEnabled()
     @State private var notifyCoaching = NotificationPrefs.coachingEnabled()
     @State private var notifyStreak = NotificationPrefs.streakEnabled()
@@ -433,8 +435,20 @@ struct SettingsView: View {
             prefToggle("Streak check-ins", icon: "flame", isOn: $notifyStreak)
             inset
             prefToggle("Week in review", icon: "calendar", isOn: $notifyWeekly)
+            inset
+            Picker("Quiet hours begin", selection: $quietStart) {
+                ForEach(0..<24) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+            }.padding(.horizontal, Theme.Space.md)
+            Picker("Quiet hours end", selection: $quietEnd) {
+                ForEach(0..<24) { hour in Text(String(format: "%02d:00", hour)).tag(hour) }
+            }.padding(.horizontal, Theme.Space.md)
+            Text("Quiet hours pause coaching and activity reminders. Active rest timers and billing reminders still appear. Matching start and end times turn quiet hours off.")
+                .font(.rounded(12)).foregroundStyle(Theme.inkSecondary)
+                .padding(.horizontal, Theme.Space.md).padding(.bottom, Theme.Space.sm)
         }
         .onAppear { reminderDate = resolvedReminderDate }
+        .onChange(of: quietStart) { _, _ in services.notifications.schedulePlannedReminders(profiles.first?.plan); NotificationService.applyQuietHoursToPending() }
+        .onChange(of: quietEnd) { _, _ in services.notifications.schedulePlannedReminders(profiles.first?.plan); NotificationService.applyQuietHoursToPending() }
         .onChange(of: notifySessions) { _, on in
             NotificationPrefs.set(NotificationPrefs.sessionKey, to: on)
             services.notifications.schedulePlannedReminders(profiles.first?.plan)

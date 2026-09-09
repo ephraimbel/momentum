@@ -11,6 +11,20 @@ import Testing
 @MainActor
 struct NotificationPlannerTests {
 
+    @Test func weeklyReminderRetainsAnchoredTimezoneWhenTheDeviceTravels() throws {
+        let container = try makeContainer(), context = container.mainContext
+        let plan = makePlan(in: context, sessions: [run(1)])
+        var anchor = Calendar(identifier: .gregorian)
+        anchor.timeZone = TimeZone(identifier: "America/Chicago")!; anchor.firstWeekday = 2
+        var travel = anchor; travel.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let now = ISO8601DateFormatter().date(from: "2026-09-13T20:00:00Z")!
+        AdaptivePlanService.initialize(plan, profileID: UUID(), now: now, in: context, calendar: anchor)
+        let payload = try #require(NotificationPlanner.weekly(for: plan, now: now, unit: .metric, calendar: travel))
+        #expect(payload.fire.timeZone == anchor.timeZone)
+        #expect(travel.date(from: payload.fire) == ISO8601DateFormatter().date(from: "2026-09-14T14:00:00Z"))
+        #expect(payload.route == .plan && payload.body.contains("Open Momentum to finalize"))
+    }
+
     private let cal = Calendar.current
 
     private func makeContainer() throws -> ModelContainer {
@@ -85,7 +99,7 @@ struct NotificationPlannerTests {
         let reminders = NotificationPlanner.sessionReminders(for: plan, now: evening, hour: 7, minute: 30,
                                                              unit: .metric, calendar: cal)
         // Today's 7:30 has passed; +8 is past the horizon.
-        #expect(reminders.map { $0.fire.day } == [cal.component(.day, from: day(3)), cal.component(.day, from: day(7))])
+        #expect(reminders.map { $0.fire.day } == [3, 7].filter { day($0) < cal.dateInterval(of: .weekOfYear, for: evening)!.end }.map { cal.component(.day, from: day($0)) })
     }
 
     // MARK: Catch-up
@@ -98,7 +112,7 @@ struct NotificationPlannerTests {
         let catchUp = try #require(NotificationPlanner.catchUp(for: plan, now: morning, hour: 7, minute: 30, calendar: cal))
         #expect(catchUp.id == NotificationPlanner.catchUpID)
         #expect(cal.date(from: catchUp.fire) == cal.date(bySettingHour: 7, minute: 30, second: 0, of: day(2)))
-        #expect(catchUp.title == "Yesterday's run moves forward")
+        #expect(catchUp.title == "Check in on yesterday's run")
         #expect(catchUp.route == .plan)
         #expect(!catchUp.sound)                                // quiet: a morning after, never a jolt
         #expect(catchUp.family == .catchUp)
@@ -108,7 +122,7 @@ struct NotificationPlannerTests {
         let container = try makeContainer(); let ctx = container.mainContext
         let plan = makePlan(in: ctx, sessions: [lift(0)])
         let catchUp = try #require(NotificationPlanner.catchUp(for: plan, now: morning, hour: 7, minute: 30, calendar: cal))
-        #expect(catchUp.title == "Yesterday's lift moves forward")
+        #expect(catchUp.title == "Check in on yesterday's lift")
     }
 
     @Test func aDoneSessionEarnsNoCatchUp() throws {
@@ -169,9 +183,9 @@ struct NotificationPlannerTests {
                                                lift(after(2)), run(after(9), km: 30)])   // +9 is past the preview
         let weekly = try #require(NotificationPlanner.weekly(for: plan, now: morning, unit: .metric, calendar: cal))
         #expect(weekly.id == NotificationPlanner.weeklyID)
-        #expect(weekly.fire.hour == 18 && weekly.fire.minute == 0)
-        #expect(weekly.route == .progress("Trends"))
-        #expect(weekly.body == "Next week: 3 runs and 1 lift, 30 km of running. Long run \(long.date.formatted(.dateTime.weekday(.wide))).")
+        #expect(weekly.fire.hour == 9 && weekly.fire.minute == 0)
+        #expect(weekly.route == .plan)
+        #expect(weekly.body == "Review your recent training and recovery to shape the week ahead. Open Momentum to finalize it.")
     }
 
     @Test func weeklyWithOnlyRunsSpeaksTheTotal() throws {
@@ -180,14 +194,14 @@ struct NotificationPlannerTests {
         let offset = cal.dateComponents([.day], from: today, to: cal.startOfDay(for: sunday)).day!
         let plan = makePlan(in: ctx, sessions: [run(offset + 2, km: 10), run(offset + 4, km: 12)])
         let weekly = try #require(NotificationPlanner.weekly(for: plan, now: morning, unit: .metric, calendar: cal))
-        #expect(weekly.body == "Next week: 2 runs, 22 km in total.")
+        #expect(weekly.body == "Review your recent training and recovery to shape the week ahead. Open Momentum to finalize it.")
     }
 
     @Test func weeklyFallsBackWhenNothingIsPlannedAhead() throws {
         let container = try makeContainer(); let ctx = container.mainContext
         let plan = makePlan(in: ctx, sessions: [run(-2, status: .completed)])
         let weekly = try #require(NotificationPlanner.weekly(for: plan, now: morning, unit: .metric, calendar: cal))
-        #expect(weekly.body == "See how the week landed and what comes next.")
+        #expect(weekly.body == "Review your recent training and recovery to shape the week ahead. Open Momentum to finalize it.")
     }
 
     // MARK: Race
@@ -196,7 +210,8 @@ struct NotificationPlannerTests {
         let container = try makeContainer(); let ctx = container.mainContext
         let race = run(5, km: 21.1, type: .race)
         let plan = makePlan(in: ctx, sessions: [run(1), race])
-        let notes = NotificationPlanner.raceNotes(for: plan, now: morning, unit: .metric, calendar: cal)
+        let raceWeekNow = cal.date(byAdding: .day, value: -1, to: race.date)!
+        let notes = NotificationPlanner.raceNotes(for: plan, now: raceWeekNow, unit: .metric, calendar: cal)
         #expect(notes.count == 2)
         let eve = try #require(notes.first { $0.id.contains("race.eve") })
         let day = try #require(notes.first { $0.id.contains("race.day") })
@@ -236,7 +251,7 @@ struct NotificationPlannerTests {
         #expect(Set(all.map(\.id)).count == all.count)
         // The families that exist in this fixture.
         let families = Set(all.map(\.family))
-        #expect(families.isSuperset(of: [.session, .catchUp, .winback, .weekly, .race]))
+        #expect(families.isSuperset(of: [.session, .catchUp, .winback, .weekly]))
     }
 
     @Test func noPlanMeansNothingAndTogglesGateTheirFamilies() throws {

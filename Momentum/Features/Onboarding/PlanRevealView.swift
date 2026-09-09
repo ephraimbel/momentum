@@ -271,7 +271,7 @@ struct PlanRevealView: View {
                 // Drawn, not stamped. This badge is the first thing on the page and its whole job
                 // is to say "done" — so it does the gesture rather than asserting it.
                 DrawnCheck(progress: checkDraw).frame(width: 14, height: 14)
-                Text("PLAN READY")
+                Text("YOUR FIRST WEEK IS READY")
                     .font(.rounded(11, weight: .bold)).tracking(1.6)
                     .foregroundStyle(Theme.inkSecondary)
             }
@@ -315,6 +315,10 @@ struct PlanRevealView: View {
             .opacity(revealStage(h, 0.16, 0.42))
             .scaleEffect(0.965 + revealStage(h, 0.16, 0.42) * 0.035)
             .offset(y: 12 * (1 - revealStage(h, 0.16, 0.42)))
+            Text("Your goal stays the same. Your plan adapts every week.")
+                .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+                .opacity(revealStage(h, 0.42, 0.42))
             Text(vm.projectedOutcome())
                 .font(.rounded(15, weight: .regular))
                 .foregroundStyle(Theme.inkSecondary)
@@ -380,7 +384,7 @@ struct PlanRevealView: View {
                 }
             }
             let peak = m.max() ?? 0
-            let cap = "Peaks at \(planDistance(peak)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
+            let cap = "Projected peak: \(planDistance(peak)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
             return (m, peak > 0 ? cap + truncationNote : "", raceWeek)
         } else {
             var c = [Double](repeating: 0, count: weekCount)

@@ -62,7 +62,7 @@ enum NotificationPlanner {
         guard let plan else { return [] }
         // A dated notification cannot know tomorrow's symptoms. Clear the ordinary training,
         // race and catch-up schedule until the athlete completes their recovery check-in.
-        guard IllnessResponse.state(for: plan) == nil else { return [] }
+        guard IllnessResponse.state(for: plan) == nil, plan.adaptiveState?.requiresRecoveryCheckin != true else { return [] }
         var out: [LocalNotificationPayload] = []
         if options.sessionReminders {
             out += sessionReminders(for: plan, now: now, hour: hour, minute: minute,
@@ -142,8 +142,8 @@ enum NotificationPlanner {
             return LocalNotificationPayload(
                 id: catchUpID,
                 family: .catchUp,
-                title: "Yesterday's \(disciplineWord(lead.discipline)) moves forward",
-                body: "Nothing is lost. Open your plan and the coach fits it into this week.",
+                title: "Check in on yesterday's \(disciplineWord(lead.discipline))",
+                body: "See what is recorded and whether your schedule needs an adjustment.",
                 fire: comps,
                 route: .plan,
                 sound: false,
@@ -159,7 +159,7 @@ enum NotificationPlanner {
         // Only a plan with something ahead of it has a place to keep.
         let todayStart = calendar.startOfDay(for: now)
         guard plan.sessions.contains(where: {
-            $0.status != .completed && $0.completedWorkout == nil && $0.date >= todayStart
+            $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil && $0.date >= todayStart
         }) else { return nil }
         guard let day = calendar.date(byAdding: .day, value: winbackDays, to: todayStart) else { return nil }
         var comps = calendar.dateComponents([.year, .month, .day], from: day)
@@ -175,22 +175,23 @@ enum NotificationPlanner {
             relevance: 0.4)
     }
 
-    // MARK: Weekly review (Sunday 18:00, previewing the seven days ahead)
+    // MARK: Weekly review (09:00 at the plan's anchored week boundary)
 
     static func weekly(for plan: TrainingPlan, now: Date, unit: DistanceUnit,
                        calendar: Calendar) -> LocalNotificationPayload? {
-        guard let sunday = nextSundayEvening(after: now, calendar: calendar) else { return nil }
-        var comps = calendar.dateComponents([.year, .month, .day], from: sunday)
-        comps.hour = 18; comps.minute = 0
-        let body = weekPreview(plan, from: sunday, unit: unit, calendar: calendar)
-            ?? "See how the week landed and what comes next."
+        let cal = plan.adaptiveState?.calendar ?? calendar
+        let boundary = AdaptiveTrainingWeek.week(containing: now, calendar: cal).end
+        guard let fire = cal.date(bySettingHour: 9, minute: 0, second: 0, of: boundary) else { return nil }
+        var comps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
+        comps.timeZone = cal.timeZone
+        let body = "Review your recent training and recovery to shape the week ahead. Open Momentum to finalize it."
         return LocalNotificationPayload(
             id: weeklyID,
             family: .weekly,
-            title: "Your week in review",
+            title: "Time to review your week",
             body: body,
             fire: comps,
-            route: .progress("Trends"),
+            route: .plan,
             sound: true,
             relevance: 0.5)
     }
@@ -214,7 +215,7 @@ enum NotificationPlanner {
         let start = calendar.startOfDay(for: calendar.date(byAdding: .day, value: 1, to: sunday) ?? sunday)
         guard let end = calendar.date(byAdding: .day, value: 7, to: start) else { return nil }
         let week = plan.sessions.filter {
-            $0.status != .completed && $0.completedWorkout == nil && $0.date >= start && $0.date < end
+            $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil && $0.date >= start && $0.date < end
         }
         guard !week.isEmpty else { return nil }
         let runs = week.filter { $0.discipline == .running }
@@ -254,7 +255,8 @@ enum NotificationPlanner {
                           calendar: Calendar) -> [LocalNotificationPayload] {
         let todayStart = calendar.startOfDay(for: now)
         let races = plan.sessions
-            .filter { $0.runType == .race && $0.status != .completed && $0.completedWorkout == nil
+            .filter { AdaptivePlanService.showsDetails($0, plan: plan, now: now, calendar: calendar) }
+            .filter { $0.runType == .race && $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil
                       && calendar.startOfDay(for: $0.date) >= todayStart }
             .sorted { $0.date < $1.date }
         var out: [LocalNotificationPayload] = []
@@ -305,7 +307,8 @@ enum NotificationPlanner {
         let today = calendar.startOfDay(for: now)
         let horizon = calendar.date(byAdding: .day, value: horizonDays, to: today) ?? today
         let upcoming = plan.sessions
-            .filter { $0.status != .completed && $0.completedWorkout == nil
+            .filter { AdaptivePlanService.showsDetails($0, plan: plan, now: now, calendar: calendar) }
+            .filter { $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil
                       && $0.date >= today && $0.date <= horizon }
             .sorted { a, b in
                 if a.date != b.date { return a.date < b.date }

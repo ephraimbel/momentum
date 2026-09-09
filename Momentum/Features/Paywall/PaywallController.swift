@@ -548,6 +548,18 @@ final class PaywallController: PaywallServing {
             }
         }
         setPro(active)
+        // Observation only; RevenueCat webhooks establish actual renewals and trial conversion.
+        let entitlement = info.entitlements[Self.entitlementID]
+        let state = entitlement.map { !$0.isActive ? "inactive" : ($0.periodType == .trial ? "trial" : "paid") } ?? "none"
+        let environment = entitlement.map { $0.isSandbox ? "sandbox" : "production" } ?? "unknown"
+        let stamp = "\(state).\(environment).\(entitlement?.latestPurchaseDate?.timeIntervalSince1970 ?? 0)"
+        if UserDefaults.standard.string(forKey: "analytics.subscription.observed") != stamp {
+            UserDefaults.standard.set(stamp, forKey: "analytics.subscription.observed")
+            UserDefaults.standard.set(state, forKey: "analytics.subscription.state")
+            UserDefaults.standard.set(environment, forKey: "analytics.subscription.environment")
+            NotificationCenter.default.post(name: .momentumSubscriptionObserved, object: nil,
+                userInfo: ["state": state, "environment": environment])
+        }
     }
     #endif
 

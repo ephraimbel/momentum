@@ -173,7 +173,9 @@ struct PlanWeekShapeTests {
                             guard let first = plan.weeks.first else { continue }
                             let label = "anchor \(anchor) days \(days) lifting \(lifting) goal \(goal) race \(raceM ?? 0) level \(level)"
                             let zero = first.sessions.filter { $0.dayOffset == 0 }
-                            #expect(zero.contains { $0.discipline == .running }, "no run on day 0: \(label)")
+                            // A sub-mile safe dose must be walking, not an inflated first run.
+                            #expect(zero.contains { $0.discipline == .running || $0.discipline == .walking }, "no endurance session on day 0: \(label)")
+                            #expect(first.sessions.filter { $0.discipline == .running }.allSatisfy { ($0.targetDistanceM ?? 0) >= 1609.344 })
                             #expect(!zero.contains { $0.discipline == .strength }, "a lift on day 0: \(label)")
                             #expect(!zero.contains { $0.isHardRun }, "a hard run on day 0: \(label)")
                             let mondayOffset = (((2 - anchor) % 7) + 7) % 7

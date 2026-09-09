@@ -536,6 +536,7 @@ final class CoachChatViewModel {
         let start = cal.startOfDay(for: today)
         guard let end = cal.date(byAdding: .day, value: 14, to: start) else { return [] }
         return plan.sessions
+            .filter { AdaptivePlanService.showsDetails($0, plan: plan, now: today) }
             .filter { $0.status != .completed && $0.completedWorkout == nil
                       && cal.startOfDay(for: $0.date) >= start && $0.date < end }
             .sorted { $0.date < $1.date }
@@ -546,7 +547,7 @@ final class CoachChatViewModel {
         let workouts = (try? context.fetch(FetchDescriptor<Workout>())) ?? []
         let profile = fetchProfile()
         let plan = profile?.plan
-        let today = PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed }
+        let today = PlanCoaching.todaySessions(plan, on: Date()).first { $0.status != .completed && AdaptivePlanService.showsDetails($0, plan: plan) }
         let cal = Calendar.current
         let now = Date()
 

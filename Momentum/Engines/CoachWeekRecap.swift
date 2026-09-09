@@ -85,11 +85,11 @@ enum CoachWeekRecap {
            let nextWeek = calendar.dateInterval(of: .weekOfYear, for: nextStart) {
             let next = plan.sessions.filter { within($0.date, nextWeek) }
             if !next.isEmpty {
-                var line = "\(next.count) session\(next.count == 1 ? "" : "s")"
+                var line = "Preview: around \(next.count) session\(next.count == 1 ? "" : "s")"
                 if let long = next.first(where: { $0.runType == .long }), let d = long.targetDistanceM {
                     line += ", headlined by a \(Formatters.distance(meters: d, unit: unit)) long run"
                 }
-                line += "."
+                line += ". The workouts will be finalized using your recent training and recovery."
                 out.append(CoachSection(icon: "arrow.right", title: "The week ahead", detail: line))
             }
         }

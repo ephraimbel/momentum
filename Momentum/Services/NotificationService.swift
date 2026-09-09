@@ -45,6 +45,7 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     /// nonisolated: referenced from the nonisolated delegate callback.
     nonisolated static let mealReceiptCategory = "momentum.meal.receipt"
     nonisolated static let mealUndoAction = "momentum.meal.undo"
+    nonisolated static let coachingCategory = "momentum.coaching.update"
 
     override init() {
         super.init()
@@ -56,6 +57,8 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         center.setNotificationCategories([
             UNNotificationCategory(identifier: Self.mealReceiptCategory, actions: [undo],
                                    intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: Self.coachingCategory, actions: [],
+                                   intentIdentifiers: [], options: [.customDismissAction]),
         ])
     }
 
@@ -63,12 +66,24 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
 
     /// A tapped notification lands where it is about. The meal receipt's Undo removes the
     /// Siri-logged meal (safe if it's already gone); the default tap decodes the route the
-    /// notification was scheduled with and hands it to the shell. A dismissal does nothing.
+    /// notification was scheduled with and hands it to the shell. Coaching dismissals only
+    /// update the durable receipt; they never navigate or count as an open.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let action = response.actionIdentifier
         let info = response.notification.request.content.userInfo
+        if action == UNNotificationDismissActionIdentifier {
+            Task { @MainActor in
+                if let raw = info["momentum.coachMessageID"] as? String,
+                   let id = UUID(uuidString: raw),
+                   let context = PersistenceController.shared.availableContainer?.mainContext {
+                    CoachMessageLifecycle.record(id, action: .dismissed, in: context, source: "push")
+                }
+                completionHandler()
+            }
+            return
+        }
         if action == Self.mealUndoAction {
             guard let idString = info["mealID"] as? String, let id = UUID(uuidString: idString) else {
                 completionHandler()
@@ -89,6 +104,11 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         let route = NotificationRoute(userInfo: info)
         let family = info[NotificationRoute.familyKey] as? String
         Task { @MainActor in
+            if let raw = info["momentum.coachMessageID"] as? String,
+               let id = UUID(uuidString: raw),
+               let context = PersistenceController.shared.availableContainer?.mainContext {
+                CoachMessageLifecycle.record(id, action: .opened, in: context, source: "push")
+            }
             self.open(route, family: family)
             completionHandler()
         }
@@ -114,6 +134,16 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
                                             withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         if notification.request.identifier == Self.restID {
             completionHandler([])
+            return
+        }
+        if notification.request.content.userInfo["momentum.coachMessageID"] != nil {
+            // A push racing a foreground transition joins the same one-message allowance.
+            completionHandler([])
+            Task { @MainActor in
+                if let context = PersistenceController.shared.availableContainer?.mainContext {
+                    CoachSurface.request(in: context)
+                }
+            }
             return
         }
         completionHandler([.banner, .sound])
@@ -195,7 +225,10 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         options.weekly = NotificationPrefs.weeklyEnabled()
         options.distanceUnit = DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto
         let payloads = NotificationPlanner.payloads(for: plan, hour: time.hour, minute: time.minute,
-                                                    options: options)
+                                                    options: options).filter { payload in
+            guard let date = Calendar.current.date(from: payload.fire) else { return false }
+            return NotificationQuietHours.allows(date)
+        }
         Self.replace(prefix: NotificationPlanner.prefix, legacy: Self.legacyPlanIDs, with: payloads)
         // The trial reminder rides the same resync so its body can say what the athlete has done.
         Self.refreshTrialReminder(plan: plan)
@@ -214,6 +247,23 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         schedulePlannedReminders(profile?.plan)
     }
 
+    /// Preference changes withdraw already scheduled activity/coaching requests in quiet hours.
+    /// Live rest timers and the promised billing reminder are deliberately unaffected.
+    static func applyQuietHoursToPending() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let ids = requests.compactMap { request -> String? in
+                guard let raw = request.content.userInfo[NotificationRoute.familyKey] as? String,
+                      let family = NotificationFamily(rawValue: raw),
+                      family != .rest, family != .trial else { return nil }
+                let fire = (request.trigger as? UNCalendarNotificationTrigger)?.nextTriggerDate()
+                    ?? (request.trigger as? UNTimeIntervalNotificationTrigger)?.nextTriggerDate()
+                return fire.map { NotificationQuietHours.allows($0) ? nil : request.identifier } ?? nil
+            }
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+    }
+
     /// Remove every pending request under `prefix` (plus any `legacy` match), then add `payloads`.
     nonisolated private static func replace(prefix: String, legacy: @escaping @Sendable (String) -> Bool,
                                             with payloads: [LocalNotificationPayload]) {
@@ -223,7 +273,9 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
             if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: stale) }
             for p in payloads {
                 let trigger = UNCalendarNotificationTrigger(dateMatching: p.fire, repeats: false)
-                center.add(UNNotificationRequest(identifier: p.id, content: content(for: p), trigger: trigger))
+                center.add(UNNotificationRequest(identifier: p.id, content: content(for: p), trigger: trigger)) { error in
+                    if error == nil { AdaptiveAnalytics.emit("push_notification_scheduled", reason: p.family.rawValue) }
+                }
             }
         }
     }
@@ -264,7 +316,7 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         let now = Date()
         var comps = Calendar.current.dateComponents([.year, .month, .day], from: now)
         comps.hour = 18; comps.minute = 30
-        guard let fire = Calendar.current.date(from: comps), fire > now else { return }   // evening still ahead
+        guard let fire = Calendar.current.date(from: comps), fire > now, NotificationQuietHours.allows(fire) else { return }   // evening still ahead
         let payload = LocalNotificationPayload(
             id: Self.streakID, family: .streak,
             title: "Keep it rolling",
@@ -293,7 +345,7 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
                                         hasWorkedOutToday: hasWorkedOutToday) else { return }
         var comps = Calendar.current.dateComponents([.year, .month, .day], from: now)
         comps.hour = 17; comps.minute = 30
-        guard let fire = Calendar.current.date(from: comps), fire > now else { return }   // evening still ahead
+        guard let fire = Calendar.current.date(from: comps), fire > now, NotificationQuietHours.allows(fire) else { return }   // evening still ahead
         let payload = LocalNotificationPayload(
             id: firstRunID, family: .firstRun,
             title: "Your first run is ready",
@@ -330,7 +382,8 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
     #endif
 
     // MARK: Refuel cue (fuel integration 2026-09-06) — one nudge toward carbs and protein after a
-    // long run or an exerting session, 25 minutes after the finish. Never an amount, never a food.
+    // long run or an exerting session, within the existing post-workout reminder window.
+    // Shares the coaching allowance, so it cannot stack another interruption over recovery advice.
     // Withdrawn the moment a meal is logged (the athlete already did the thing), and replaced by
     // the next exerting session, so at most one is ever pending.
 
@@ -350,20 +403,18 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
             route: .fuel, sound: true, relevance: 0.8)
     }
 
-    /// Schedule the cue for a workout that just became real, mirror it into the inbox, and say it
-    /// once in the app's own voice (the toast follows the save receipt). Called from
+    /// Persist the cue for a workout that just became real. The shared coach presenter decides
+    /// whether it earns a toast or push before the window closes. Called from
     /// `WorkoutCompletion.adapt`, so the live finish and crash recovery both reach it.
     static func scheduleRefuelCue(for workout: Workout, in context: ModelContext, now: Date = Date()) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [refuelID])
         guard NotificationPrefs.refuelEnabled(),
-              let payload = refuelPayload(for: workout, now: now) else { return }
-        let trigger = UNCalendarNotificationTrigger(dateMatching: payload.fire, repeats: false)
-        center.add(UNNotificationRequest(identifier: payload.id, content: content(for: payload), trigger: trigger))
-        AppNotification.post(kind: .reminder, title: payload.title, body: payload.body, on: now,
+              let payload = refuelPayload(for: workout, now: now),
+              let fire = Calendar.current.date(from: payload.fire), NotificationQuietHours.allows(fire) else { return }
+        AppNotification.post(kind: .coaching, title: payload.title, body: payload.body, on: now,
                              in: context, dedupeToken: "refuel-\(workout.id.uuidString)", daily: false,
-                             route: .fuel)
-        ToastCenter.shared.show(icon: "fork.knife", line: payload.title, route: .deepLink(.fuel), delay: 1.6)
+                             route: .fuel, coachingPriority: 20, expiresAt: fire, topic: "refuel")
     }
 
     /// A logged meal answers the cue: withdraw it wherever it still waits.
@@ -371,6 +422,11 @@ final class NotificationService: NSObject, NotificationServing, UNUserNotificati
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [refuelID])
         center.removeDeliveredNotifications(withIdentifiers: [refuelID])
+        if let context = PersistenceController.shared.availableContainer?.mainContext {
+            for receipt in CoachMessageLifecycle.candidates(in: context) where receipt.topic == "refuel" {
+                CoachMessageLifecycle.record(receipt.id, action: .expired, in: context, source: "meal_logged")
+            }
+        }
     }
 
     // MARK: Rest-timer completion (PRD §24) — static so it schedules to the shared notification

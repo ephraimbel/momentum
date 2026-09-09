@@ -34,7 +34,7 @@ struct PlanCheckpointTests {
 
     @Test func openBlockEndsWithACheckpointSizedToTheAthlete() {
         let cases: [(ExperienceLevel, Double, Double, String)] = [
-            (.new, 12_000, 1_609, "1 mile"),
+            (.new, 12_000, 1609.344, "1 mile"),
             (.some, 26_000, 3_000, "3K"),
             (.experienced, 48_000, 5_000, "5K"),
         ]
@@ -85,14 +85,14 @@ struct PlanCheckpointTests {
         let found = checkpoints(p)
         #expect(found.count == 1)
         guard let (week, tt) = found.first else { return }
-        #expect(tt.targetDistanceM == 1_609, "\(tt.targetDistanceM ?? 0)")
+        #expect(tt.targetDistanceM == 1609.344, "\(tt.targetDistanceM ?? 0)")
         let runningWeek = p.weeks[week].sessions.filter { $0.discipline == .running }
             .reduce(0.0) { $0 + ($1.targetDistanceM ?? 0) }
         #expect(runningWeek > 0 && 1_609 / runningWeek < 0.30, "the test is a small share of the running week")
     }
 
     @Test func timeTrialLabelsReadBackTheirDistance() {
-        #expect(PlanEngine.timeTrialDistanceM(intervals: "Time trial: 1 mile at a strong, steady effort") == 1_609)
+        #expect(PlanEngine.timeTrialDistanceM(intervals: "Time trial: 1 mile at a strong, steady effort") == 1609.344)
         #expect(PlanEngine.timeTrialDistanceM(intervals: "Time trial: 3K at race effort") == 3_000)
         #expect(PlanEngine.timeTrialDistanceM(intervals: "Time trial: 5K at race effort") == 5_000)
         #expect(PlanEngine.timeTrialDistanceM(intervals: "6x400m @ I") == nil)

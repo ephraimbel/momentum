@@ -39,7 +39,7 @@ final class PersistenceController {
 
     /// All persisted model types — forwards to the versioned schema, which is the canonical list.
     /// Kept as a name because tests and previews build containers from it.
-    static let models: [any PersistentModel.Type] = SchemaV9.models
+    static let models: [any PersistentModel.Type] = SchemaV10.models
 
     init(inMemory: Bool = false,
          makeContainer: @escaping (Schema, ModelConfiguration) throws -> ModelContainer = {
@@ -61,7 +61,7 @@ final class PersistenceController {
         }
         #endif
         failureCode = nil
-        let schema = Schema(versionedSchema: SchemaV9.self)
+        let schema = Schema(versionedSchema: SchemaV10.self)
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         var stage = "open"
         do {

@@ -646,6 +646,11 @@ enum PlanEngine {
             if !changed { break }
         }
 
+        // A minimum is a scheduling constraint, never permission to inflate a safe budget.
+        for w in weeks.indices {
+            for i in weeks[w].sessions.indices { AdaptiveTrainingWeek.normalize(&weeks[w].sessions[i]) }
+        }
+
         // The coach's words on every session (2026-09-06). Written LAST, from the final weeks, so a
         // note's "about a third of this week" is a true share after the cutback and governor passes.
         // Only generic rationales are replaced; every special one the engine wrote above stands.
@@ -1475,7 +1480,7 @@ enum PlanEngine {
     /// The test distance for an athlete's running week: a mile for a new runner or a light week, 3K
     /// in the middle, 5K once the base is there. Sized to the RUNNING week, never the declared total.
     static func checkpointDistanceM(level: ExperienceLevel, weeklyRunningM: Double) -> Double {
-        if level == .new || weeklyRunningM < 20_000 { return 1_609 }
+        if level == .new || weeklyRunningM < 20_000 { return AdaptiveTrainingWeek.minimumRunM }
         if weeklyRunningM < 35_000 { return 3_000 }
         return 5_000
     }
@@ -1485,7 +1490,7 @@ enum PlanEngine {
     /// the recalibration read, so it is parsed here and nowhere else.
     static func timeTrialDistanceM(intervals: String?) -> Double? {
         guard let intervals, intervals.contains("Time trial") else { return nil }
-        if intervals.contains("1 mile") { return 1_609 }
+        if intervals.contains("1 mile") { return AdaptiveTrainingWeek.minimumRunM }
         if intervals.contains("3K") { return 3_000 }
         if intervals.contains("5K") { return 5_000 }
         return nil

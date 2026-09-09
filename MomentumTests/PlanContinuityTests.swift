@@ -208,7 +208,7 @@ struct PlanContinuityTests {
         configuration.protocolClasses = [ContinuityURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let transport = HTTPPlanCloudTransport(session: session)
+        let transport = HTTPPlanCloudTransport(session: session, baseURL: "https://fixture.supabase.co", apiKey: "fixture-anon")
         let identity = PlanCloudIdentity(ownerID: owner, token: "fixture-token")
         let restored = try await transport.read(identity: identity)
         #expect(restored?.snapshot.coach.plan?.id == p.plan?.id)
@@ -237,7 +237,7 @@ struct PlanContinuityTests {
         configuration.protocolClasses = [ContinuityURLProtocol.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let transport = HTTPPlanCloudTransport(session: session)
+        let transport = HTTPPlanCloudTransport(session: session, baseURL: "https://fixture.supabase.co", apiKey: "fixture-anon")
         do {
             _ = try await transport.read(identity: .init(ownerID: UUID(), token: "expired-fixture"))
             Issue.record("An expired token must not be treated as an empty cloud plan")
@@ -467,6 +467,12 @@ struct PlanContinuityTests {
             let completed = try outing(in: a.mainContext, at: Date().addingTimeInterval(-86_400))
             PlanCoaching.markComplete(credited, with: completed, in: a.mainContext)
             let localWorkout = try outing(in: b.mainContext, at: Date().addingTimeInterval(-2 * 86_400))
+            let remoteFeedback = WorkoutFeedbackRecord(workoutID: completed.id)
+            remoteFeedback.recovery = 1; remoteFeedback.pain = true
+            a.mainContext.insert(remoteFeedback); try a.mainContext.save()
+            let localFeedback = WorkoutFeedbackRecord(workoutID: localWorkout.id)
+            localFeedback.recovery = 3; localFeedback.pain = false
+            b.mainContext.insert(localFeedback)
             pb.plan?.name = "Device B choice"; try b.mainContext.save()
             await source.retry(); await destination.retry()
             #expect(destination.status == .conflict)
@@ -478,6 +484,8 @@ struct PlanContinuityTests {
             #expect(restored.plan?.name == (useCloud ? "My 10K" : "Device B choice"))
             await destination.retry()
             #expect(cloud.value?.snapshot.workouts.count == 2)
+            #expect(Set(cloud.value?.snapshot.recoveryFeedback?.map(\.id) ?? []) == [completed.id, localWorkout.id])
+            #expect(cloud.value?.snapshot.recoveryFeedback?.first(where: { $0.id == completed.id })?.pain == true)
             #expect(cloud.value?.snapshot.coach.plan?.sessions.first?.completedWorkoutID == completed.id)
         }
     }

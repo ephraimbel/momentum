@@ -250,7 +250,7 @@ struct PlanPreview: Codable, Equatable, Sendable {
                            detail: s.strengthTargets.isEmpty ? nil : "\(s.strengthTargets.count) exercises",
                            isStrength: true, isLong: false, isQuality: false)
             }
-            let title = s.runType?.planTitle ?? "Run"
+            let title = s.discipline == .walking ? "Recovery walk" : (s.runType?.planTitle ?? "Run")
             var detail: String?
             if let m = s.targetDistanceM, m > 0 { detail = Formatters.distance(meters: m, unit: unit) }
             else if let d = s.targetDurationS, d > 0 { detail = Formatters.compactDuration(s: d) }
@@ -271,7 +271,11 @@ struct PlanPreview: Codable, Equatable, Sendable {
             }
         } ?? 0
 
-        let volumes = weeks.map(\.trainingVolumeM)
+        let runningPlan = inputs.disciplines.contains(.running)
+        let volumes = weeks.map { week in
+            week.sessions.filter { $0.runType != .race && (runningPlan ? $0.discipline == .running : $0.discipline != .strength) }
+                .reduce(0.0) { $0 + ($1.targetDistanceM ?? 0) }
+        }
         let peakIndex = volumes.indices.max { volumes[$0] < volumes[$1] } ?? 0
         let longest = weeks.flatMap(\.sessions)
             .filter { $0.discipline != .strength && $0.runType != .race }

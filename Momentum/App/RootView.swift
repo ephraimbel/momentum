@@ -112,14 +112,22 @@ struct RootView: View {
         #if DEBUG
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
+            .onChange(of: showSplash, initial: true) { _, shown in
+                if shown { ToastCenter.shared.hold("splash") }
+                else { ToastCenter.shared.release("splash") }
+            }
             .task(id: auth.userID) {
                 await services.planSync.begin(account: auth.userID, isGuest: auth.isGuest, expectedOwner: auth.cloudOwnerID, in: context)
                 await refreshSocialInbox()
+                await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context)
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     services.planSync.schedule()
-                    Task { await refreshSocialInbox() }
+                    Task {
+                        await refreshSocialInbox()
+                        await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context)
+                    }
                 }
                 if phase == .background, let fire = debugBackgroundFire {
                     debugBackgroundFire = nil
@@ -129,14 +137,22 @@ struct RootView: View {
         #else
         mainBody
             .overlay { if showSplash { SplashView { showSplash = false } } }
+            .onChange(of: showSplash, initial: true) { _, shown in
+                if shown { ToastCenter.shared.hold("splash") }
+                else { ToastCenter.shared.release("splash") }
+            }
             .task(id: auth.userID) {
                 await services.planSync.begin(account: auth.userID, isGuest: auth.isGuest, expectedOwner: auth.cloudOwnerID, in: context)
                 await refreshSocialInbox()
+                await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context)
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
                     services.planSync.schedule()
-                    Task { await refreshSocialInbox() }
+                    Task {
+                        await refreshSocialInbox()
+                        await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context)
+                    }
                 }
             }
         #endif
@@ -203,6 +219,7 @@ struct RootView: View {
         case .today:
             selection = .today
         case .plan:
+            router.pendingPlanWeek = Date()
             selection = .plan
         case .planWeek(let date):
             router.pendingPlanWeek = date
@@ -712,6 +729,12 @@ struct RootView: View {
             if ProcessInfo.processInfo.arguments.contains("--strength-save") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { showStrengthSave = true }
             }
+            if ProcessInfo.processInfo.arguments.contains("--coach-loop-demo") {
+                CoachLoopDemo.seed(in: context)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--adaptive-review-demo") {
+                CoachLoopDemo.seedReview(in: context)
+            }
             if ProcessInfo.processInfo.arguments.contains("--coach-card") {
                 // Deterministic proposal in the thread (no network) — screenshot the card + Apply flow.
                 CoachDemo.seedProposalIfNeeded(in: context)
@@ -761,13 +784,34 @@ struct RootView: View {
                 .flatMap({ NotificationRoute(rawValue: String($0.dropFirst("--notify-fire=".count))) }) {
                 debugBackgroundFire = { NotificationService.debugFire(route: fireRoute) }
             }
+            if ProcessInfo.processInfo.arguments.contains("--coach-push-demo") {
+                // Simulate a meaningful foreground decision held behind a save cover. The
+                // production background transition, not a background producer, must deliver it.
+                ToastCenter.shared.hold("coach-push-demo")
+                UserDefaults.standard.removeObject(forKey: CoachPushBudget.dayKey)
+                UserDefaults.standard.set(0, forKey: NotificationQuietHours.startKey)
+                UserDefaults.standard.set(0, forKey: NotificationQuietHours.endKey)
+                NotificationPrefs.set(NotificationPrefs.coachingKey, to: true)
+                for r in (try? context.fetch(FetchDescriptor<CoachMessageReceipt>())) ?? [] { r.expiresAt = .distantPast }
+                try? context.save()
+                AppNotification.post(kind: .coaching, title: "Your coaching review is ready",
+                    body: "Open your current plan to review this update.", in: context,
+                    dedupeToken: "coach-push-demo", daily: false, route: .plan, coachingPriority: 100)
+                debugBackgroundFire = { ToastCenter.shared.release("coach-push-demo") }
+            }
             // --refuel-fire: the refuel cue's END-TO-END proof. On the first backgrounding, mint a
             // long run that ended a minute ago and schedule its cue through the PRODUCTION path
             // (`scheduleRefuelCue`: request + inbox row + toast) with the lead cut to seconds, so
             // the test can tap the real banner on SpringBoard and land on Fuel.
             if ProcessInfo.processInfo.arguments.contains("--refuel-fire") {
-                PostWorkoutFuelCue.debugLead = (delay: 4, floor: 4)
+                // Keep the real relevance window. The shared coach dispatcher already fires
+                // within seconds; shortening this window would test artificial expiry instead.
                 debugBackgroundFire = {
+                    UserDefaults.standard.removeObject(forKey: CoachPushBudget.dayKey)
+                    UserDefaults.standard.set(0, forKey: NotificationQuietHours.startKey)
+                    UserDefaults.standard.set(0, forKey: NotificationQuietHours.endKey)
+                    NotificationPrefs.set(NotificationPrefs.refuelKey, to: true)
+                    for receipt in (try? context.fetch(FetchDescriptor<CoachMessageReceipt>())) ?? [] { receipt.expiresAt = .distantPast }
                     let run = Workout(); run.type = .run
                     run.durationS = 75 * 60; run.elapsedS = 76 * 60
                     run.startedAt = Date().addingTimeInterval(-(76 * 60 + 60))

@@ -9,6 +9,8 @@
 
 import { buildConversion, classify, type RevenueCatEvent } from "./conversion.ts";
 
+import { recordBilling } from "./retention.ts";
+
 const OPENAI_EVENTS_URL = "https://bzr.openai.com/v1/events";
 
 type RevenueCatPayload = {
@@ -51,6 +53,12 @@ Deno.serve(async (req) => {
 
   const event = payload.event;
   if (!event?.id || !event.type) return json(400, { error: "invalid_revenuecat_event" });
+
+  // Persist all billing transitions before classifying advertising conversions. Duplicate
+  // deliveries are ignored by event ID. A write failure asks RevenueCat to retry.
+  if (!await recordBilling(event as unknown as Record<string, unknown>)) {
+    return json(503, { error: "billing_ledger_unavailable" });
+  }
 
   // The dashboard's "Send test event" validates the paid shape against OpenAI without recording.
   const isDashboardTest = event.type === "TEST";

@@ -12,7 +12,7 @@ enum DataManager {
 
     struct Snapshot: Codable {
         var app = "momentum"
-        var schemaVersion = 2
+        var schemaVersion = 3
         var exportedAt: Date
         var profile: ProfileDTO?
         var workouts: [WorkoutDTO]
@@ -21,6 +21,43 @@ enum DataManager {
         var planMetadata: [PlanMetadataDTO]
         var plannedSessionIntents: [PlannedSessionIntentDTO]
         var planDecisions: [PlanDecisionDTO]
+        var adaptivePlans: [AdaptivePlanDTO]? = nil
+        var workoutFeedback: [WorkoutFeedbackDTO]? = nil
+    }
+
+    struct AdaptivePlanDTO: Codable {
+        let planID: UUID
+        let timeZoneID: String
+        let lastWeekKey: String
+        let requiresRecoveryCheckin: Bool
+        let baselineData: Data
+        let reviewsData: Data
+        init(_ value: AdaptivePlanRecord) {
+            planID = value.id; timeZoneID = value.timeZoneID; lastWeekKey = value.lastWeekKey
+            requiresRecoveryCheckin = value.requiresRecoveryCheckin
+            baselineData = value.baselineData; reviewsData = value.reviewsData
+        }
+    }
+
+    struct WorkoutFeedbackDTO: Codable {
+        let workoutID: UUID
+        let submittedAt: Date
+        let recovery: Int?
+        let pain: Bool?
+        let illness: Bool?
+        let couldContinue: Bool?
+        let launchedSessionID: UUID?
+        let plannedDistanceM: Double?
+        let plannedDurationS: Double?
+        let plannedPaceSPerKm: Double?
+        let plannedRunType: String?
+        init(_ value: WorkoutFeedbackRecord) {
+            workoutID = value.id; submittedAt = value.submittedAt; recovery = value.recovery
+            pain = value.pain; illness = value.illness; couldContinue = value.couldContinue
+            launchedSessionID = value.launchedSessionID; plannedDistanceM = value.plannedDistanceM
+            plannedDurationS = value.plannedDurationS; plannedPaceSPerKm = value.plannedPaceSPerKm
+            plannedRunType = value.plannedRunType
+        }
     }
 
     struct ProfileDTO: Codable {
@@ -33,6 +70,7 @@ enum DataManager {
     }
 
     struct WorkoutDTO: Codable {
+        let id: UUID?
         let type: String
         let startedAt: Date
         let durationS: Double
@@ -296,7 +334,7 @@ enum DataManager {
                            daysPerWeek: p.daysPerWeek, weightUnit: p.weightUnit, distanceUnit: p.distanceUnit)
             },
             workouts: workouts.map { w in
-                WorkoutDTO(type: w.type.rawValue, startedAt: w.startedAt, durationS: w.durationS,
+                WorkoutDTO(id: w.id, type: w.type.rawValue, startedAt: w.startedAt, durationS: w.durationS,
                            perceivedEffort: w.perceivedEffort, title: w.title, note: w.note,
                            distanceM: w.gps?.distanceM, avgPaceSPerKm: w.gps?.avgPaceSPerKm,
                            elevationGainM: w.gps?.elevationGainM,
@@ -306,7 +344,11 @@ enum DataManager {
             runningEvents: events.map(RunningEventDTO.init),
             planMetadata: metadata.map(PlanMetadataDTO.init),
             plannedSessionIntents: intents.map(PlannedSessionIntentDTO.init),
-            planDecisions: decisions.map(PlanDecisionDTO.init)
+            planDecisions: decisions.map(PlanDecisionDTO.init),
+            adaptivePlans: ((try? context.fetch(FetchDescriptor<AdaptivePlanRecord>())) ?? [])
+                .sorted { $0.id.uuidString < $1.id.uuidString }.map(AdaptivePlanDTO.init),
+            workoutFeedback: ((try? context.fetch(FetchDescriptor<WorkoutFeedbackRecord>())) ?? [])
+                .sorted { $0.id.uuidString < $1.id.uuidString }.map(WorkoutFeedbackDTO.init)
         )
 
         let encoder = JSONEncoder()
@@ -371,6 +413,9 @@ enum DataManager {
         wipe(PlanPreferencesRecord.self)
         wipe(PlanContinuityRecord.self)
         wipe(PlanFitnessDeclarationRecord.self)
+        wipe(AdaptivePlanRecord.self)
+        wipe(WorkoutFeedbackRecord.self)
+        wipe(CoachMessageReceipt.self)
         // Standalone records (no parent relationship to cascade through) — must be wiped explicitly
         // or a reset leaves stale coaching history, inbox notifications, and check-ins behind.
         wipe(CoachingEvent.self)
@@ -466,6 +511,9 @@ enum DataManager {
             try wipe(PlanPreferencesRecord.self)
             try wipe(PlanContinuityRecord.self)
             try wipe(PlanFitnessDeclarationRecord.self)
+            try wipe(AdaptivePlanRecord.self)
+            try wipe(WorkoutFeedbackRecord.self)
+            try wipe(CoachMessageReceipt.self)
             try wipe(CoachingEvent.self)
             try wipe(AppNotification.self)
             try wipe(DailyCheckin.self)

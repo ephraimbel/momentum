@@ -34,6 +34,7 @@ struct TimedSaveView: View {
 
     @State private var title = ""
     @State private var desc = ""
+    @State private var recoveryDraft = WorkoutRecoveryDraft()
     @State private var effort: Int?
     /// The calorie readout — Health-measured when the Watch has numbers for the window, estimated
     /// otherwise, and always the athlete's to overtype (owner ask 2026-07-30).
@@ -136,6 +137,7 @@ struct TimedSaveView: View {
             title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
             desc = workout.note
             effort = workout.perceivedEffort
+                recoveryDraft = WorkoutRecoveryDraft(record: workout.modelContext.flatMap { WorkoutFeedbackRecord.fetch(workoutID: workout.id, in: $0) })
             prefillCalories(workout)
             // Recovery re-save of an e-bike session keeps its earlier console readouts.
             rideDistanceM = workout.gps?.distanceM ?? 0
@@ -194,6 +196,7 @@ struct TimedSaveView: View {
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             effortRow
+            WorkoutRecoveryFeedback(draft: $recoveryDraft)
             if showsRideDetails {
                 Divider().overlay(Theme.hairline)
                 distanceRow
@@ -392,6 +395,7 @@ struct TimedSaveView: View {
         workout.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         workout.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
         workout.perceivedEffort = effort
+        recoveryDraft.persist(for: workout)
         workout.calories = kcal
         // The e-bike's console readouts ride a sample-less GPSDetail — exactly how a manually
         // logged indoor ride stores them — so distance, avg speed and elevation flow into Trends,
@@ -437,6 +441,7 @@ struct TimedSaveView: View {
         // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
         // `onDone` when the beat completes or is tapped through.
         celebrating = true
+        if recoveryDraft.hasAnswer { services.analytics.log(.adaptive(action: "post_workout_feedback_submitted", week: "current", reason: "checkin", goal: profiles.first?.goal, workout: workout.type, status: .completed)) }
     }
 
     private func discard() {

@@ -915,6 +915,7 @@ enum PlanService {
         // athlete's, not the plan row's (2026-09-07): a rebuild for more days or new equipment
         // used to mint a plan with every latch cleared, so an ease throttled a minute earlier was
         // suddenly available again and a paused plan silently un-paused.
+        let recoveryHold = existing?.adaptiveState?.requiresRecoveryCheckin ?? false
         if let existing {
             trainingPlan.lastAdaptedAt = existing.lastAdaptedAt
             trainingPlan.lastPaceEasedAt = existing.lastPaceEasedAt
@@ -992,6 +993,8 @@ enum PlanService {
             context.delete(existing)
         }
         try IllnessResponse.enforce(in: context)
+        AdaptivePlanService.initialize(trainingPlan, profileID: profile.id, now: startDate, in: context, calendar: calendar)
+        trainingPlan.adaptiveState?.requiresRecoveryCheckin = recoveryHold
         return trainingPlan
     }
 

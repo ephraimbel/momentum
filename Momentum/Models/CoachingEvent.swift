@@ -64,14 +64,7 @@ final class CoachingEvent {
         // carrying the same door the live surface opens.
         let route = NotificationRoute.forCoaching(kind, focusSessionID: focusSessionID)
         AppNotification.post(kind: .coaching, title: headline, body: detail, on: date, in: context,
-                             route: route)
-        // And surface it live: a toast in the foreground, a (budgeted) push in the background.
-        // Record sites run on engines and view models alike, so hop rather than assume an actor.
-        PlanMutation.afterCommit(in: context) {
-            Task { @MainActor in
-                CoachSurface.deliver(kind: kind, headline: headline, detail: detail,
-                                     focusSessionID: focusSessionID)
-            }
-        }
+                             route: route, coachingPriority: kind == .recover ? 100 : kind == .ease ? 90 : 60)
+
     }
 }

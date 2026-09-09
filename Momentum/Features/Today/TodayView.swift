@@ -531,7 +531,12 @@ struct TodayView: View {
             PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
                                            notifications: services.notifications, in: context)
         }
-        PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
+        if AdaptivePlanService.isDue(plan) {
+            Task { await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context) }
+        } else {
+            if let p = profiles.first { AdaptivePlanService.refresh(profile: p, in: context, analytics: services.analytics) }
+            PlanCoaching.reconcileMissed(plan, today: Date(), in: context)
+        }
         // Plans built before the coach notes existed still carry the fixed fallback sentences.
         // Rewrite those in place, once (a note is never generic again), so the coach reaches the
         // athletes who already have a plan. Synchronous on purpose: the deck reads the note next.

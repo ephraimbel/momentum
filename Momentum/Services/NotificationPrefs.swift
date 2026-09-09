@@ -73,6 +73,11 @@ enum NotificationPrefs {
 enum CoachPushBudget {
     static let dayKey = "notify.coachPush.day"
 
+    static func canConsume(now: Date = Date(), calendar: Calendar = .current,
+                           defaults: UserDefaults = .standard) -> Bool {
+        defaults.double(forKey: dayKey) != calendar.startOfDay(for: now).timeIntervalSinceReferenceDate
+    }
+
     /// True exactly once per local day; subsequent calls the same day return false.
     @discardableResult
     static func tryConsume(now: Date = Date(), calendar: Calendar = .current,
@@ -111,5 +116,21 @@ enum ReminderTiming {
         let lead = peak >= 9 ? 2 : 1
         let hour = min(20, max(6, peak - lead))
         return (hour, 0)
+    }
+}
+
+/// Local-hour quiet window; equal endpoints mean no quiet window. No notification is moved
+/// to a later hour where its workout-preparation claim could already be stale.
+enum NotificationQuietHours {
+    static let startKey = "notify.quiet.start"
+    static let endKey = "notify.quiet.end"
+    static func allows(_ date: Date, calendar: Calendar = .current, defaults: UserDefaults = .standard) -> Bool {
+        let start = defaults.object(forKey: startKey) as? Int ?? 22
+        let end = defaults.object(forKey: endKey) as? Int ?? 6
+        return allows(hour: calendar.component(.hour, from: date), start: start, end: end)
+    }
+    static func allows(hour: Int, start: Int, end: Int) -> Bool {
+        guard start != end else { return true }
+        return start < end ? !(start..<end).contains(hour) : !(hour >= start || hour < end)
     }
 }

@@ -458,6 +458,7 @@ struct AddSessionSheet: View {
             saveFailed = true
             return
         }
+        AdaptiveAnalytics.emit("workout_scheduled", reason: sport.rawValue)
         Haptics.success()
         onDone()
     }

@@ -81,6 +81,7 @@ enum MorningReadinessRefresh {
     /// One line, the hub's own vocabulary: the score leads, the driver (with its confidence
     /// qualifier) explains, the band's no-shame guidance closes.
     static func push(_ r: MorningReadiness) {
+        guard NotificationQuietHours.allows(Date()) else { return }
         let content = UNMutableNotificationContent()
         content.title = "Readiness \(r.score)"
         content.body = NotificationCopy.clean("\(r.displayDriverWithConfidence). \(r.guidance)")

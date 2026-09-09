@@ -44,6 +44,9 @@ enum PlanMutation {
             context.undoManager = previousUndo
             context.autosaveEnabled = autosave
         }
+        let beforeRunning = Dictionary(((try? context.fetch(FetchDescriptor<PlannedSession>())) ?? []).map {
+            ($0.id, $0.targetDistanceM ?? -1)
+        }, uniquingKeysWith: { a, _ in a })
         let transaction = Scope(context)
         do {
             let result = try $scope.withValue(transaction) {
@@ -51,6 +54,13 @@ enum PlanMutation {
                 try RunPrescriptionBudget.enforcePreferences(in: context)
                 try InjuryResponse.enforce(in: context)
                 try IllnessResponse.enforce(in: context)
+                // Preserve existing prescriptions on rollout; normalize newly generated or edited doses.
+                for profile in try context.fetch(FetchDescriptor<UserProfile>()) {
+                    guard let plan = profile.plan, !plan.isSelfCoached else { continue }
+                    for s in plan.sessions where beforeRunning[s.id] != (s.targetDistanceM ?? -1) {
+                        AdaptivePlanService.normalize(s)
+                    }
+                }
                 context.processPendingChanges()
                 if undo.groupingLevel > 0 { undo.endUndoGrouping() }
                 try commit(context)

@@ -289,10 +289,16 @@ struct PlanAdjustmentServiceTests {
 
     @Test func aPauseShiftsTheTrainingAroundRaceDayAndATuneUp() throws {
         let c = try makeContainer(); let ctx = c.mainContext
-        let profile = makeProfile(in: ctx)
-        let plan = try #require(profile.plan)
-        let open = openSessions(of: plan)
-        try #require(open.count >= 3)
+        // Explicit, safely spaced dates: mutating two arbitrary generated sessions into races
+        // made this fixture depend on today's weekday and could make the original schedule unsafe.
+        let profile = UserProfile(); ctx.insert(profile)
+        let plan = TrainingPlan(); profile.plan = plan
+        let open = [0, 3, 8, 11].map { offset in
+            let session = PlannedSession(); session.date = cal.startOfDay(for: day(offset))
+            session.targetDistanceM = 4_000; session.runType = .easy
+            return session
+        }
+        plan.sessions = open
         // Race day sits inside the pause window; a tune-up the athlete trains through keeps its
         // date on the intervals prefix alone.
         let race = open[0]

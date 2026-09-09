@@ -26,17 +26,23 @@ enum CoachProactive {
         // This was date-dependent and therefore invisible most of the week: the weekly recap only
         // fires in the first two days of a week (`daysIn < 2`), so the suite passed on Thursday
         // 2026-08-27 and failed on Sunday 2026-08-30 with no code change in between.
-        if ProcessInfo.processInfo.arguments.contains("--coach-card") { return }
+        if ["--coach-card", "--coach-loop-demo", "--coach-push-demo", "--refuel-fire"].contains(where: ProcessInfo.processInfo.arguments.contains) { return }
         #endif
         let messages = (try? context.fetch(FetchDescriptor<ChatMessage>())) ?? []
         if seedRaceWeek(profile: profile, messages: messages, today: today,
                         in: context, calendar: calendar) { return }
         if seedPRCelebration(profile: profile, messages: messages, today: today,
                              in: context, calendar: calendar) { return }
+        if let plan = profile.plan, let state = plan.adaptiveState,
+           AdaptivePlanService.isDue(plan, now: today)
+            || state.reviews.last(where: { $0.id == state.lastWeekKey }).map({ $0.viewedAt == nil }) == true { return }
         if seedEarnedBump(profile: profile, workouts: workouts, messages: messages,
                           today: today, in: context, calendar: calendar) { return }
         if seedPlanTruth(profile: profile, messages: messages, today: today,
                          in: context, calendar: calendar) { return }
+        // The durable adaptive review owns this week's recap; don't seed a competing version.
+        if let plan = profile.plan, let state = plan.adaptiveState,
+           state.reviews.contains(where: { $0.id == AdaptiveTrainingWeek.key(today, calendar: state.calendar) }) { return }
         if seedWeekRecap(profile: profile, workouts: workouts, messages: messages,
                          today: today, in: context, calendar: calendar) { return }
         seedWeekAhead(profile: profile, messages: messages, today: today, in: context, calendar: calendar)
@@ -84,7 +90,7 @@ enum CoachProactive {
         context.insert(ChatMessage(role: .coach, text: text, card: nil))
         try? context.save()
         AppNotification.post(kind: .coaching, title: "Your week ahead",
-                             body: text, on: today, in: context, dedupeToken: "coach-week-ahead")
+                             body: text, on: today, in: context, dedupeToken: "coach-week-ahead", expiresAt: week.end, topic: "week-ahead")
         return true
     }
 
@@ -130,7 +136,8 @@ enum CoachProactive {
         try? context.save()
         AppNotification.post(kind: .coaching, title: briefing.title,
                              body: "Your race plan is waiting in the coach chat.",
-                             on: today, in: context, dedupeToken: "coach-proactive-race-\(daysOut)", daily: false)
+                             on: today, in: context, dedupeToken: "coach-proactive-race-\(daysOut)", daily: false, coachingPriority: 85,
+                             expiresAt: calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: today)), topic: "race-briefing")
         return true
     }
 
@@ -152,13 +159,14 @@ enum CoachProactive {
         card.nav = CoachDestination.viewProgress.rawValue
         context.insert(ChatMessage(role: .coach,
             text: count == 1
-                ? "That was a personal record. Not luck, not a fluke, just the training landing exactly where we aimed it. Take the win."
-                : "\(count) personal records in one day. The block is working and today proved it. Take the win.",
+                ? "You logged a personal record today. Your result is saved in Progress so you can look back on it."
+                : "\(count) personal records logged today. Your results are saved in Progress so you can look back on them.",
             card: card))
         try? context.save()
-        AppNotification.post(kind: .achievement, title: count == 1 ? "Personal record" : "\(count) personal records",
-                             body: "Your coach has thoughts. All of them are proud.",
-                             on: today, in: context, dedupeToken: "coach-proactive-pr")
+        AppNotification.post(kind: .coaching, title: count == 1 ? "Personal record" : "\(count) personal records",
+                             body: "Your new results are saved in Progress.",
+                             on: today, in: context, dedupeToken: "coach-proactive-pr", route: .progress("Trends"), coachingPriority: 50,
+                             expiresAt: calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: today)), topic: "personal-record")
         return true
     }
 
@@ -313,7 +321,7 @@ enum CoachProactive {
         try? context.save()
         AppNotification.post(kind: .coaching, title: "Worth easing this week",
                              body: "Your coach has a proposal waiting. It's your call.",
-                             on: today, in: context, dedupeToken: "coach-proactive-overreach")
+                             on: today, in: context, dedupeToken: "coach-proactive-overreach", coachingPriority: 90, topic: "load-proposal")
         return true
     }
 
@@ -373,7 +381,7 @@ enum CoachProactive {
         try? context.save()
         AppNotification.post(kind: .coaching, title: "\(weekWord) is planned heavy",
                              body: "Your coach has a proposal waiting. It's your call.",
-                             on: today, in: context, dedupeToken: "coach-proactive-load-recheck")
+                             on: today, in: context, dedupeToken: "coach-proactive-load-recheck", coachingPriority: 90, topic: "load-proposal")
         return true
     }
 

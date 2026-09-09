@@ -6,8 +6,10 @@ import SwiftData
 @MainActor
 enum PlanCoaching {
 
-    static func canStartPlannedSession(_ session: PlannedSession, profile: UserProfile?) -> Bool {
-        InjuryResponse.canStart(session, profile: profile) && IllnessResponse.canStart(session, profile: profile)
+    static func canStartPlannedSession(_ session: PlannedSession, profile: UserProfile?, now: Date = Date()) -> Bool {
+        session.status != .missed && (profile?.plan?.adaptiveState?.requiresRecoveryCheckin != true)
+            && AdaptivePlanService.showsDetails(session, plan: profile?.plan, now: now)
+            && InjuryResponse.canStart(session, profile: profile) && IllnessResponse.canStart(session, profile: profile)
     }
 
     static func todaySessions(_ plan: TrainingPlan?, on date: Date, calendar: Calendar = .current) -> [PlannedSession] {
@@ -19,10 +21,10 @@ enum PlanCoaching {
         if let illness, illness.phase == .resting || (illness.phase == .firstOuting && illness.firstOutingID != nil) { return [] }
         let day = calendar.startOfDay(for: date)
         return plan.sessions
-            .filter { calendar.isDate($0.date, inSameDayAs: day) }
+            .filter { calendar.isDate($0.date, inSameDayAs: day) && $0.status != .missed }
             .filter { session in
                 if session.status == .completed { return true }
-                guard InjuryResponse.canStart(session, profile: profile) else { return false }
+                guard InjuryResponse.canStart(session, profile: profile), profile?.plan?.adaptiveState?.requiresRecoveryCheckin != true else { return false }
                 return illness.map { IllnessResponse.canStart(session, state: $0, now: date) } ?? true
             }
             .sorted { $0.date < $1.date }
@@ -62,7 +64,11 @@ enum PlanCoaching {
         if !PlanMutation.isStaging(context) {
             return PlanMutation.attempt(in: context, fallback: ()) { reschedule(session, to: date, in: context, calendar: calendar) }
         }
+        let previousDate = session.date
         session.date = calendar.startOfDay(for: date)
+        if previousDate != session.date {
+            PlanMutation.afterCommit(in: context) { AdaptiveAnalytics.emit("workout_rescheduled") }
+        }
         clearMovedNote(session)
         try? PlanMutation.save(context)
     }
@@ -94,6 +100,7 @@ enum PlanCoaching {
             return PlanMutation.attempt(in: context, fallback: ()) { reschedule(moves, in: context, calendar: calendar) }
         }
         guard !moves.isEmpty else { return }
+        PlanMutation.afterCommit(in: context) { AdaptiveAnalytics.emit("workout_rescheduled", reason: "schedule_change") }
         for move in moves {
             move.session.date = calendar.startOfDay(for: move.date)
             clearMovedNote(move.session)
@@ -204,6 +211,15 @@ enum PlanCoaching {
                                in context: ModelContext, calendar: Calendar = .current) -> PlannedSession? {
         if !PlanMutation.isStaging(context) {
             return PlanMutation.attempt(in: context, fallback: nil) { creditLaunched(session, with: workout, to: plan, in: context, calendar: calendar) }
+        }
+        if context.container.schema.entities.contains(where: { $0.name == "WorkoutFeedbackRecord" }) {
+            let attempt = WorkoutFeedbackRecord.fetch(workoutID: workout.id, in: context) ?? WorkoutFeedbackRecord(workoutID: workout.id, now: workout.startedAt)
+            if attempt.modelContext == nil { context.insert(attempt) }
+            if attempt.launchedSessionID == nil {
+                attempt.launchedSessionID = session.id; attempt.plannedDistanceM = session.targetDistanceM
+                attempt.plannedDurationS = session.targetDurationS
+                attempt.plannedPaceSPerKm = session.targetPaceSPerKm; attempt.plannedRunType = session.runType?.rawValue
+            }
         }
         let candidate = PlanCredit.Candidate(targetDistanceM: session.targetDistanceM,
                                              targetDurationS: session.targetDurationS)
@@ -654,7 +670,7 @@ enum PlanCoaching {
             coachingState.pendingP5kWorkoutID = workout.id
             try? PlanMutation.save(context)
             CoachingEvent.record(kind: .recalibrate, headline: "Strong run banked",
-                                 detail: "That looked faster than your training paces assume. One more strong session in the next two weeks and I'll sharpen them. Real fitness shows up twice.",
+                                 detail: "That looked faster than your current training paces. Another comparable effort will help confirm whether those targets should change.",
                                  on: today, in: context, calendar: calendar)
             return nil
         }
@@ -1226,6 +1242,7 @@ enum PlanCoaching {
         // raw enum, which put "Tempo" on the Today deck); ride/walk/etc. use the sport name.
         let label: String = {
             if let wt = session.workoutType, wt != .run { return wt.title }
+            if session.discipline == .walking { return "Recovery walk" }
             return session.runType?.planTitle ?? "Session"
         }()
         let dist = session.targetDistanceM.map { Formatters.distance(meters: $0, unit: distanceUnit) } ?? ""

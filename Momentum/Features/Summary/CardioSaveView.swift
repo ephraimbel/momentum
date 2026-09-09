@@ -35,6 +35,7 @@ struct CardioSaveView: View {
     @State private var title = ""
     @State private var desc = ""
     @State private var sportType: WorkoutType = .run
+    @State private var recoveryDraft = WorkoutRecoveryDraft()
     @State private var effort: Int?
     @State private var planFit: PlanFit?
     /// Who sees this activity on the community wall — the share moment (docs/SOCIAL-LAYER.md).
@@ -194,6 +195,7 @@ struct CardioSaveView: View {
                 desc = workout.note
                 sportType = workout.type
                 effort = workout.perceivedEffort
+                recoveryDraft = WorkoutRecoveryDraft(record: workout.modelContext.flatMap { WorkoutFeedbackRecord.fetch(workoutID: workout.id, in: $0) })
                 planFit = workout.planFit
                 mapStyle = workout.gps?.mapStyle ?? .persisted
                 initialMapStyle = mapStyle
@@ -281,6 +283,7 @@ struct CardioSaveView: View {
             }
             Divider().overlay(Theme.hairline)
             effortRow
+            WorkoutRecoveryFeedback(draft: $recoveryDraft)
             if plannedRunType != nil {
                 Divider().overlay(Theme.hairline)
                 planFitRow
@@ -446,6 +449,7 @@ struct CardioSaveView: View {
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.type = sportType
             $0.perceivedEffort = effort
+            recoveryDraft.persist(for: $0)
             $0.planFitRaw = planFit?.rawValue
             $0.gps?.mapStyleRaw = mapStyle.rawValue
             // The chosen audience — community builds only; the solo app never touches privacy,
@@ -467,6 +471,9 @@ struct CardioSaveView: View {
         // frames (2026-08-06 user report: "didn't show the full animation"). The beat needs an
         // idle main thread more than the bookkeeping needs to be first; nothing below is visible.
         celebrating = true
+        if recoveryDraft.hasAnswer {
+            services.analytics.log(.adaptive(action: "post_workout_feedback_submitted", week: "current", reason: "checkin", goal: profiles.first?.goal, workout: workout.type, status: .completed))
+        }
         if booksCompletion {
             AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
             // Analytics fires on the KEPT workout, not on finish: a discarded recording is not a

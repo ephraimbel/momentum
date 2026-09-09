@@ -272,7 +272,8 @@ enum RunningPlannerTestFixtures {
     // Budget hardening: three quality-bearing personas now remove complete reps when the
     // full warm-up/work/recovery/cooldown exceeds the final distance prescription.
     private static let expectedDigests: [String: String] = [
-        "start.first-steps.3d": "f02048150ac3782ae5b048cf5649983d5059431d4791b28f72104d604ecdd5de",
+        // Weekly coaching: sub-mile first-step doses become recovery walks without adding load.
+        "start.first-steps.3d": "67d98cf867bcb66068175b89e12cbe98bf05f590ec2e5c02045fd7b5777fa993",
         "start.first-5k.12w": "113b22202875a45f8287bb856d28fa6e4317d58358103be3d4a8f71a4620ebca",
         "start.first-5k.4w": "e474bd9bd2590ef9d5b218b599ec3590648a724dfb1a17058d3dee89d1d95013",
         "start.return-shins.4d": "ebdc45a59033904bee1b8d7072ac2ca90d130bebd07f96b9f1d51be5cd81ccc1",

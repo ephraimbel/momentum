@@ -43,6 +43,7 @@ struct StrengthSaveView: View {
     @State private var confirmDiscardFinal = false
     /// Session-level perceived effort — the same 1–10 rating the cardio and timed editors collect
     /// (unified 2026-08-14; strength was the one save screen without it).
+    @State private var recoveryDraft = WorkoutRecoveryDraft()
     @State private var effort: Int?
     @FocusState private var focus: Field?
     private enum Field { case title, desc }
@@ -160,6 +161,7 @@ struct StrengthSaveView: View {
                 title = workout.title.isEmpty ? Self.defaultTitle(workout) : workout.title
                 desc = workout.note
                 effort = workout.perceivedEffort
+                recoveryDraft = WorkoutRecoveryDraft(record: workout.modelContext.flatMap { WorkoutFeedbackRecord.fetch(workoutID: workout.id, in: $0) })
                 // The share moment starts from the athlete's chosen default (never silently
                 // public); a workout that already carries a choice (recovery re-save) keeps it.
                 if CommunityAccess.enabled {
@@ -201,6 +203,7 @@ struct StrengthSaveView: View {
     private var detailsCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.md) {
             effortRow
+            WorkoutRecoveryFeedback(draft: $recoveryDraft)
 
         }
         .padding(Theme.Space.md)
@@ -266,6 +269,7 @@ struct StrengthSaveView: View {
             $0.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.note = desc.trimmingCharacters(in: .whitespacesAndNewlines)
             $0.perceivedEffort = effort
+            recoveryDraft.persist(for: $0)
             // Community builds only — the solo app never touches privacy (see CardioSaveView).
             if CommunityAccess.enabled { $0.privacy = privacy }
         }) else { saveFailed = true; return }
@@ -277,6 +281,9 @@ struct StrengthSaveView: View {
         // The celebration starts NOW (same order as CardioSaveView, 2026-08-06): the beat gets an
         // idle main thread; the bookkeeping below waits it out — none of it is on screen.
         celebrating = true
+        if recoveryDraft.hasAnswer {
+            services.analytics.log(.adaptive(action: "post_workout_feedback_submitted", week: "current", reason: "checkin", goal: profiles.first?.goal, workout: workout?.type, status: .completed))
+        }
         guard booksCompletion else { return }   // already booked by the creating flow — see the flag
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.

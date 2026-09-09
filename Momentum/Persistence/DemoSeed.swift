@@ -3,6 +3,7 @@ import Foundation
 import SwiftData
 import CoreLocation
 import UIKit
+import UserNotifications
 
 /// DEBUG-only sample data for visual iteration. Runs **only** when launched with `--seed-demo`
 /// and the store has no profile yet. Never ships behavior in release builds.
@@ -113,6 +114,12 @@ enum DemoSeed {
         //
         // Ordered children-first so no delete strands a dangling reference mid-pass.
         if ProcessInfo.processInfo.arguments.contains("--reset-store") {
+            try? context.delete(model: AdaptivePlanRecord.self)
+            try? context.delete(model: WorkoutFeedbackRecord.self)
+            try? context.delete(model: CoachMessageReceipt.self)
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            UserDefaults.standard.removeObject(forKey: CoachPushBudget.dayKey)
             try? context.delete(model: SetEntry.self);           try? context.delete(model: WorkoutExercise.self)
             try? context.delete(model: StrengthSession.self);    try? context.delete(model: LocationSample.self)
             try? context.delete(model: HeartRateSample.self);    try? context.delete(model: Split.self)

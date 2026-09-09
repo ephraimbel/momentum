@@ -12,6 +12,8 @@ struct PlanView: View {
     @Environment(CoachPresenter.self) private var coach
     @Environment(AppRouter.self) private var router   // workoutLaunch — the shell-level recorder
     @ReducedMotionPreference private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption) private var weekNumberSize: CGFloat = 15
     @Query private var profiles: [UserProfile]
     @Query private var workouts: [Workout]
     /// The closing block's report for the renewal card (`PlanBlockReview`), refreshed with the
@@ -140,11 +142,10 @@ struct PlanView: View {
     /// stays there: the board lands on the current week and the sheet is not forced past the gate
     /// the + button and a menu move already respect.
     private func consumeNotificationMailboxes() {
-        let cal = Calendar.current
+        let cal = planCalendar
         if let date = router.pendingPlanWeek {
             router.pendingPlanWeek = nil
-            if let start = cal.dateInterval(of: .weekOfYear, for: date)?.start,
-               start <= currentWeekStart || paywall.isEntitled(to: .fullPlan) {
+            if let start = cal.dateInterval(of: .weekOfYear, for: date)?.start {
                 weekStart = start
             }
         }
@@ -152,7 +153,7 @@ struct PlanView: View {
         router.pendingPlanSessionID = nil
         guard let session = plan?.sessions.first(where: { $0.id == id }),
               let start = cal.dateInterval(of: .weekOfYear, for: session.date)?.start else { return }
-        guard start <= currentWeekStart || paywall.isEntitled(to: .fullPlan) else { return }
+        guard AdaptivePlanService.showsDetails(session, plan: plan) else { weekStart = start; return }
         weekStart = start
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             // The same appear may have activated an upcoming plan and cascade-deleted this
@@ -161,22 +162,28 @@ struct PlanView: View {
             editing = EditingSession(session: session)
         }
     }
+    private var planCalendar: Calendar { plan?.adaptiveState?.calendar ?? .current }
     private var distanceUnit: DistanceUnit {
         DistanceUnit(rawValue: profiles.first?.distanceUnit ?? "auto") ?? .auto
     }
 
     /// The live current week — the tune card and renewal prompt only make sense here.
     private var isCurrentWeek: Bool {
-        Calendar.current.isDate(weekStart, inSameDayAs: currentWeekStart)
+        planCalendar.isDate(weekStart, inSameDayAs: currentWeekStart)
     }
-    /// Free tier sees the current week AND everything already trained — an athlete's own completed
-    /// work is never paywalled. Only weeks still ahead are the Pro tease (PRD §10/§13.10).
+    /// Future weeks are adaptive previews for every subscription tier.
     private var isFutureWeek: Bool { weekStart > currentWeekStart }
-    private var days: [Date] {
-        daysCacheWeek == weekStart ? daysCache : Self.computeDays(from: weekStart)
+    private var awaitingWeeklyReview: Bool {
+        guard isCurrentWeek, let state = plan?.adaptiveState else { return false }
+        guard plan?.sessions.contains(where: { planCalendar.isDate($0.date, equalTo: currentWeekStart, toGranularity: .weekOfYear) }) == true else { return false }
+        if state.lastWeekStart < currentWeekStart { return true }
+        return state.reviews.last(where: { $0.id == state.lastWeekKey }).map { $0.viewedAt == nil } ?? false
     }
-    private static func computeDays(from weekStart: Date) -> [Date] {
-        (0..<7).compactMap { Calendar.current.date(byAdding: .day, value: $0, to: weekStart) }
+    private var days: [Date] {
+        daysCacheWeek == weekStart ? daysCache : Self.computeDays(from: weekStart, calendar: planCalendar)
+    }
+    private static func computeDays(from weekStart: Date, calendar: Calendar) -> [Date] {
+        (0..<7).compactMap { calendar.date(byAdding: .day, value: $0, to: weekStart) }
     }
     /// The week's sessions grouped by day. Returns the memoized cache while its signature matches the
     /// live plan; otherwise recomputes fresh (cheap, one pass over `plan.sessions`) — so it never
@@ -195,10 +202,11 @@ struct PlanView: View {
     }
     private func computeWeekMap() -> [Date: [PlannedSession]] {
         guard let plan else { return [:] }
-        let cal = Calendar.current
+        let cal = planCalendar
         let weekDays = Set(days.map { cal.startOfDay(for: $0) })
         var map: [Date: [PlannedSession]] = [:]
         for s in plan.sessions {
+            if isCurrentWeek && s.status == .missed { continue }
             let d = cal.startOfDay(for: s.date)
             if weekDays.contains(d) { map[d, default: []].append(s) }
         }
@@ -217,13 +225,21 @@ struct PlanView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.md) {
                     header
                     weekStrip
+                        .onScrollVisibilityChange(threshold: 0.5) { visible in
+                            if visible, isCurrentWeek {
+                                services.analytics.log(.adaptive(action: "current_week_viewed", week: AdaptiveTrainingWeek.key(weekStart, calendar: planCalendar), reason: "plan"))
+                            }
+                        }
                     if showRenewalPrompt { renewalCard.reveal(0.02, once: "plan.renewal") }
                     // Self-coached: no tune proposals — the coach never suggests inside their plan.
                     if isCurrentWeek, plan?.isSelfCoached != true { tuneSection }
-                    weekBoard
-                        .reveal(0.02, once: "plan.board")
-                        .proLocked(.fullPlan, active: isFutureWeek)
-                    coachsRead
+                    if plan?.isSelfCoached == true || (!isFutureWeek && !awaitingWeeklyReview) {
+                        weekBoard.reveal(0.02, once: "plan.board")
+                    }
+                    if let plan, !plan.isSelfCoached {
+                        AdaptiveWeekView(plan: plan, weekStart: weekStart, unit: distanceUnit)
+                    }
+                    if !isFutureWeek { coachsRead }
                     // App Review 1.4.1: the citations door where the training prescriptions live —
                     // paces, zones, and load caps all trace to the sources behind this link.
                     SourcesFooterLink()
@@ -261,13 +277,17 @@ struct PlanView: View {
             }
         }
         .onChange(of: router.workoutLaunch == nil) { _, recorderClosed in
-            if recorderClosed, isVisible { rebuildDerived() }
+            if recorderClosed, isVisible {
+                rebuildDerived()
+                Task { await AdaptivePlanService.prepare(profile: profiles.first, services: services, in: context) }
+            }
         }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active, isVisible else { return }
             // Parked on Plan overnight: a race settles and a due plan starts here too, exactly as
             // on appear (both are idempotent, one predicate fetch when nothing is due).
             if let p = profiles.first {
+                Task { await AdaptivePlanService.prepare(profile: p, services: services, in: context) }
                 PlanService.settleRaces(for: p, today: Date(), in: context)
                 if let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
                     PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
@@ -319,7 +339,7 @@ struct PlanView: View {
             Text("Upcoming prescribed sessions are removed. Everything you've completed stays. You write your own weeks from here (add sessions, use the library), and the coach stops prescribing or adjusting. You can ask for a new plan anytime.")
         }
         .sheet(isPresented: $showAwayDays) {
-            let cal = Calendar.current
+            let cal = planCalendar
             let weekDays = days
             let busy = Set(weekSessions.filter { $0.status != .completed }.compactMap { session in
                 weekDays.firstIndex { cal.isDate($0, inSameDayAs: session.date) }
@@ -367,9 +387,10 @@ struct PlanView: View {
             // Once per local day on appear (the scene-active path covers a night parked here):
             // `onAppear` re-fires on every tab return and sheet dismissal, and the settle is three
             // fetches each time for a result that cannot change within the day.
-            let today = Calendar.current.startOfDay(for: Date())
+            let today = planCalendar.startOfDay(for: Date())
             if settledOn != today, let p = profiles.first {
                 settledOn = today
+                Task { await AdaptivePlanService.prepare(profile: p, services: services, in: context) }
                 PlanService.settleRaces(for: p, today: Date(), in: context)
                 if let activation = PlanLifecycleService.activateDueUpcoming(for: p, today: Date(), in: context) {
                     PlanLifecycleService.propagate(activation, profile: p, workouts: workouts,
@@ -422,7 +443,7 @@ struct PlanView: View {
             }
             // --plan-locked-week: land on next week (the Pro-locked state) for lock-pill verification.
             if ProcessInfo.processInfo.arguments.contains("--plan-locked-week"),
-               let next = Calendar.current.date(byAdding: .weekOfYear, value: 1, to: weekStart) {
+               let next = planCalendar.date(byAdding: .weekOfYear, value: 1, to: weekStart) {
                 weekStart = next
             }
             // Open the first long run's detail (fuel-section verification; sim taps are unreliable).
@@ -488,7 +509,7 @@ struct PlanView: View {
             plan.isSelfCoached = true
             plan.goal = profile.goal
             plan.disciplines = profile.disciplines
-            plan.blockStart = Calendar.current.startOfDay(for: Date())
+            plan.blockStart = planCalendar.startOfDay(for: Date())
             context.insert(plan)
             profile.plan = plan
             return true
@@ -525,7 +546,7 @@ struct PlanView: View {
     /// run. Infers "leg day" from a strength session's lower-body primary muscles.
     private var hybridWeekInsight: String? {
         guard let plan else { return nil }
-        let cal = Calendar.current
+        let cal = planCalendar
         let items: [HybridSequencing.Item] = plan.sessions.compactMap { s in
             guard let dayIndex = cal.dateComponents([.day], from: weekStart, to: cal.startOfDay(for: s.date)).day,
                   (0...6).contains(dayIndex) else { return nil }
@@ -659,7 +680,7 @@ struct PlanView: View {
     /// Every still-open session in the displayed week slides a day. Completed work never moves —
     /// a finished day is a record of what happened, not a plan.
     private func shiftDisplayedWeek(by days: Int) {
-        let cal = Calendar.current
+        let cal = planCalendar
         let movable = weekSessions.filter { $0.status != .completed && !PlanCoaching.isFixedDate($0) }
         guard !movable.isEmpty else {
             ToastCenter.shared.show(icon: "calendar", line: "Nothing to move this week")
@@ -670,8 +691,8 @@ struct PlanView: View {
         // athlete could not see where it went. Same gate the + button and a menu move already use.
         if let furthest = targets.max(),
            let week = cal.dateInterval(of: .weekOfYear, for: furthest)?.start,
-           week > currentWeekStart, !paywall.isEntitled(to: .fullPlan) {
-            paywall.present(for: .fullPlan)
+           week > currentWeekStart, plan?.isSelfCoached != true {
+            ToastCenter.shared.show(icon: "calendar", line: "Future weeks adapt after this week. Choose a day in your current week.")
             return
         }
         guard PlanMutation.edit(in: context, {
@@ -693,7 +714,7 @@ struct PlanView: View {
     /// day that is already carrying a session.
     private func applyAwayDays(_ blocked: Set<Int>) {
         guard !blocked.isEmpty else { return }
-        let cal = Calendar.current
+        let cal = planCalendar
         let weekDays = days.map { cal.startOfDay(for: $0) }
         let movable = weekSessions.filter { $0.status != .completed && !PlanCoaching.isFixedDate($0) }
         let indexed: [(id: UUID, dayIndex: Int)] = movable.compactMap { session in
@@ -747,7 +768,7 @@ struct PlanView: View {
 
     /// Whole weeks left in the block after this session's own week — the ceiling on "to the end".
     private func remainingBlockWeeks(after session: PlannedSession) -> Int {
-        let cal = Calendar.current
+        let cal = planCalendar
         guard let last = planWeekStarts.last,
               let week = cal.dateInterval(of: .weekOfYear, for: session.date)?.start,
               let span = cal.dateComponents([.weekOfYear], from: week, to: last).weekOfYear else { return 0 }
@@ -757,8 +778,11 @@ struct PlanView: View {
     private func repeatSession(_ session: PlannedSession, weeks: Int) {
         guard weeks > 0 else { return }
         // Every copy lands on a future week, which is the Pro boundary the board already draws.
-        guard paywall.isEntitled(to: .fullPlan) else { paywall.present(for: .fullPlan); return }
-        let cal = Calendar.current
+        guard plan?.isSelfCoached == true else {
+            ToastCenter.shared.show(icon: "calendar", line: "Your coach will shape future weeks from your training. You can move sessions within this week.")
+            return
+        }
+        let cal = planCalendar
         let days = (1...weeks).compactMap { cal.date(byAdding: .weekOfYear, value: $0, to: session.date) }
         let written = PlanCoaching.duplicate(session, onto: days, to: plan, in: context)
         guard written > 0 else {
@@ -776,13 +800,13 @@ struct PlanView: View {
     /// Move a session relative to its own date (not to today — "tomorrow" means the day after the
     /// session, which is what "move this on by a day" means when you are looking at a future week).
     private func shift(_ session: PlannedSession, byDays days: Int) {
-        guard let target = Calendar.current.date(byAdding: .day, value: days, to: session.date) else { return }
-        let targetDay = Calendar.current.startOfDay(for: target)
+        guard let target = planCalendar.date(byAdding: .day, value: days, to: session.date) else { return }
+        let targetDay = planCalendar.startOfDay(for: target)
         // Landing behind the Pro frost would drop the session where the athlete cannot see it —
         // the same reason the + button routes to the paywall on a locked week.
-        if let week = Calendar.current.dateInterval(of: .weekOfYear, for: targetDay)?.start,
-           week > currentWeekStart, !paywall.isEntitled(to: .fullPlan) {
-            paywall.present(for: .fullPlan)
+        if let week = planCalendar.dateInterval(of: .weekOfYear, for: targetDay)?.start,
+           week > currentWeekStart, plan?.isSelfCoached != true {
+            ToastCenter.shared.show(icon: "calendar", line: "Future weeks adapt after this week. Choose a day in your current week.")
             return
         }
         move(session, to: targetDay)
@@ -794,7 +818,7 @@ struct PlanView: View {
     @discardableResult
     private func move(sessionID: UUID, to day: Date) -> Bool {
         guard let session = plan?.sessions.first(where: { $0.id == sessionID }),
-              Calendar.current.startOfDay(for: session.date) != day else { return false }
+              planCalendar.startOfDay(for: session.date) != day else { return false }
         move(session, to: day)
         return true
     }
@@ -822,7 +846,7 @@ struct PlanView: View {
     private func swap(sessionID: UUID, with target: PlannedSession) -> Bool {
         guard sessionID != target.id,
               let source = plan?.sessions.first(where: { $0.id == sessionID }),
-              Calendar.current.startOfDay(for: source.date) != Calendar.current.startOfDay(for: target.date)
+              planCalendar.startOfDay(for: source.date) != planCalendar.startOfDay(for: target.date)
         else { return false }
         guard PlanMutation.edit(in: context, { PlanCoaching.swapDays(source, target, in: context) }) else { return false }
         withAnimation(reduceMotion ? nil : Motion.standard) {
@@ -840,7 +864,7 @@ struct PlanView: View {
     /// its own reason for a "two hard sessions" note.
     private func placementNote(for session: PlannedSession, landingOn day: Date) -> String? {
         guard let plan else { return nil }
-        let cal = Calendar.current
+        let cal = planCalendar
         func kinds(_ offset: Int) -> RestDayLine.Neighbor {
             guard let d = cal.date(byAdding: .day, value: offset, to: day) else { return .none }
             let target = cal.startOfDay(for: d)
@@ -853,12 +877,14 @@ struct PlanView: View {
     }
 
     private func delete(_ session: PlannedSession) {
+        let wasOpen = session.status != .completed
         let saved = PlanMutation.attempt(in: context, fallback: false) {
             plan?.sessions.removeAll { $0.id == session.id }
             context.delete(session)
             return true
         }
         guard saved else { return }
+        if wasOpen { services.analytics.log(.adaptive(action: "workout_skipped", week: AdaptiveTrainingWeek.key(weekStart, calendar: planCalendar), reason: "removed")) }
         rebuildDerived()
         Haptics.light()
     }
@@ -1057,7 +1083,7 @@ struct PlanView: View {
         if let raceM = profile.raceDistanceM, raceM > 0, let raceDate = profile.raceDate, raceDate > Date() {
             let label = RaceDistance.nearest(toMeters: raceM).label
             let goalLabel = profile.goalFinishTimeS.map { "\(PlanFeasibility.hms($0)) \(label)" } ?? label
-            let cal = Calendar.current
+            let cal = planCalendar
             // A tune-up nearer than the goal race is the next start line (2026-09-03): say it, and
             // keep the goal's countdown behind it so the block's destination never disappears.
             if let next = nextTuneUp, next.date > Date(), next.date < raceDate {
@@ -1101,9 +1127,9 @@ struct PlanView: View {
     /// SwiftUI): the raw `dateInterval` form ran ~60×/render across bars, chips, and headers.
     @MainActor private static var weekStartMemo: (day: Date, start: Date)?
     private var currentWeekStart: Date {
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = planCalendar.startOfDay(for: Date())
         if let m = Self.weekStartMemo, m.day == today { return m.start }
-        let start = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
+        let start = planCalendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? Date()
         Self.weekStartMemo = (today, start)
         return start
     }
@@ -1141,8 +1167,8 @@ struct PlanView: View {
             // A free athlete viewing a Pro-locked future week: adding would drop the session
             // behind the frosted board where they can't see it land — route to the paywall
             // instead, the same boundary the board itself draws.
-            if isFutureWeek && !paywall.isEntitled(to: .fullPlan) {
-                paywall.present(for: .fullPlan)
+            if isFutureWeek && plan?.isSelfCoached != true {
+                ToastCenter.shared.show(icon: "calendar", line: "Future weeks adapt after this week. Choose a day in your current week.")
                 return
             }
             presentAdd(for: isCurrentWeek ? Date() : weekStart)
@@ -1189,7 +1215,9 @@ struct PlanView: View {
         // 2026-08-21): seven weeks per swipe, each swipe locked to its group like a carousel,
         // never a stacked grid and never a free-scrolling strip.
         return Group {
-            if weeks.count <= 26 {
+            // Keep labels legible instead of compressing a long plan into overlapping numerals.
+            // Accessibility sizes use the existing paged presentation sooner.
+            if weeks.count <= (dynamicTypeSize.isAccessibilitySize ? 7 : 14) {
                 HStack(alignment: .bottom, spacing: weeks.count > 16 ? 2 : 3) {
                     ForEach(Array(weeks.enumerated()), id: \.element) { i, start in
                         weekBar(index: i, start: start, volume: volumes[i], maxVolume: maxV)
@@ -1231,7 +1259,7 @@ struct PlanView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 58)
+        .frame(height: 43 + weekNumberSize)
         .onAppear {
             if let idx = planWeekIndex(of: weekStart) { arcPage = idx / pageSize }
         }
@@ -1243,7 +1271,7 @@ struct PlanView: View {
     }
 
     private func weekBar(index: Int, start: Date, volume: Double, maxVolume: Double) -> some View {
-        let cal = Calendar.current
+        let cal = planCalendar
         let selected = cal.isDate(start, inSameDayAs: weekStart)
         let isCurrent = cal.isDate(start, inSameDayAs: currentWeekStart)
         let isPast = start < currentWeekStart
@@ -1280,13 +1308,13 @@ struct PlanView: View {
                     .monospacedDigit()
                     .foregroundStyle(isCurrent ? Theme.background
                                      : (selected ? Theme.purpleDeep : Theme.inkTertiary))
-                    .frame(width: 15, height: 15)
+                    .frame(minWidth: weekNumberSize, minHeight: weekNumberSize)
                     .background {
-                        if isCurrent { Circle().fill(Theme.ink) }
+                        if isCurrent { Capsule().fill(Theme.ink) }
                     }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 58, alignment: .bottom)
+            .frame(height: 43 + weekNumberSize, alignment: .bottom)
             .contentShape(Rectangle())
             .animation(reduceMotion ? nil : Motion.selection, value: selected)
         }
@@ -1438,9 +1466,9 @@ struct PlanView: View {
     /// Rebuild on actual data changes. Week paging only updates week-scoped values. The expensive
     /// chart construction is gone, so the arc and coaching no longer need a delayed second paint.
     private func rebuildDerived(refreshPlan: Bool = true) {
-        let cal = Calendar.current
+        let cal = planCalendar
         currentWeekStartCacheRefresh()
-        daysCache = Self.computeDays(from: weekStart)
+        daysCache = Self.computeDays(from: weekStart, calendar: planCalendar)
         daysCacheWeek = weekStart
         guard let plan else {
             weekMap = [:]; weekStartsCache = []; planFirstWeek = nil; weekMapToken = 0
@@ -1557,7 +1585,7 @@ struct PlanView: View {
         // Exact-date dictionary first (week starts are canonical `dateInterval` values, so equal
         // weeks are equal Dates); the linear calendar-compare scan stays as the safety net.
         weekIndexCache[week]
-            ?? planWeekStarts.firstIndex { Calendar.current.isDate($0, inSameDayAs: week) }
+            ?? planWeekStarts.firstIndex { planCalendar.isDate($0, inSameDayAs: week) }
     }
 
     /// The macrocycle phase of the displayed week (nil off-plan or for legacy plans without
@@ -1569,7 +1597,7 @@ struct PlanView: View {
     private func computeWeekPhase() -> PlanPhase? {
         guard let plan = profiles.first?.plan, !plan.weekPhases.isEmpty,
               let firstWeek = planFirstWeek else { return nil }
-        let idx = Calendar.current.dateComponents([.weekOfYear], from: firstWeek, to: weekStart).weekOfYear ?? -1
+        let idx = planCalendar.dateComponents([.weekOfYear], from: firstWeek, to: weekStart).weekOfYear ?? -1
         guard idx >= 0, idx < plan.weekPhases.count else { return nil }
         return PlanPhase(rawValue: plan.weekPhases[idx])
     }
@@ -1587,7 +1615,7 @@ struct PlanView: View {
 
     /// A day already gone. Days are compared at start-of-day so "today" is never past.
     private func isPastDay(_ day: Date) -> Bool {
-        let cal = Calendar.current
+        let cal = planCalendar
         return cal.startOfDay(for: day) < cal.startOfDay(for: Date())
     }
 
@@ -1598,7 +1626,7 @@ struct PlanView: View {
     private func canShift(_ delta: Int) -> Bool {
         guard planWeekStarts.count > 1,
               let first = planWeekStarts.first, let last = planWeekStarts.last,
-              let target = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekStart)
+              let target = planCalendar.date(byAdding: .weekOfYear, value: delta, to: weekStart)
         else { return true }
         return target >= first && target <= last
     }
@@ -1657,7 +1685,7 @@ struct PlanView: View {
         // before `rebuildDerived` fills the cache — never flashes the card on a brand-new block.
         let blockEnd = planWeekStarts.last ?? plan.sessions.map(\.date).max()
         guard let end = blockEnd,
-              let lastWeek = Calendar.current.dateInterval(of: .weekOfYear, for: end)?.start else { return false }
+              let lastWeek = planCalendar.dateInterval(of: .weekOfYear, for: end)?.start else { return false }
         return currentWeekStart >= lastWeek
     }
 
@@ -1758,9 +1786,9 @@ struct PlanView: View {
     private static let dateColWidth: CGFloat = 42
 
     private func boardDayRow(_ day: Date, map: [Date: [PlannedSession]]) -> some View {
-        let dayKey = Calendar.current.startOfDay(for: day)
+        let dayKey = planCalendar.startOfDay(for: day)
         let sessions = map[dayKey] ?? []
-        let isToday = Calendar.current.isDateInToday(day)
+        let isToday = planCalendar.isDateInToday(day)
         // A hovered session owns the drop (the two trade days); the day beneath it stands down, so
         // the board never offers both readings of the same gesture at once.
         let isMoveTarget = dropDay == dayKey && swapTargetID == nil
@@ -2117,7 +2145,7 @@ struct PlanView: View {
     /// week read as `.none` on purpose — the board is the week as one object, and a Sunday rest
     /// explaining itself off last week's board would be reaching outside the frame.
     private func restLine(for day: Date, in map: [Date: [PlannedSession]]) -> String? {
-        let cal = Calendar.current
+        let cal = planCalendar
         func neighbor(_ offset: Int) -> RestDayLine.Neighbor {
             guard let d = cal.date(byAdding: .day, value: offset, to: day) else { return .none }
             let sessions = map[cal.startOfDay(for: d)] ?? []
@@ -2184,7 +2212,7 @@ struct PlanView: View {
     /// (two plan-relationship faults each) seven times over.
     private var weekSessions: [PlannedSession] {
         let map = liveWeekMap
-        let cal = Calendar.current
+        let cal = planCalendar
         return days.flatMap { map[cal.startOfDay(for: $0)] ?? [] }
     }
 
@@ -2203,12 +2231,12 @@ struct PlanView: View {
     }
 
     private var weekLabel: String {
-        let end = Calendar.current.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
+        let end = planCalendar.date(byAdding: .day, value: 6, to: weekStart) ?? weekStart
         return "\(weekStart.formatted(.dateTime.month().day())) – \(end.formatted(.dateTime.month().day()))"
     }
 
     private func shiftWeek(_ delta: Int) {
-        if let d = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: weekStart) { weekStart = d }
+        if let d = planCalendar.date(byAdding: .weekOfYear, value: delta, to: weekStart) { weekStart = d }
     }
 
     private var card: some View {

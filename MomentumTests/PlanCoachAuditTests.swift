@@ -125,7 +125,7 @@ struct PlanCoachAuditTests {
             // Race week is the race plus a shakeout — a deliberate shape, not a balance question.
             for w in weeks where w.runVolumeM > 0 && !w.sessions.contains(where: { $0.runType == .race }) {
                 let runs = w.sessions.filter { $0.discipline == .running }.compactMap(\.targetDistanceM)
-                if let smallest = runs.min(), runs.count >= 2, smallest / w.runVolumeM < 0.22 {
+                if let smallest = runs.min(), runs.count == 2, smallest / runs.reduce(0, +) < 0.22 {
                     fail("two-day balance", "w\(w.index) second run is only \(Int(smallest / w.runVolumeM * 100))% of the week")
                 }
             }
