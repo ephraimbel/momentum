@@ -45,6 +45,7 @@ struct OnboardingDraft: Codable {
     var hybridPriority: String?
     var strengthSplit: String?
     var intensity: String?
+    var intensityChosen: Bool?
     var goalHours = 0
     var goalMinutes = 0
     var sex: String?
@@ -115,6 +116,7 @@ extension OnboardingViewModel {
             hybridPriority: hybridPriority.rawValue,
             strengthSplit: strengthSplit.rawValue,
             intensity: intensity.rawValue,
+            intensityChosen: intensityChosen,
             goalHours: goalHours,
             goalMinutes: goalMinutes,
             sex: sex?.rawValue,
@@ -147,7 +149,7 @@ extension OnboardingViewModel {
         // the athlete on a screen that cannot create one — the infinite "Save your progress"
         // loop after Delete-all-data (audit 2026-08-11). This is an explicit set, not an
         // `allCases` position check: the stable enum order intentionally differs from the live
-        // flow order, where Notifications and Primers now come BEFORE Building.
+        // flow order, which retires permission and account pages without changing their IDs.
         // No profile exists when this is called. Restore answers and rebuild instead of
         // throwing away a completed interview after an interruption during the reveal.
         let needsRebuild = [Step.building, .reveal, .review, .account].contains(placedStep)
@@ -176,6 +178,7 @@ extension OnboardingViewModel {
         hybridPriority = d.hybridPriority.flatMap(HybridPriority.init(rawValue:)) ?? hybridPriority
         strengthSplit = d.strengthSplit.flatMap(StrengthSplitStyle.init(rawValue:)) ?? strengthSplit
         intensity = d.intensity.flatMap(PlanIntensity.init(rawValue:)) ?? intensity
+        intensityChosen = d.intensityChosen ?? false
         goalHours = d.goalHours
         goalMinutes = d.goalMinutes
         sex = d.sex.flatMap(BiologicalSex.init(rawValue:))
@@ -213,8 +216,18 @@ extension OnboardingViewModel {
            let currentIndex = steps.firstIndex(of: step), currentIndex > raceIndex {
             step = .race
         }
-        // Earlier interviews collected identity later. Keep every training answer, but collect
-        // missing profile details before resuming an interview that now starts with them.
+        // Revisit newly required details without discarding any existing training answers.
+        if let currentIndex = steps.firstIndex(of: step),
+           let metricsIndex = steps.firstIndex(of: .metrics), currentIndex > metricsIndex,
+           sex == nil || birthYear == nil || heightCm == nil || bodyMassKg == nil {
+            step = .metrics
+        }
+        if goal == .generalFitness { step = .goal }
+        else if !runningBackgroundChosen && paceFeel == nil,
+                let currentIndex = steps.firstIndex(of: step),
+                let backgroundIndex = steps.firstIndex(of: .experience), currentIndex > backgroundIndex {
+            step = .experience
+        }
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || SocialPrivacy.normalizedHandle(handle).isEmpty
             || SocialPrivacy.isReservedHandle(SocialPrivacy.normalizedHandle(handle)) {

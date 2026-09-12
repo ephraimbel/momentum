@@ -229,7 +229,7 @@ struct PaywallView: View {
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    /// "$6.67" from the store formatter's "$6.67 / mo" — never a number we haven't confirmed.
+    /// "$3.33" from the store formatter's "$3.33 / mo" — never a number we haven't confirmed.
     private func perMonth(_ p: PaywallProduct) -> String {
         guard let text = p.perMonthText else { return "—" }
         return String(text.split(separator: "/").first ?? Substring(text)).trimmingCharacters(in: .whitespaces)

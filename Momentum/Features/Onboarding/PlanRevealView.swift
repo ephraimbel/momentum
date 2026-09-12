@@ -26,7 +26,7 @@ struct PlanRevealView: View {
     var onContinue: () -> Void
 
     // MARK: Act I — the overture
-    @State private var overtureMounted = true
+    @State private var overtureMounted = false
     @State private var arrivalStarted = false
     @State private var pathStarted = false
     @State private var pathReached = false
@@ -35,7 +35,7 @@ struct PlanRevealView: View {
     @State private var titleLine = 0.0      // the start line drawing outward from the centre
     @State private var titleSheen = 0.0     // one specular pass through the letters
     @State private var overtureExit = 0.0   // the card lifting away, 0…1
-    @State private var pageIn = 0.0         // the page rising under it, 0…1
+    @State private var pageIn = 1.0         // the page rising under it, 0…1
 
     // MARK: Act II — the ascent
     @State private var heroIn = 0.0
@@ -133,10 +133,8 @@ struct PlanRevealView: View {
         ScrollView {
             VStack(spacing: Theme.Space.lg) {
                 hero
-                animatedTrainingPath
                 trainingBriefing
-                    .opacity(reduceMotion ? 1 : artifactIn)
-                    .offset(y: reduceMotion ? 0 : 16 * (1 - artifactIn))
+                animatedTrainingPath
                 detailedPlan
             }
             .frame(maxWidth: .infinity)
@@ -192,15 +190,13 @@ struct PlanRevealView: View {
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
-                OnboardingCTA(title: "Continue with Momentum Pro") { onContinue() }
+                OnboardingCTA(title: "Continue") { onContinue() }
                     .accessibilityIdentifier("onboarding.reveal.continue")
                     // The ink capsule catches the light once as it settles — the same band that
                     // crossed the tiles, so the page's one light source is consistent.
                     .overlay { sheenBand(ctaSheen, strength: 0.28).clipShape(Capsule()) }
             }
-            .opacity(reduceMotion ? 1 : ctaIn)
-            .scaleEffect(reduceMotion ? 1 : 0.97 + ctaIn * 0.03)
-            .offset(y: reduceMotion ? 0 : 14 * (1 - ctaIn))
+            // Checkout stays visible and usable throughout the decorative reveal.
             .padding(.horizontal, Theme.Space.lg)
             .padding(.top, Theme.Space.md)
             .padding(.bottom, Theme.Space.sm)
@@ -220,21 +216,8 @@ struct PlanRevealView: View {
                     .ignoresSafeArea(edges: .bottom)
             }
         }
-        // The page rises under the overture: a transform on the whole page, so the first frame
-        // the athlete sees of it is already in motion toward its rest.
-        .opacity(reduceMotion ? 1 : pageIn)
-        .scaleEffect(reduceMotion ? 1 : 0.94 + pageIn * 0.06)
-        .offset(y: reduceMotion ? 0 : 28 * (1 - pageIn))
-        // Act I, over everything. Taps pass straight through: nothing on this page ever waits
-        // on a flourish, and the walkers tap the CTA the moment it exists.
-        .overlay {
-            if overtureMounted, !reduceMotion {
-                RevealOverture(name: overtureName, letters: titleLetters, line: titleLine,
-                               sheen: titleSheen, exit: overtureExit)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
-        }
+        // Keep the interactive scroll and checkout layer untransformed. Celebration is local
+        // to the artwork so a decorative compositing layer cannot swallow the first tap.
         .onAppear(perform: animateIn)
         .onDisappear {
             sequence?.cancel()
@@ -734,6 +717,12 @@ struct PlanRevealView: View {
                 Text(openingSchedule(first.sessions))
                     .font(.rounded(15, weight: .semibold))
                     .monospacedDigit().foregroundStyle(Theme.ink)
+                if let opening = first.sessions.first {
+                    Text("First up: \(PlanCoaching.brief(for: opening, distanceUnit: vm.distanceUnitChoice.flatMap(DistanceUnit.init(rawValue:)) ?? .auto))")
+                        .font(.rounded(14, weight: .medium)).foregroundStyle(Theme.ink)
+                        .monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("onboarding.reveal.firstSession")
+                }
                 Text(vm.calibrationMode == .time
                      ? "Starting paces from your recent result. Refined through your sessions and feedback."
                      : "Starting effort from your answers. Refined through your sessions and feedback.")
@@ -988,19 +977,8 @@ struct PlanRevealView: View {
         }
         Haptics.warm()
 
-        // ACT I — the overture. One linear clock for the letters; each reads its own eased slice.
-        let letterCount = max(1, overtureName.count)
-        let lettersEnd = RevealOverture.lettersStart + RevealOverture.stagger * Double(letterCount - 1)
-            + RevealOverture.letterDuration
-        withAnimation(.linear(duration: lettersEnd).delay(0)) { titleLetters = lettersEnd }
-        withAnimation(Motion.pen(0.55).delay(lettersEnd - 0.30)) { titleLine = 1 }
-        withAnimation(.easeInOut(duration: 0.80).delay(lettersEnd - 0.18)) { titleSheen = 1 }
-        // The card lifts away; the page rises under it. They overlap so there is never a frame
-        // with nothing on it.
-        let T = lettersEnd + 0.34
-        withAnimation(.timingCurve(0.55, 0.0, 0.25, 1.0, duration: 0.66).delay(T)) { overtureExit = 1 }
-        withAnimation(.spring(response: 0.92, dampingFraction: 0.86).delay(T - 0.06)) { pageIn = 1 }
-
+        // The plan is readable on arrival. Keep the local celebration, without a title-card wait.
+        let T = 0.0
         // ACT II — the ascent. Acknowledgement, identity, the artifact, then its proof. The card
         // lands before its terrain is run; counters settle in the same direction as their sheen.
         withAnimation(Motion.pen(0.96).delay(T + 0.16)) { heroIn = 1 }
@@ -1025,10 +1003,6 @@ struct PlanRevealView: View {
                 let target = start + .seconds(s)
                 if target > clock.now { try? await Task.sleep(until: target, clock: clock) }
                 return !Task.isCancelled
-            }
-            for i in 0..<letterCount {
-                guard await at(RevealOverture.lettersStart + RevealOverture.stagger * Double(i) + 0.12) else { return }
-                Haptics.selection()
             }
             guard await at(T + 0.46) else { return }
             Haptics.light()

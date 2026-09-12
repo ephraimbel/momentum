@@ -36,6 +36,7 @@ struct FuelGoalsSheet: View {
     @State private var customSodium = ""
     @State private var saveFailed = false
     @State private var loaded = false
+    @State private var bodyDetailsConfirmed = false
 
     private var usesPounds: Bool { profiles.first?.weightUnit == "lb" }
 
@@ -45,6 +46,13 @@ struct FuelGoalsSheet: View {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
                     goalPicker.reveal(0)
                     aboutYou.reveal(0.06)
+                    if !bodyDetailsConfirmed {
+                        Text("Missing details start with example values. Adjust the measurements above, then confirm to use them. You can save your fueling goal without adding body details.")
+                            .font(.rounded(13)).foregroundStyle(Theme.inkSecondary)
+                    }
+                    Toggle("Use these body details", isOn: $bodyDetailsConfirmed)
+                        .font(.rounded(14, weight: .medium))
+                        .accessibilityIdentifier("fuel.confirmBodyDetails")
                     if kind == .custom {
                         customCard
                             .transition(.opacity.combined(with: .move(edge: .top)))
@@ -347,6 +355,7 @@ struct FuelGoalsSheet: View {
         guard !loaded, let p = profiles.first else { return }
         loaded = true
         kind = p.fuelGoalKind.flatMap { FuelReadiness.GoalInput.Kind(rawValue: $0) } ?? .fuel
+        bodyDetailsConfirmed = p.bodyMassKg != nil && p.heightCm != nil && p.birthYear != nil
         massKg = p.bodyMassKg ?? FuelReadiness.fallbackMassKg
         heightCm = p.heightCm ?? FuelReadiness.fallbackHeightCm
         age = p.birthYear.map { max(14, Calendar.current.component(.year, from: Date()) - $0) }
@@ -375,10 +384,13 @@ struct FuelGoalsSheet: View {
     private func save() {
         guard let p = profiles.first else { dismiss(); return }
         p.fuelGoalKind = kind.rawValue
-        p.bodyMassKg = massKg
-        p.heightCm = heightCm
-        p.birthYear = Calendar.current.component(.year, from: Date()) - age
-        p.sex = sex
+        // Never turn example measurements into a personal baseline merely by saving a goal.
+        if bodyDetailsConfirmed {
+            p.bodyMassKg = massKg
+            p.heightCm = heightCm
+            p.birthYear = Calendar.current.component(.year, from: Date()) - age
+            p.sex = sex
+        }
         p.fuelCustomKcal = kind == .custom ? Int(customKcal) : p.fuelCustomKcal
         p.fuelCustomProteinG = kind == .custom ? Int(customProtein) : p.fuelCustomProteinG
         p.fuelCustomCarbsG = kind == .custom ? Int(customCarbs) : p.fuelCustomCarbsG

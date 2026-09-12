@@ -17,16 +17,51 @@ The products live in ONE subscription group (`22239084 "momentum pro"`) and must
 
 | Product ID | Duration | Price | Intro offer | Sold? |
 |---|---|---|---|---|
-| `momentum_pro_monthly` | 1 month | **$14.99** | — | yes — the entry plan (2026-09-07; was sold at $9.99 until 2026-08-28, existing monthly subscribers keep that price) |
+| `momentum_pro_monthly` | 1 month | **$9.99 from 2026-09-13** | — | yes — the entry plan; reduced from $14.99 |
 | `momentum_pro_weekly` | 1 week  | $5.99  | — | **no** — retired from the offering 2026-09-07; stays on sale in ASC so existing weekly subscribers renew |
-| `momentum_pro_annual` | 1 year  | **$79.99** | **3 days free** | yes — $6.67/mo, badge "SAVE 55%"; eligible badge "3 DAYS FREE" |
-| `momentum_pro_monthly`| 1 month | $9.99  | — | **no** — retired from the offering 2026-08-28 |
+| `momentum_pro_annual` | 1 year | **$29.99 from 2026-09-13** | **7 days free from 2026-09-13** | yes — $2.50/mo equivalent; eligible badge "7 DAYS FREE" |
 
-The monthly stays live but unsold: removing a product never cancels or re-prices an existing
-subscriber, and keeping it is what lets the remaining monthly subs renew. The annual carries a
-three-day introductory free trial (restored 2026-09-01 at seven days, cut to three 2026-09-05); weekly
-and retired monthly charge immediately. The app reads StoreKit's offer, so only eligible customers
-see trial copy and ineligible customers see the ordinary annual purchase terms.
+Monthly changes from $14.99 to $9.99 without a trial on September 13; the retired weekly product
+remains available to existing subscribers. The annual product changes from $79.99 / three days to $29.99 / seven days on September 13.
+The final $29.99 target supersedes the earlier $39.99 schedule described in the history below.
+Production reads the actual localized price and eligible introductory offer from StoreKit through
+RevenueCat, so it continues showing the current offer until Apple's scheduled transition.
+
+**2026-09-11 (final) — annual reduced to $29.99, effective September 13.** The owner
+replaced the previously scheduled $39.99 annual offer with $29.99 on the same product, retaining
+the seven-day trial and the $9.99 monthly option. Only the 175 known September 13 annual price
+rows were deleted/recreated using the USA $29.99 point and Apple's 174 equalizations. Read-back
+at **2026-09-11 22:21 UTC** verified **175/175** replacement annual prices, **175/175** unchanged
+seven-day trial offers, **350/350** unchanged live/preserved annual price rows, and unchanged
+monthly prices/offers. The build passed, and all **21 billing/paywall tests passed** with zero
+failures/skips. Preview/default prices and UI assertions now use $29.99/year ($2.50/mo equivalent),
+with savings still calculated from actual store prices. Evidence:
+`/tmp/momentum-annual-2999/verification.json` and `/tmp/momentum-annual-2999-tests.xcresult`.
+This is the final schedule; earlier entries below describe superseded decisions.
+
+**2026-09-11 (later) — monthly reduced to $9.99, effective September 13.** The existing
+`momentum_pro_monthly` product uses its USA $9.99 price point and Apple's 174 equalizations.
+Read-back verification at **2026-09-11 22:10 UTC** confirmed **175/175** scheduled monthly prices,
+**175/175** unchanged preserved monthly price rows, no monthly introductory offers, and unchanged
+annual price/trial schedules. The annual offer remains $39.99 with seven days free for eligible
+athletes from September 13. The app's preview/default monthly price, monthly CTA, terms, and derived
+annual savings are updated. Production still uses the localized StoreKit price, including the current
+price before the scheduled change. Build-for-testing succeeded and **21 tests passed** (16 billing/
+reminder tests and five paywall UI tests), with zero failures/skips. Evidence:
+`/tmp/momentum-monthly-999-verification.json` and `/tmp/momentum-monthly-999-tests.xcresult`.
+
+**2026-09-11 — owner authorized the lower annual price and longer trial.** Apple rejected September 12
+and required a price start date on or after September 13. The change uses the existing annual product,
+its $39.99 USA price point, and Apple's 174 equalizations. Three-day offers end September 12; one-week
+FREE_TRIAL offers begin September 13, avoiding overlapping date ranges. Lower, previously preserved
+annual cohorts are retained; this operation does not un-preserve them. Monthly/weekly products and
+RevenueCat product identifiers are unchanged. Read-back verification at 2026-09-11 21:39 UTC confirmed **175/175** scheduled prices,
+**175/175** one-week trial offers, and **175/175** unchanged preserved-price rows. US monthly remains
+$14.99. Apple returned intermittent HTTP 500 responses during writes; affected resources were read
+back before retrying, and the final complete comparison passed. The local build passed, with 16
+billing/reminder tests and five paywall UI tests passing. Evidence:
+`/tmp/momentum-annual-pricing-verification.json` and `/tmp/momentum-pricing-tests.xcresult`.
+This verifies saved configuration and simulator behavior; storefront propagation begins on the scheduled date.
 
 ⚠️ **Price decreases flow to existing subscribers automatically at their next renewal** — the
 "preserve price" option only exists for increases. The 2026-08-28 cut from $64.99 to $29.99
@@ -84,7 +119,7 @@ xcodebuild -scheme Momentum -destination 'generic/platform=iOS' build
 load live localized prices into the paywall, and keep `isPro` in sync via `customerInfoStream`.
 
 ## 5. Verify on device (Gate 3)
-- Fresh sandbox account → annual shows **3 days free** with real localized renewal terms; weekly has no trial.
+- Eligible fresh sandbox account → annual shows the current store offer: **7 days free** after September 13, with localized renewal terms; monthly has no trial. Previously used group trials remain ineligible.
 - Purchase → entitlement flips; gated surfaces unlock; **Restore** works on a fresh install.
 - **Settings → Manage subscription** opens the App Store sheet (cancel in ≤2 taps).
 - Superwall A/B: confirm each placement shows its remote paywall; the native `PaywallView` remains

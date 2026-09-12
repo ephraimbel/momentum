@@ -32,6 +32,7 @@ struct CardioTrackingView: View, Equatable {
     /// target on the goal bar so "run easy at ~9:40" lives on the screen, not in the athlete's
     /// memory. Structured sessions carry their own per-step targets and ignore this.
     var targetPaceSPerKm: Double? = nil
+    var isPlannedSession = false
     var onFinish: (UUID?) -> Void
 
     enum Phase { case acquiring, countdown, tracking }
@@ -43,7 +44,7 @@ struct CardioTrackingView: View, Equatable {
     static func == (a: Self, b: Self) -> Bool {
         a.type == b.type && a.goalMeters == b.goalMeters && a.distanceUnit == b.distanceUnit
             && a.guideRoute == b.guideRoute && a.structured == b.structured
-            && a.targetPaceSPerKm == b.targetPaceSPerKm
+            && a.targetPaceSPerKm == b.targetPaceSPerKm && a.isPlannedSession == b.isPlannedSession
     }
 
     /// The newest few workouts, ONLY to frame the map on the athlete's last route until a live fix
@@ -492,7 +493,6 @@ struct CardioTrackingView: View, Equatable {
     /// the user taps "Start now" from the acquiring gate.
     private func proceedToCountdown() {
         guard phase == .acquiring else { return }   // ignore a late lock once we've already advanced
-        services.analytics.log(.workoutStarted(type: type.rawValue))
         withAnimation(Motion.standard) { phase = .countdown }
         Task {
             // 0.7 s ticks and no dead hold after GO — the old 0.8×3 + 0.5 shape put a fixed 2.9 s
@@ -515,7 +515,9 @@ struct CardioTrackingView: View, Equatable {
                 countdown = 3
                 return
             }
-            await vm?.arm()
+            guard let vm else { phase = .acquiring; return }
+            await vm.arm()
+            services.analytics.log(.workoutStarted(type: type.rawValue, planned: isPlannedSession))
             Haptics.success()
             withAnimation(Motion.standard) { phase = .tracking }
         }

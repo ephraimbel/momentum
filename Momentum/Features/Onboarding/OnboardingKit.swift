@@ -677,3 +677,168 @@ struct OnboardingSecondary: View {
         }
     }
 }
+
+/// Goals are destinations: a compact two-column gallery, not another long questionnaire list.
+struct OnboardingGoalTile: View {
+    let goal: Goal
+    let selected: Bool
+    let action: () -> Void
+    @ReducedMotionPreference private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: goal.planSystemImage)
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundStyle(selected ? Theme.purple : Theme.ink)
+                        .scaleEffect(selected && !reduceMotion ? 1.08 : 1)
+                    Spacer(minLength: 0)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(selected ? Theme.purple : Theme.ink.opacity(0.15))
+                        .contentTransition(.opacity)
+                }
+                Text(goal.planLabel).font(.rounded(14, weight: .semibold))
+                    .foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, minHeight: 36, alignment: .topLeading)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: typeSize.isAccessibilitySize ? 116 : 102, alignment: .topLeading)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(selected ? Theme.purple : Theme.hairline, lineWidth: selected ? 1.5 : 1) }
+            .shadow(color: Theme.ink.opacity(selected ? 0.05 : 0.02), radius: 8, y: 3)
+            .contentShape(RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.98))
+        .animation(reduceMotion ? nil : OnboardingStyle.selection, value: selected)
+        .accessibilityLabel(goal.planLabel)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+/// The answer owns the illustration: selecting a starting point acknowledges that row in place.
+/// The button's frame never changes, including under Reduce Motion or repeated taps.
+struct OnboardingBackgroundChoice: View {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+    let action: () -> Void
+    @ReducedMotionPreference private var reduceMotion
+
+    var body: some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: symbol)
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(isSelected ? Theme.purple : Theme.inkSecondary)
+                    .frame(width: 46, height: 50)
+                    .background(isSelected ? Theme.purple.opacity(0.08) : Theme.surface, in: RoundedRectangle(cornerRadius: 14))
+                    .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title).font(.rounded(16, weight: .semibold)).foregroundStyle(Theme.ink)
+                    Text(subtitle).font(.rounded(13, weight: .regular)).foregroundStyle(Theme.inkSecondary)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 18)).foregroundStyle(isSelected ? Theme.purple : Theme.ink.opacity(0.15))
+                    .contentTransition(.opacity)
+            }
+            .padding(16).frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 20))
+            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(isSelected ? Theme.purple : Theme.hairline, lineWidth: 1) }
+            .contentShape(RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.99))
+        .animation(reduceMotion ? nil : OnboardingStyle.selection, value: isSelected)
+        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}
+
+/// A calendar that is the actual preference control, not a second decorative copy of its answers.
+struct OnboardingWeekPicker: View {
+    @Binding var selectedDays: Set<Int>
+    var onSelection: () -> Void
+    @ReducedMotionPreference private var reduceMotion
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            row(Array(1...7))
+            VStack(spacing: 8) { row(Array(1...4)); row(Array(5...7)) }
+        }.frame(maxWidth: .infinity)
+    }
+
+    private func row(_ days: [Int]) -> some View {
+        HStack(spacing: 2) {
+            ForEach(days, id: \.self) { day in
+                let selected = selectedDays.contains(day)
+                Button {
+                    Haptics.selection()
+                    if selected { selectedDays.remove(day) } else { selectedDays.insert(day) }
+                    onSelection()
+                } label: {
+                    VStack(spacing: 12) {
+                        Text(Calendar.current.veryShortWeekdaySymbols[day - 1])
+                            .font(.rounded(14, weight: .semibold))
+                            .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
+                        Image(systemName: selected ? "checkmark" : "minus")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(selected ? Theme.purple : Theme.ink.opacity(0.18))
+                            .contentTransition(.opacity)
+                            .scaleEffect(selected && !reduceMotion ? 1.1 : 1)
+                            .accessibilityHidden(true)
+                    }
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 44, height: 72)
+                    .background(selected ? Theme.purple.opacity(0.07) : Theme.background, in: RoundedRectangle(cornerRadius: 14))
+                    .overlay { RoundedRectangle(cornerRadius: 14).strokeBorder(selected ? Theme.purple : Theme.hairline) }
+                    .contentShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(RaisedPressStyle(scale: 0.96))
+                .animation(reduceMotion ? nil : OnboardingStyle.selection, value: selected)
+                .accessibilityLabel(Calendar.current.weekdaySymbols[day - 1])
+                .accessibilityAddTraits(selected ? [.isSelected] : [])
+            }
+        }.fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+/// A truthful preview of the coaching loop. No fake processing, locked weeks, or extra step.
+struct OnboardingCoachingLoop: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("A starting point. Then a plan that learns.")
+                .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
+            HStack(alignment: .top, spacing: 10) {
+                beat("calendar", title: "Your first week", index: 0)
+                arrow
+                beat("checkmark.bubble", title: "Your feedback", index: 1)
+                arrow
+                beat("arrow.trianglehead.2.clockwise.rotate.90", title: "Next week reviewed", index: 2)
+            }
+        }.padding(.horizontal, 6).padding(.vertical, 8)
+    }
+    private var arrow: some View {
+        Image(systemName: "arrow.right").font(.system(size: 10, weight: .medium))
+            .foregroundStyle(Theme.inkTertiary).padding(.top, 12).accessibilityHidden(true)
+    }
+    private func beat(_ icon: String, title: String, index: Int) -> some View {
+        VStack(spacing: 9) {
+            Image(systemName: icon).font(.system(size: 19, weight: .light))
+                .foregroundStyle(index == 0 ? Theme.purple : Theme.inkSecondary)
+                .frame(height: 36).accessibilityHidden(true)
+            Text(title).font(.rounded(11, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity)
+    }
+}

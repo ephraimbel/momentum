@@ -87,28 +87,28 @@ struct PaywallTests {
         #expect(Feature.programs.placement == "full_plan")
     }
 
-    @Test func threeDayTrialIsAnnualOnly() {
+    @Test func sevenDayTrialIsAnnualOnly() {
         let offering = PaywallOffering.standard
-        // Owner call 2026-09-07: the annual keeps its three-day trial; monthly is the
+        // Owner call 2026-09-11: the annual offers a seven-day trial; monthly is the
         // low-commitment entry plan and charges the same day, so there is no trial to cancel.
-        #expect(offering.annual.trialDays == 3)
+        #expect(offering.annual.trialDays == 7)
         #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 55)   // 55.5% ($79.99 vs 12 × $14.99), rounded to nearest 5%
+        #expect(offering.annualSavingsPercent == 75)   // 75.0% ($29.99 vs 12 × $9.99), rounded to nearest 5%
     }
 
-    /// Monthly-anchored pricing (owner call 2026-09-07, weekly retired): a $14.99 month is the
-    /// entry plan and the yearly sits 55% under its run-rate, sold at its own monthly number
-    /// ($6.67/mo). The pair must stay derivable from the two constants — a hand-written badge or
+    /// Monthly-anchored pricing (owner call 2026-09-07, weekly retired): a $9.99 month is the
+    /// entry plan and the yearly sits about 75% under its run-rate, sold at its own monthly number
+    /// ($2.50/mo). The pair must stay derivable from the two constants — a hand-written badge or
     /// per-month string is how these fall out of step with what the store charges.
     @Test func pricingIsTheMonthlyAnchoredPair() {
         let offering = PaywallOffering.standard
-        #expect(offering.monthly.priceText == "$14.99")
-        #expect(offering.annual.priceText == "$79.99")
+        #expect(offering.monthly.priceText == "$9.99")
+        #expect(offering.annual.priceText == "$29.99")
         #expect(offering.monthly.period == .monthly)
         #expect(offering.annual.period == .annual)
         #expect(offering.monthly.id == "momentum_pro_monthly")
         // The yearly's headline: its own per-month price, derived — never typed.
-        #expect(offering.annual.perMonthText == "$6.67 / mo")
+        #expect(offering.annual.perMonthText == "$2.50 / mo")
         // The entry plan never advertises a per-month equivalent — it IS the monthly price.
         #expect(offering.monthly.perMonthText == nil)
     }

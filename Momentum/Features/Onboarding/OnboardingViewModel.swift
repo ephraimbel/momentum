@@ -84,6 +84,23 @@ final class OnboardingViewModel {
     // How hard to push toward the goal (Take your time / Balanced / Aggressive). Pre-set to the honest
     // recommendation when the intensity step appears; the athlete can override.
     var intensity: PlanIntensity = .balanced
+    /// An explicit approach survives backtracking and process termination, not just this view's lifetime.
+    var intensityChosen = false
+
+    func chooseIntensity(_ tier: PlanIntensity) {
+        intensity = tier
+        intensityChosen = true
+        if daysPerWeek < tier.floorDays {
+            daysPerWeek = tier.floorDays
+            // The approach's required frequency is now part of the athlete's choice.
+            daysPerWeekChosen = true
+        }
+    }
+
+    func applyRecommendedIntensityIfUntouched() {
+        guard !intensityChosen, !restoredAtOrPast(.intensity) else { return }
+        intensity = feasibility.recommended
+    }
 
     /// The honest read on the athlete's goal vs. the calendar + their current fitness — drives the
     /// intensity step's headline, recommendation, and any "here's the truth" alternatives.
@@ -183,7 +200,7 @@ final class OnboardingViewModel {
     enum Step: Int, CaseIterable {
         // Raw values are historical analytics IDs. Retired standalone pages remain decodable
         // for draft migration; `computeSteps` owns the live order, never this declaration.
-        // Profile → goal → starting point → training week → approach → reveal → checkout → account.
+        // Name → goal → starting point → body details → training week → approach → reveal → review → checkout → Today.
         case name, identity, goal, disciplines, units, experience, injuries, metrics, race, raceGoalTime,
              muscleFocus, runVolume, days, preferredDays, session, equipment, strengthSplit,
              hybridFocus, why,
@@ -294,13 +311,11 @@ final class OnboardingViewModel {
     var steps: [Step] { cachedStepLists.steps }
 
     private func computeSteps() -> [Step] {
-        // Stable enum values preserve analytics and old drafts. Related inputs now share a page:
-        // name and username first, distance units in the header, race time with race setup, preferred
-        // days with frequency, and lifting split with equipment. Profile styling stays in Profile.
+        // Keep historical IDs stable. Activities and time limits are editable details on goal
+        // and schedule. Identity and body details stay required; permissions are contextual after entry.
         let ordered: [Step] = [
-            .name, .goal, .experience, .disciplines, .race, .runVolume, .injuries, .metrics,
-            .muscleFocus, .days, .session, .equipment, .hybridFocus, .health, .intensity,
-            .notifications, .primers, .building, .reveal, .review, .account,
+            .name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .muscleFocus, .days,
+            .equipment, .hybridFocus, .intensity, .building, .reveal, .review,
         ]
         return ordered.filter { step in
             switch step {
@@ -308,20 +323,9 @@ final class OnboardingViewModel {
             case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
             case .equipment:   return lifting
-            // Session length shapes every discipline now, so everyone is asked (2026-08-30).
-            // It was hidden from pure runners on the grounds that it only set how many exercises
-            // fit in a lifting day — but since the 2026-08-29 audit running honours it too
-            // (`PlanEngine.cardioSessions` caps a midweek session at the stated time), which
-            // meant a runner's plan was quietly shaped by an answer they were never allowed to
-            // give: the untouched 45-minute default. A coach asks how long you have.
-            case .session:     return true
-            // How to split the lifting week — only meaningful to athletes who lift (2026-08-20).
-            case .strengthSplit: return lifting
             case .hybridFocus: return hybrid          // run + lift → ask where the emphasis sits
             // Anything to train around — a conservative history modifier, never a diagnosis.
             case .injuries:    return running
-            // The recovery-tracking consent beat (HealthKit) — shown to everyone; wearables sync there.
-            case .health:      return true
             // How hard to push — a running decision (endurance focus); paired with the honesty check.
             case .intensity:   return running
             // Current mileage only makes sense once you have some — beginners keep the gentle default.
@@ -363,11 +367,12 @@ final class OnboardingViewModel {
     static func currentStep(for saved: Step) -> Step {
         switch saved {
         case .identity: .name
-        case .units: .disciplines
+        case .units, .disciplines: .goal
         case .raceGoalTime: .race
-        case .preferredDays: .days
+        case .preferredDays, .session: .days
         case .strengthSplit: .equipment
-        case .why: .health
+        case .why, .health, .notifications, .primers: .intensity
+        case .account: .review
         default: saved
         }
     }
@@ -383,6 +388,7 @@ final class OnboardingViewModel {
         case .identity: return true
         // Running is the non-optional foundation; this step only asks what belongs around it.
         case .disciplines: return true
+        case .metrics: return sex != nil && birthYear != nil && heightCm != nil && bodyMassKg != nil
         case .race: return raceDistance != nil
         // The goal shapes everything after it, and `.generalFitness` has NO card on the goal
         // screen: it is the untouched default, so advancing on it meant a plan built for a goal

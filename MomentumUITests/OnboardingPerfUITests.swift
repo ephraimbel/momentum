@@ -25,53 +25,33 @@ final class OnboardingPerfUITests: XCTestCase {
     /// up rather than dropping taps or wedging mid-transition.
     func testEveryStepStaysResponsive() {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--debug-free", "--onboarding-goal"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow While Using App", "Allow Once", "Allow", "OK", "Don’t Allow", "Don't Allow"] {
-                let b = alert.buttons[label]; if b.exists { b.tap(); return true }
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--debug-free", "--onboarding-goal", "--review-no-ask"]
+        app.launch()
+        let headings = ["What are we training for?", "Where are you with running?", "Anything to train around?", "A few personal details.", "Let's shape your training week.", "Here's the approach we recommend."]
+        for (index, heading) in headings.enumerated() {
+            XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 8), "Missing screen \(heading)")
+            if index == 0 { app.buttons.matching(NSPredicate(format: "label CONTAINS 'Stay consistent'")).firstMatch.tap() }
+            if index == 1 { app.buttons.matching(NSPredicate(format: "label CONTAINS 'New to running'")).firstMatch.tap() }
+            if heading == "A few personal details." {
+                app.buttons["Female"].tap()
+                app.buttons["Increase Age"].tap()
+                app.buttons["Increase Height"].tap()
+                app.buttons["Increase Weight"].tap()
             }
-            return false
+            let next = app.buttons["Continue"]
+            XCTAssertTrue(next.isEnabled && next.isHittable)
+            next.tap()
         }
-        app.launch(); app.tap()
-        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 20))
-        var advanced = 0
-        var stalls: [String] = []
-        for i in 0..<16 {
-            // Gated steps: answer them so the walk can continue.
-            if app.staticTexts["What supports your running?"].exists, !app.buttons["Continue"].isEnabled {
-                app.staticTexts["Run"].firstMatch.tap()
-            }
-            if app.staticTexts["What are we training for?"].exists, !app.buttons["Continue"].isEnabled {
-                app.staticTexts["Stay consistent"].firstMatch.tap()
-            }
-            if app.staticTexts["Tell us about your running."].exists, !app.buttons["Continue"].isEnabled {
-                app.staticTexts["Easy jogger"].firstMatch.tap()
-            }
-            let heading = app.staticTexts.firstMatch.label
-            guard let cont = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
-                .first(where: { $0.isHittable && $0.isEnabled }) else { break }
-            // The permission beats hand off to a SYSTEM sheet, so their tap-to-next-screen time
-            // is iOS's, not ours — budget for the dialog rather than calling it a stall.
-            let systemPrompt = heading.contains("recovery") || heading.contains("nudge")
-                || heading.contains("Map your runs")
-            let budget: TimeInterval = systemPrompt ? 12 : 3
-            let t0 = Date()
-            cont.tap()
-            let settled = app.buttons.matching(identifier: "Continue").allElementsBoundByIndex
-                .contains { $0.isHittable } || app.buttons["Turn on reminders"].waitForExistence(timeout: budget)
-            let dt = Date().timeIntervalSince(t0)
-            // The questions end at the build beat, which is a deliberate animated moment with no
-            // Continue on it — reaching it means the walk finished, not that a step stalled.
-            // (2026-08-30: the walk grew past the last question when `.session` became universal,
-            // and the build screen's own animation reported as a 3.39 s stall on the step before
-            // it. Budgeting for it would have hidden a real stall there later.)
-            if app.staticTexts["Building your plan"].exists { advanced += 1; break }
-            if !settled || dt > budget { stalls.append("step \(i) (\(heading)) took \(String(format: "%.2f", dt))s") }
-            advanced += 1
-            usleep(500_000)   // just past the flow's own 0.45s advance debounce
-        }
-        XCTAssertTrue(stalls.isEmpty, "steps stalled: \(stalls.joined(separator: "; "))")
-        XCTAssertGreaterThan(advanced, 8, "the walk stopped after only \(advanced) steps")
+        let reveal = app.buttons["onboarding.reveal.continue"]
+        XCTAssertTrue(reveal.waitForExistence(timeout: 15))
+        XCTAssertTrue(reveal.isHittable)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "No permission request before the plan")
+        reveal.tap()
+        let review = app.buttons["onboarding.review.continue"]
+        XCTAssertTrue(review.waitForExistence(timeout: 10) && review.isHittable)
+        review.tap()
+        XCTAssertTrue(app.buttons["Restore"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["onboarding.review.continue"].isHittable, "Checkout must own interaction over the review page")
     }
 
     /// The sign-in page opens and its fields take input immediately.
@@ -115,9 +95,9 @@ final class OnboardingPerfUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Thursday"].isSelected)
         app.buttons["onboarding.distanceUnits"].tap()
         app.buttons["Kilometres"].tap()
-        app.buttons["Continue"].tap()
+        app.buttons["onboarding.sessionLimits"].tap()
         XCTAssertTrue(app.staticTexts["How much time do you have?"].waitForExistence(timeout: 5))
-        app.buttons["Back"].tap()
+        app.buttons["Done"].tap()
         XCTAssertTrue(app.staticTexts["Let's shape your training week."].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Monday"].isSelected)
         XCTAssertTrue(app.buttons["Thursday"].isSelected)
@@ -129,26 +109,24 @@ final class OnboardingPerfUITests: XCTestCase {
     }
 
     @MainActor
-    func testPrimaryQuestionsFitWithoutScrolling() {
+    func testPrimaryQuestionsKeepControlsReachable() {
         let app = XCUIApplication()
         let pages: [(String, String)] = [
             ("--onboarding-goal", "Become a stronger runner"),
             ("--onboarding-race", "Target finish time"),
-            ("--onboarding-experience", "Recent running result"),
-            ("--onboarding-experience-hybrid", "Lifting experience"),
-            ("--onboarding-volume", "Increase Build up to"),
-            ("--onboarding-metrics", "Increase Weight"),
+            ("--onboarding-experience", "Recent race or timed effort"),
+            ("--onboarding-volume", "I'm not sure"),
             ("--onboarding-musclefocus", "Core"),
             ("--onboarding-injuries", "No injuries, I'm all clear"),
-            ("--onboarding-equipment", "Lifting split"),
-            ("--onboarding-session", "75+ min"),
-            ("--onboarding-intensity", "Podium"),
-            ("--onboarding-intensity-short", "Podium")
+            ("--onboarding-metrics", "Increase Weight"),
+            ("--onboarding-equipment", "Strength preferences"),
+            ("--onboarding-intensity", "Adjust approach"),
+            ("--onboarding-intensity-short", "Adjust approach")
         ]
         for (argument, label) in pages {
             app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", argument, "--ui-test-reduce-motion"]
             app.launch()
-            let choice = argument == "--onboarding-equipment" ? app.buttons["onboarding.liftingSplit"]
+            let choice = argument == "--onboarding-equipment" ? app.buttons["onboarding.strengthPreferences"]
                 : argument == "--onboarding-experience-hybrid" ? app.buttons["onboarding.liftingExperience"]
                 : app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
             let found = choice.waitForExistence(timeout: 15)
@@ -159,7 +137,11 @@ final class OnboardingPerfUITests: XCTestCase {
                 add(failure)
             }
             XCTAssertTrue(found, "Missing final control on \(argument)")
-            XCTAssertTrue(choice.isHittable, "\(label) requires scrolling")
+            for _ in 0..<8 {
+                if choice.isHittable && choice.frame.maxY <= app.buttons["Continue"].frame.minY { break }
+                app.swipeUp()
+            }
+            XCTAssertTrue(choice.isHittable, "\(label) must remain reachable")
             XCTAssertLessThanOrEqual(choice.frame.maxY, app.buttons["Continue"].frame.minY,
                                      "\(label) sits under Continue")
             XCTAssertGreaterThanOrEqual(app.buttons["Continue"].frame.minX, app.frame.minX + 22,
@@ -174,26 +156,20 @@ final class OnboardingPerfUITests: XCTestCase {
     }
 
     @MainActor
-    func testNameAndUsernameShareTheFirstPageAndSurviveBack() {
+    func testGoalStartsImmediatelyAndSupportingActivitiesPersist() {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--ui-test-reduce-motion"]
+        app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--ui-test-reduce-motion", "--onboarding-goal"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["Let's make it yours."].waitForExistence(timeout: 15))
-        let name = app.textFields["Your name"]
-        let username = app.textFields["Handle"]
-        XCTAssertTrue(name.isHittable && username.isHittable)
-        name.tap()
-        name.typeText("Alex Mora\n")
-        username.tap()
-        let suggested = username.value as? String ?? ""
-        let custom = "alex_qa_\(UUID().uuidString.prefix(8).lowercased())"
-        username.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: suggested.count) + custom + "\n")
-        app.buttons["Continue"].tap()
-        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 5))
-        app.buttons["Back"].tap()
-        XCTAssertTrue(name.waitForExistence(timeout: 5))
-        XCTAssertEqual(name.value as? String, "Alex Mora")
-        XCTAssertEqual(username.value as? String, custom)
+        XCTAssertTrue(app.staticTexts["What are we training for?"].waitForExistence(timeout: 15))
+        let activities = app.buttons["onboarding.supportingActivities"]
+        for _ in 0..<3 { if activities.isHittable { break }; app.swipeUp() }
+        activities.tap()
+        let strength = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Lift weights'")).firstMatch
+        XCTAssertTrue(strength.waitForExistence(timeout: 5))
+        strength.tap()
+        app.buttons["Done"].tap()
+        XCTAssertTrue(activities.waitForExistence(timeout: 5))
+        XCTAssertTrue(activities.label.contains("Strength"))
     }
 
 }

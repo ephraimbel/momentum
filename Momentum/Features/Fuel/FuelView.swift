@@ -245,6 +245,17 @@ struct FuelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.lg) {
                     dayStrip
+                    if profiles.first.map({ $0.bodyMassKg == nil || $0.heightCm == nil || $0.birthYear == nil || $0.sex == nil }) ?? true {
+                        Button {
+                            if paywall.isEntitled(to: .fuel) { showingGoals = true }
+                            else { paywall.present(for: .fuel) }
+                        } label: {
+                            Label("Estimated targets · Add your body details", systemImage: "slider.horizontal.3")
+                                .font(.rounded(13, weight: .medium))
+                                .foregroundStyle(Theme.inkSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }.accessibilityIdentifier("fuel.completeBodyDetails")
+                    }
                     // The recovery window is a live thing: it opens on today only.
                     if isToday, readout.refuelDue {
                         refuelBanner

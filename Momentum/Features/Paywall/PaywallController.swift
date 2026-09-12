@@ -12,8 +12,8 @@ struct PaywallProduct: Identifiable, Sendable, Equatable {
     enum Period: Sendable, Equatable { case monthly, annual }
     let id: String              // RevenueCat / StoreKit product identifier
     let period: Period
-    let priceText: String       // localized total, e.g. "$14.99"
-    let perMonthText: String?   // annual only, e.g. "$6.67 / mo" — the yearly's headline number
+    let priceText: String       // localized total, e.g. "$9.99"
+    let perMonthText: String?   // annual only, e.g. "$2.50 / mo" — the yearly's headline number
     let trialDays: Int          // 0 = none
 
     var isAnnual: Bool { period == .annual }
@@ -36,53 +36,23 @@ struct PaywallOffering: Sendable, Equatable {
     var monthlyPriceValue: Double = monthlyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Shipped pricing (owner call 2026-09-07 — weekly retired, monthly back): the entry plan is
-    /// **monthly at $14.99 with no trial** and the yearly stays at **$79.99 with a 3-day trial**,
-    /// sold at its own per-month number, **$6.67 a month**, with "$79.99 billed yearly" on the
-    /// card. $14.99 × 12 = $179.88 against $79.99 is 55.5% under the monthly run-rate, and the
-    /// badge rounds to the nearest five — **SAVE 55%** — the same rule every earlier pair wore.
-    /// Why monthly and not weekly: $5.99 a week was $26 a month in practice and the worst-
-    /// retaining SKU in the category data; $14.99 sits between Strava's $11.99 and Runna's
-    /// $19.99 and is dear enough that nobody who was going to buy the yearly is tempted down,
-    /// which is what keeps the annual mix (and CAC payback) intact.
-    ///
-    /// The three numbers have to agree, and only two of them are free: pick the yearly and the
-    /// per-month line falls out of it, along with the badge.
-    ///
-    /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). The take
-    /// rate is NOT 84% in year one: App Store Connect pays the standard 70% first-year rate
-    /// (~$56 on $79.99), rising to ~85% once a subscriber passes twelve months — so a first-year
-    /// yearly clears by ~$41 against ~$15 of cost. History: $29.99 (2026-08-28, "SAVE 90%")
-    /// cleared by only ~$6 and a heavy user who churned inside year one was break-even.
-    ///
-    /// Weekly is gone from the offering. Existing weekly subscribers keep their price and their
-    /// entitlement — removing a product from an offering never cancels or re-prices a live sub —
-    /// so `Period` keeps only the two plans we now SELL.
-    ///
-    /// These two numbers are the **single source**: both `priceText`s, the annual's per-month line
-    /// and `annualSavingsPercent` all derive from them, so the badge can never fall out of step
-    /// with a price change. Live store prices (`loadOffering`) replace the strings once
-    /// RevenueCat is wired — the monthly product is in the SAME subscription group as the annual
-    /// (group level 2, like the annual), so a switch between them is a crossgrade that takes
-    /// effect at the next renewal, never a surprise proration.
-    static let monthlyPrice = 14.99
-    static let annualPrice = 79.99
+    /// Owner pricing, September 11: $9.99 monthly without a trial; $29.99 yearly with a
+    /// seven-day introductory trial for eligible athletes. These are preview/default values.
+    /// Production pricing, trial duration, and eligibility always come from StoreKit through
+    /// RevenueCat; never advertise this offer before the store confirms it.
+    /// Monthly equivalents and savings derive from the same numeric prices.
+    static let monthlyPrice = 9.99
+    static let annualPrice = 29.99
 
     static let standard = PaywallOffering(
         monthly: .init(id: "momentum_pro_monthly", period: .monthly,
                        priceText: money(monthlyPrice), perMonthText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
-                      // Three-day annual trial (owner call 2026-09-05, down from seven). Monthly
-                      // stays trial-less: it is the low-commitment entry plan and pays the same
-                      // day. The live path still reads StoreKit's intro offer, so eligibility
-                      // stays store-authored.
-                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 3))
+                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 7))
 
-    /// Percent saved by paying yearly instead of 12× monthly, **rounded to the nearest 5%** for a
-    /// clean marketing badge (user call 2026-07-14) — derived from the offering's numeric prices
-    /// (live once the store loads), never a hand-written label. Currently **55%**: $79.99 vs
-    /// 12 × $14.99 = $179.88 is 55.5%, which rounds to 55%.
+    /// Savings versus twelve monthly payments, rounded to the nearest 5% for the existing badge.
+    /// Live store prices replace the preview values; $29.99 versus $119.88 rounds to 75%.
     var annualSavingsPercent: Int {
         let monthlyYear = 12 * monthlyPriceValue
         guard monthlyYear > 0 else { return 0 }
@@ -90,7 +60,7 @@ struct PaywallOffering: Sendable, Equatable {
         return Int((raw / 5).rounded()) * 5   // nearest 5% → a round badge, not "38.85%"
     }
 
-    /// Plain "$14.99" formatting for the offline seam (the live store supplies localized strings).
+    /// Plain "$9.99" formatting for the offline seam (the live store supplies localized strings).
     static func money(_ v: Double) -> String { "$" + String(format: "%.2f", v) }
 }
 
@@ -208,7 +178,7 @@ final class PaywallController: PaywallServing {
     ///
     /// This matters because the placeholders are US dollars. If the offering fails to load — no
     /// network, a misconfigured offering, a missing package — the paywall would otherwise present
-    /// "$14.99" to someone whose storefront charges euros, and would keep presenting it after any
+    /// "$9.99" to someone whose storefront charges euros, and would keep presenting it after any
     /// future price change. Showing a number we can't stand behind is the one thing this brand
     /// doesn't do, and Apple expects accurate pricing besides. The view suppresses prices and
     /// offers a retry while this is false.

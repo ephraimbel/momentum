@@ -24,16 +24,17 @@ enum AnalyticsEvent: Equatable {
     /// one-based position in their branched flow. The human-readable name makes funnel reports
     /// resilient when steps are reordered without changing those historical raw values.
     case onboardingStep(name: String, index: Int, position: Int, total: Int)
+    case onboardingMilestone(action: String, step: String, durationMs: Int?)
     case onboardingShowcase(action: String)
     case onboardingPermission(kind: String, status: String)
     case planGenerated(disciplines: Int)
     case paywallView(placement: String, pricingLive: Bool)
     case paywallAction(action: String, placement: String, product: String)
     case paywallConvert(product: String, placement: String)
-    case workoutStarted(type: String)
+    case workoutStarted(type: String, planned: Bool = false)
     case setLogged(latencyMs: Int)
     case restTimerComplete
-    case workoutCompleted(type: String)
+    case workoutCompleted(type: String, planned: Bool = false)
     case aiReadViewed(latencyMs: Int, fallback: Bool)
     case prHit(type: String)
     case planSessionAdapted
@@ -84,6 +85,7 @@ enum AnalyticsEvent: Equatable {
         case .appLaunched:       "app_launched"
         case .welcomeAction:     "welcome_action"
         case .onboardingStep:    "onboarding_step"
+        case .onboardingMilestone: "onboarding_milestone"
         case .onboardingShowcase:"onboarding_showcase"
         case .onboardingPermission:"onboarding_permission"
         case .planGenerated:     "plan_generated"
@@ -122,6 +124,8 @@ enum AnalyticsEvent: Equatable {
         case .welcomeAction(let a):            ["action": a]
         case .onboardingStep(let n, let i, let p, let t):
             ["step": n, "index": String(i), "position": String(p), "total": String(t)]
+        case .onboardingMilestone(let action, let step, let ms):
+            ["action": action, "step": step].merging(ms.map { ["duration_ms": String(max(0, $0))] } ?? [:], uniquingKeysWith: { _, latest in latest })
         case .onboardingShowcase(let a):       ["action": a]
         case .onboardingPermission(let k, let s): ["kind": k, "status": s]
         case .planGenerated(let d):            ["disciplines": String(d)]
@@ -130,10 +134,10 @@ enum AnalyticsEvent: Equatable {
             ["action": a, "placement": p, "product": product]
         case .paywallConvert(let product, let placement):
             ["product": product, "placement": placement]
-        case .workoutStarted(let t):           ["type": t]
+        case .workoutStarted(let t, let planned): planned ? ["type": t, "planned": "true"] : ["type": t]
         case .setLogged(let ms):               ["latency_ms": String(ms)]
         case .restTimerComplete:               [:]
-        case .workoutCompleted(let t):         ["type": t]
+        case .workoutCompleted(let t, let planned): planned ? ["type": t, "planned": "true"] : ["type": t]
         case .aiReadViewed(let ms, let fb):    ["latency_ms": String(ms), "fallback": String(fb)]
         case .prHit(let t):                    ["type": t]
         case .planSessionAdapted:              [:]
@@ -211,6 +215,11 @@ final class AnalyticsService: AnalyticsServing {
     }
 
     func log(_ event: AnalyticsEvent) {
+        // Stamp the new install at the front door, including athletes who leave before setup.
+        // Existing installs keep their cohort until they actually enter the new interview.
+        if case .appLaunched(first: true) = event {
+            UserDefaults.standard.set("activation_v2", forKey: "analytics.onboarding.flow")
+        }
         // Event names + dimensions are non-PII, so logging them publicly is safe and useful in dev.
         let params = event.parameters.map { "\($0)=\($1)" }.sorted().joined(separator: " ")
         logger.info("event=\(event.name, privacy: .public) \(params, privacy: .public)")
@@ -226,6 +235,9 @@ final class AnalyticsService: AnalyticsServing {
         if let sink {
             let name = event.name
             var parameters = event.parameters
+            parameters["onboarding_goal"] = UserDefaults.standard.string(forKey: "analytics.onboarding.goal")
+            parameters["onboarding_background"] = UserDefaults.standard.string(forKey: "analytics.onboarding.background")
+            parameters["onboarding_flow_version"] = UserDefaults.standard.string(forKey: "analytics.onboarding.flow") ?? "legacy_or_unknown"
             parameters["plan_experience"] = "adaptive_weekly_v1"
             parameters["has_completed_workout"] = String(northStar.funnel.firstWorkout != nil)
             parameters["subscription_state"] = parameters["subscription_state"] ?? UserDefaults.standard.string(forKey: "analytics.subscription.state") ?? "unknown"

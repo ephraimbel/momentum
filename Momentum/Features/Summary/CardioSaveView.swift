@@ -480,7 +480,7 @@ struct CardioSaveView: View {
             // completed workout. `workout_completed` is also what advances the north-star funnel — it
             // was declared in the taxonomy but never logged anywhere, so the funnel could never report
             // `.achieved` (fixed 2026-07-25).
-            services.analytics.log(.workoutCompleted(type: workout.type.rawValue))
+            services.analytics.log(.workoutCompleted(type: workout.type.rawValue, planned: workout.plannedSession != nil))
         }
 
         // The heavy tail waits out the beat, then runs its detection OFF the main actor. The task

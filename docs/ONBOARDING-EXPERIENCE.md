@@ -1,209 +1,122 @@
 # Onboarding: a personal training introduction
 
-Owner direction, 2026-09-04: shorten onboarding while keeping useful planning inputs, the iPhone
-preview pages, premium materials, and subtle page animations. Present Momentum as a professional
-training platform. Do not introduce it as a "paid training app." The hard paywall remains.
-
-This supersedes the longer quiz / commitment-beat proposals in ONBOARDING-MOTION-PLAN.md.
+Current implementation: activation_v2, September 12, 2026. This keeps the personal introduction and body inputs while replacing the mandatory
+permission/account sequence. The owner restored the optional review ask after the reveal on September 11. Product rationale and rollout criteria:
+[ONBOARDING-ACTIVATION-PLAN.md](ONBOARDING-ACTIVATION-PLAN.md).
 
 ## Experience arc
 
-1. **Welcome: the brand.** Owner clarification, 2026-09-05: retain the new photographic welcome
-   as the normal entry screen. White canvas, floating circular photographs (including the four
-   supplied running photos), left-aligned copy, and an ink action. The real authentication gate
-   owns entry and returning-athlete routing. Refine its motion separately; do not propagate
-   its typography or flat surfaces into the rest of onboarding or the paywall.
-2. **Your profile, then your goal.** Name and @username share the first setup page. Suggest a
-   username from the name; retain a deliberate edit and show advisory availability. Goal,
-   supporting activities, and race details follow. Optional finish time opens a matching sheet.
-   Distance units live in the question header after profile setup.
-3. **Your starting point: understanding.** Running level and optional recent result; current volume
-   and longest run for non-beginners; injury history; optional personal details. Name and username are already
-   complete from the first page. Weight and height retain independent unit controls. Strength experience
-   and muscle emphasis remain conditional. Do not infer today's recovery from Health connection.
-4. **Your training week: fit.** Frequency and preferred weekdays share an interactive week page.
-   Session length stays a separate, focused question. Equipment retains a lifting-split
-   menu. Hybrid emphasis remains explicit because it changes the number of running days.
-5. **Your approach: confidence.** The existing Health iPhone preview explains future recovery
-   signals. The feasibility assessment uses the supplied goal, baseline, and schedule before
-   recommending intensity. Preserve the reminder and route iPhone previews, with system prompts
-   resolved before generation. These pages demonstrate capabilities and change the visual rhythm.
-6. **Build and reveal: ownership.** Preserve the animated build and named plan arrival. Show the
-   volume curve, training briefing, complete first week with every session open, statistics, and
-   later weeks on one scrollable page. The membership CTA stays pinned; no extra details sheet.
-   The curve animates when reached. A finite, multicolored paper burst marks the named arrival;
-   Reduce Motion uses a short static crossfade.
-   Read the opening schedule from generated sessions, including any constraints; do not repeat
-   requested availability as if it were guaranteed to match the output.
-7. **Membership: continuity.** "Continue with Momentum Pro" opens personalized checkout directly.
-   The goal remains visible. No second welcome or mandatory generic feature tour. Existing live
-   pricing, eligibility, Restore, persisted hard gate, and narrow store-outage deferral remain.
-   Account setup follows entitlement. Profile photos remain in Edit Profile; name and handle are collected first.
+1. **Welcome.** Keep the photographic welcome, returning-account door, ink action, and existing
+   gallery/handoff animation. Start with name and username so the experience can address the athlete personally.
+2. **Goal and starting point.** Goal → running background → recent volume for established/returning
+   runners → injury constraints. Race distance/date/time appears only for a race goal. Pace calibration
+   never answers training background. Unknown recent volume remains unknown, producing the existing
+   conservative starting prescription. The main page asks only about recent running, never how much
+   the athlete is willing to build. Future progression belongs to the coach. Required personal details collect sex, age, height, and weight
+   before generation. Empty measurements display “Add” and cannot silently become personal defaults.
+3. **Schedule.** Training days and preferred weekdays share one page. A visible Session time row opens
+   regular-session duration, optional weekly-distance limit, optional regular-run cap, and separate
+   long-run cap in a native sheet. Existing mileage limits remain visible in the schedule summary.
+   Default caps are described as coach choices, not as athlete answers. Supporting activities are
+   optional on the goal page; selecting strength retains equipment, experience, split, and hybrid
+   emphasis. The split lives in an optional Strength preferences sheet; Coach's pick remains the default.
+   Muscle emphasis remains conditional on the goal.
+4. **Approach.** The last question shows the deterministic feasibility assessment and an editable
+   recommended intensity as one proposed plan. Adjust approach opens an optional sheet with all four
+   tiers; selecting Podium still enforces its minimum days. No tier selection is required to proceed. The running-only path has seven core questions for beginners, eight for
+   established runners; race and strength add only their relevant questions.
+5. **Build and reveal.** Save the real plan immediately. No simulated analysis or timed checklist
+   delays generation. The saved first week appears with its opening schedule/session and an honest
+   starting-effort explanation before the progress chart. Keep the chart, complete first week,
+   adaptive future-week explanation, premium materials, and local earned animation. The CTA is
+   visible immediately and stays available while scrolling. No full-page overture blocks reading.
+6. **Review → checkout → Today.** The reveal's Continue opens a dedicated review page. After its
+   entrance, request Apple's native review sheet once while the app is active. Apple decides whether
+   a sheet appears; there are no custom stars or rating-dependent branches. Continue is live immediately,
+   cancels any pending ask, and opens personalized checkout (or Today for entitled athletes).
+   Store prices, eligibility, subscription duration, Restore, entitlement verification, persisted hard
+   gate, and bounded store-outage deferral remain. Purchase/Restore enters Today for guests and signed-in
+   athletes alike. A relaunch after plan save cannot bypass the subscription gate.
 
-## Length and information
+## Contextual setup
 
-A non-beginner running-only athlete without a race answers **10 question pages, previously 14**.
-A beginner omits current-volume entry. Race setup adds one page. Strength adds only applicable
-equipment, emphasis, and muscle-focus pages. Health, reminders, location, build, reveal, checkout,
-and optional account are additional stages; the ten-page count does not hide those stages.
+Name, username, and body details are collected during onboarding (owner correction, September 11).
+Profile appearance and later edits remain available in Profile/Settings. Legacy profiles with missing
+identity remain supported; an empty handle must never accidentally claim a public identity. Health connection remains
+in the existing recovery/settings surfaces and imports no workouts or history. Location is requested
+when the athlete starts a GPS activity or invokes location-dependent map behavior.
 
-Shortening comes from grouping related decisions and removing decorative setup. Baseline, volume,
-longest run, volume ceiling, injury history, body estimates, availability, session length, equipment,
-strength split, hybrid emphasis, race date/time, and intensity remain available. The separate
-motivation question is removed; it did not determine the training prescription.
+Today uses the actual pending session, or explains a rest day and the next scheduled session. There
+is no new takeover tutorial. A new athlete on a rest day may see one dismissible training-day reminder
+option in the existing utility row; its tap owns notification permission. Injury context takes priority.
 
-## Motion and interaction
+For legacy profiles, Fuel labels targets as estimates while body inputs are missing and offers body setup there. Missing
+measurements remain nil. Saving a fueling goal cannot convert example measurements into personal data;
+the athlete must explicitly confirm the body details first. Adding Fuel/profile details does not rebuild
+completed workout history.
 
-- Primary choices fit the compact iPhone viewport at standard text size, with one pinned CTA.
-  Overflow scrolling stays available for accessibility text and the keyboard. Optional details
-  use consistent native sheets rather than expanding the question into a long page.
-- White cards share a 16-point radius, restrained shadow, and consistent type and selection states.
-  Directional page transitions travel 20 points over 360 ms; presses scale to 98%.
-- A stable header names the chapter; forward/back navigation retains direction. The progress fill
-  scales horizontally rather than animating layout width, with a small marker at the tip of the fill.
-- Headings arrive first. Onboarding uses its own soft 460 ms arrival with 18-point lifts (10 for
-  the opening heading, 26 for the iPhone preview), independently of everyday screen transitions.
-  Option entrances stagger by 45 ms, capped at 285 ms so long lists do not
-  make the last choices wait. Continue stays pinned and never waits for decorative motion.
-- A pressed card yields slightly; selection changes its indicator and gives a light haptic.
-  The chosen icon and indicator settle with a small spring. Preferred days respond the same way;
-  number steppers have press feedback and rolling values, scoped to the numeral rather than the row.
-  Continue has a quiet forward arrow and fades into readiness when required input becomes valid.
-  Remove random "Nice pick" toasts. Explanations should describe the decision being made.
-- Keep the iPhone frames and existing permission previews. They have one clear purpose per page;
-  none is an extra marketing interruption after the personal plan reveal.
-- The reveal retains its more expressive earned animation, but the settled page prioritizes useful
-  training. No review solicitation interrupts that moment: the ask is a page of its own that
-  follows the reveal (see "App Store review beat" below), and nothing about it shares the plan.
-- Honor Reduce Motion. Content and selected values must remain visible without motion. No repeated
-  celebration, flashing, or extra delays are added to make the interview feel longer.
+## Motion and visual character
 
-## Integrity and verification
+Each page assembles a different part of the athlete's plan. A personal card with their name and
+initials leads the introduction; a race bib leads the race question. The goal gallery sits below an
+abstract running track that responds to the selected goal. Running-background choices carry their
+own icons and selection feedback. The schedule's calendar is the actual weekday control, with
+44-point tap targets and a two-row fallback on narrow screens. The final personal brief combines
+the goal, approach, day count, and honest feasibility assessment, followed by a first-week → feedback
+→ next-week-review explanation. Recent-running panels, protective rings, measurement confirmations,
+equipment cards, and hybrid balance retain their individual compositions. Artwork responds to actual choices.
+It does not invent GPS routes, training history, fitness charts, or preferred weekdays.
 
-Retain historical step IDs for analytics. Migrate saved drafts from removed pages to their combined
-destinations without dropping answers. Use live flow order for progress and resumed intensity
-choices. An old draft with an unselected race must revisit race setup before proceeding. A draft missing
-name or username returns to the first profile page without losing training answers.
+Scenes enter through finite staggered transforms, then respond to selection. The outgoing scene
+captures its step by value so it cannot suddenly show the next page's artwork. Artwork has a fixed
+composition and shrinks at accessibility sizes; the meaningful question and controls retain Dynamic
+Type and accessibility labels. Shared typography, white paper materials, spacing, ink controls, and
+restrained lavender keep the pages consistent.
 
-Verify the complete unit suite plus focused simulator checks for the combined pages, required
-baseline, reveal-to-checkout handoff, purchase/account handoff, hard-gate relaunch, and store outage.
-Inspect the real screens in light/dark appearance and with Reduce Motion. Conversion improvement
-is a hypothesis; evaluate it with onboarding completion, checkout conversion, and first-session
-completion after release.
+Animations use a single entrance and choice responses without looping timers or artificial delays.
+Decorative scenes do not intercept touches. Reduce Motion shows settled illustrations and crossfades.
+The existing welcome animation and earned plan-reveal materials remain intact. Compact screens retain
+scrolling and a pinned Continue button rather than shrinking readable controls to fit.
 
-### Interface artwork guard
+### Reference review — September 12
 
-Decorative emoji are bundled artwork, never text glyphs. The existing CI SwiftLint step rejects
-literal and Unicode-escaped emoji in interface strings; comments and the two dormant conversational
-content generators are excluded. User-entered text remains user content.
+Reviewed publicly available onboarding screenshots from Mobbin's
+[Headspace](https://mobbin.com/explore/flows/7cdc08c0-3bcb-4882-90dd-5cf92019616f),
+[Revolut](https://mobbin.com/explore/flows/835f959d-7928-45a7-a4f7-fdec964e7270), and
+[Ahead](https://mobbin.com/explore/flows/57e41d19-30db-4443-ab36-b19c8c20dfe4) sequences.
+Headspace's changes in artwork scale informed the composition variety; Revolut's focused input
+pages informed reducing repeated decoration; Ahead's illustrated choices informed making the
+interaction itself carry visual feedback. These are design interpretations of still screenshots,
+not claims about their animation timing or conversion results. No reference artwork, mascots,
+match percentages, or social-proof claims were imported into Momentum.
 
-Paywall flag/apple images use generated asset references, so a missing or renamed asset fails to
-compile. Race glyphs are private to the catalog; views use `flagArtworkName`. `InterfaceArtworkTests`
-loads every country flag and both paywall images from the compiled app in light and dark appearances.
-Adding a country requires running `swift scripts/render_race_flags.swift` and passing that test.
+## State and measurement
 
-### Verification of the initial restructuring, 2026-09-04
+Historical step IDs stay stable. Drafts retain all answers, including whether the athlete explicitly chose a training approach, and map retired identity to Name,
+activity/units pages to Goal, session details to Schedule, and permissions to Approach. Missing required
+identity or body answers are collected on resume without losing training answers. Output drafts without a persisted
+profile rebuild from preserved answers. Missing required goal/background/race inputs still need answers.
+Generation remains an atomic SwiftData save/rollback and retry reuses a saved profile.
 
-- Full unit suite: 1,900 passed, one skipped, zero failures.
-- Focused onboarding UI suite: all 10 passed, including the complete guest interview, name
-  persistence, combined schedule and units, direct checkout, purchase/account handoff, gate
-  relaunch, and store-outage deferral. Xcode then failed to finalize its result bundle because
-  the disk filled; the completed test transcript is saved in
-  `work/onboarding-direction/ui-test-results.txt`.
-- Inspected the welcome during playback and on its closing frame, plus goal, schedule, personal
-  details, race setup, Health preview, and the expanded first session on iPhone 16e. Also checked
-  reduced-motion presentation and dark system appearance (onboarding retains its light palette).
-- Race flag and apple-scan paywall illustrations use bundled artwork. The simulator runtime's
-  missing Apple Color Emoji font caused both text glyphs to fall back to question-mark boxes;
-  the illustrations no longer depend on that font. Existing animation timing and overlays remain.
+`onboarding_flow_version=activation_v2` is persisted at first install or entry into the new flow; old
+installs are not silently relabeled by an app update. Events distinguish generation start/success/failure,
+actual reveal entry, reveal continuation, step continuation, first entitled Today entry, and explicit
+reminder choice. They contain coarse branches and elapsed milliseconds, not free-text or health answers.
 
-### Verification of the visual polish and identity-first flow
+Use `scripts/analysis/onboarding_activation.sql` for fully elapsed 24-hour install cohorts. It reports
+production-observed, sandbox/mixed, and unknown coverage separately. Client purchase/entitlement events
+are not proof of a paid renewal. RevenueCat's billing ledger and verified identity linkage remain the
+source for trial conversion. Missing cancellation events do not establish zero churn.
 
-- Full unit suite: 1,914 passed, one skipped. After the final draft-migration adjustment, all
-  24 onboarding flow and draft tests passed again, including preservation of an athlete's
-  intensity choice when an older draft returns to collect missing identity.
-- All 12 focused onboarding UI checks passed, covering name and username persistence, the
-  complete guest interview, plan detail presentation, checkout, account handoff, and relaunch.
-- The final compact-phone fit check passed across 12 page configurations, including hybrid
-  running/strength experience, measurement margins, muscle focus, and a short race timeline. Native picker controls have
-  stable accessibility identifiers so layout checks do not depend on their composed labels.
-- Standard-size questions keep their controls above the pinned Continue button. Overflow
-  remains available for accessibility sizes and keyboard entry; full-plan detail is opt-in.
-- Updated screenshots are in `work/onboarding-direction/screenshots/polish/`.
+## Verification
 
-### Verification of artwork protection and livelier interaction
+Use build-for-testing followed by test-without-building on an explicit simulator UDID. Run the full
+MomentumTests target and relevant onboarding, guest-entry, accessibility, motion, and paywall UI suites.
+Check actual executed test counts; a misspelled `-only-testing` identifier can run zero tests.
 
-- Rebuilt with `build-for-testing`, then ran those binaries with `test-without-building`.
-- 38 unit tests passed: compiled artwork loading in both appearances, race catalog, onboarding
-  flow, and draft restoration. All 28 country flags and both animated paywall images loaded.
-- Three UI tests passed: selection and back navigation with motion on and with Reduce Motion;
-  schedule/units persistence; and all 12 compact-phone question layouts above Continue.
-- The emoji lint rule passed across app, watch, and widget UI. Negative probes for literal flag,
-  apple, star, and escaped emoji were rejected; comments and bundled images were accepted.
-- Changed production files passed SwiftLint. The full repository lint run still reports existing
-  violations outside this change, recorded in `/tmp/momentum-interface-lint.log`.
-- Inspected the selected goal and schedule screenshots, plus the running paywall's flag and apple.
-  Previews and verification summaries are saved under `work/onboarding-direction/`.
-
-### Complete plan reveal — 2026-09-04
-
-- Replaced the compact first-session preview and Explore sheet with one scrollable reveal:
-  training curve, briefing, every first-week session open, statistics, personal inputs, and later weeks.
-- Chart placement updated 2026-09-05: directly below the plan headline and above the training
-  briefing. Its entrance waits for the opening title to clear and for the chart to be visible;
-  Reduce Motion shows the finished chart immediately.
-- Kept the membership CTA pinned. Session details have no expanding layout; sections enter once
-  when reached. The chart now waits until visible, and interrupted arrival state settles on exit.
-- The reveal stays restrained: the named arrival, plan-ready seal, earned aurora, and scroll-led
-  plan motion carry the moment without a confetti overlay.
-- Verified with UI checks covering the complete scroll in both motion modes and the
-  reveal-to-hard-paywall handoff/relaunch. Build and changed-file lint passed.
-- Simulator captures and arrival video: `work/onboarding-direction/screenshots/full-reveal/`.
-
-### Animation lifecycle review — 2026-09-04
-
-- The welcome film now pauses whenever onboarding covers it or its scene becomes inactive,
-  and explicitly tears down its player on removal. Deferred setup reads the current pause state
-  and cannot start a player after the view has been dismantled.
-- Reduce Motion uses `WelcomeClosingPoster` directly; no video player is created. The still is
-  the bundled `WelcomeVideo.mov` closing card at 14.7 seconds, so the wordmark stays identical.
-- The reminder banner's delayed entrance is a cancellable page task. Leaving the page cancels
-  the entrance and resets its state for a later visit.
-- Injury choices keep stable geometry, including space for their coaching note. Selection uses
-  a brief color fade. The race-time row no longer animates its layout while editing.
-- Plan generation checks task cancellation and the current page after every pacing delay.
-  The build screen shares onboarding's display typography and Reduce Motion reader; its
-  iridescent ring is static in reduced mode. Checkout uses that same accessibility reader.
-- Verification artifacts: `work/onboarding-direction/animation-audit/` (UI screenshots,
-  a simulator motion recording, and test-result summaries).
-- Final verification passed: 48 distinct unit tests and 13 distinct UI tests, including
-  the complete guest journey, both motion modes, double-tap navigation, interrupted building,
-  name/handle and schedule persistence, all 12 compact-phone layouts, and hard-gate/outage recovery.
-  The final build and changed-file SwiftLint checks passed.
-
-### App Store review beat — 2026-09-05
-
-Owner call, made with the 2026-07 App Review 5.6.3 rejection spelled out: onboarding carries a
-review ask again, as its own page between the plan reveal and checkout. Flow order is now
-notifications, location, build, **reveal, review**, checkout, account.
-
-- `OnboardingReviewView` is a permission-beat-shaped page — the app's own mark lit from beneath,
-  a centered heading, two plain cards on why a review matters, and a pinned Continue.
-- **The native sheet is raised on arrival, without a tap** (`requestReview()`, 0.5s after the page
-  settles — a system sheet presented over a still-animating view is silently dropped by iOS).
-- What keeps it out of the shape Apple rejected, and what must stay true:
-  - Continue is live on the first frame, gated on nothing, and is the page's only control.
-  - There is no custom rating UI: no star row, no "do you like momentum?" fork routing unhappy
-    athletes anywhere but the store. Apple's sheet is the only rating surface.
-  - The copy never claims a review was written. iOS reports nothing about what happened in the
-    sheet, so the page states the ask and stays stated.
-  - The ask is never the last beat; checkout and the account hand-off both follow it.
-- Arrival calls `AppReview.recordOnboardingAsk()`, which spends one of Apple's three yearly slots
-  **without** latching "rated" — so the engagement-gated in-app cards resume at the 5th and 15th
-  logged item instead of arriving the next morning.
-- Verify: `--onboarding-review` lands on the beat; add `--review-no-ask` to read the page with the
-  sheet held. The sheet renders unreliably in the simulator (StoreKit rate-limiting) — confirm it
-  on device.
-- Pinned by `OnboardingReviewUITests` (4 UI tests), `OnboardingNoRatingUITests` (the ask lives on
-  that page and nowhere else), `AppReviewTests` (the ledger debit), and `OnboardingFlowTests`
-  (its seat in the step order).
+Keep overflow scrolling at large text sizes, pinned CTAs, state-preserving back navigation, Reduce Motion,
+first-tap response, guest purchase/relaunch, Restore, and outage deferral covered. At accessibility
+text sizes, personal-detail labels, units and controls stack to prevent horizontal page overflow.
+Imperial height parsing uses bounded floating-point conversion so oversized pasted feet/inches
+cannot overflow an integer before validation. Final evidence and any
+external validation still needed are recorded in ONBOARDING-ACTIVATION-PLAN.md.

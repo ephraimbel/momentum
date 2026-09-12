@@ -106,7 +106,11 @@ struct TodayView: View {
     /// DEBUG deep link only (`--log-activity-draft`): opens the composer holding this text.
     @State private var logActivityDraft: String?
     @State private var showInjuryReport = false
+    @Environment(PaywallController.self) private var activationPaywall
     @State private var showCheckin = false
+    @AppStorage("activation.sessionReminder.handled") private var reminderOfferHandled = false
+    @State private var reminderOfferAvailable = false
+    @State private var reminderRequestInFlight = false
     @State private var showLifeHappens = false
     private enum CheckinDestination { case injury, life }
     @State private var pendingCheckinDestination: CheckinDestination?
@@ -299,6 +303,16 @@ struct TodayView: View {
     }
 
     var body: some View {
+        todayContent
+        .task {
+            let notificationStatus = await NotificationService.authorizationStatus()
+            reminderOfferAvailable = UserDefaults.standard.string(forKey: "analytics.onboarding.flow") == "activation_v2"
+                && !reminderOfferHandled && notificationStatus == .notDetermined
+        }
+        .onChange(of: activationPaywall.isPro) { _, entitled in if entitled { recordFirstEntitledEntry() } }
+    }
+
+    private var todayContent: some View {
         ZStack(alignment: .bottom) {
             // Discipline-adaptive backdrop: a live map for cardio, a strength home for lifting — and
             // the *same* map for the world globe, so it zooms out continuously instead of being a
@@ -332,6 +346,7 @@ struct TodayView: View {
         .navigationBarHidden(true)
         .navigationDestination(item: $selectedAthlete) { AthleteProfileView(athlete: $0) }
         .onAppear {
+            recordFirstEntitledEntry()
             bootstrapIfNeeded()
             // AFTER bootstrap (its reconcile pass can move sessions): snapshot today's plan row so
             // body reads stay cheap. Every appear, so plan-tab edits show the moment you return.
@@ -1640,6 +1655,26 @@ struct TodayView: View {
     private var utilityLine: some View {
         if profiles.first?.activeInjuryArea != nil {
             injuryBanner
+        } else if reminderOfferAvailable, !reminderOfferHandled, pendingToday == nil, nextPlannedSession() != nil {
+            HStack {
+                Button {
+                    guard !reminderRequestInFlight else { return }
+                    reminderRequestInFlight = true
+                    services.notifications.requestAuthorization(completion: { granted in
+                        reminderRequestInFlight = false
+                        reminderOfferHandled = true
+                        services.analytics.log(.onboardingMilestone(action: granted ? "session_reminders_enabled" : "session_reminders_declined", step: "today", durationMs: nil))
+                        if granted { services.notifications.schedulePlannedReminders(plan) }
+                    })
+                } label: {
+                    Label("Remind me on training days", systemImage: "bell")
+                        .font(.rounded(13, weight: .medium))
+                }.disabled(reminderRequestInFlight)
+                Spacer(minLength: 8)
+                Button { reminderOfferHandled = true } label: {
+                    Image(systemName: "xmark").font(.system(size: 12)).frame(width: 44, height: 44)
+                }.accessibilityLabel("Dismiss session reminder suggestion")
+            }.foregroundStyle(Theme.inkSecondary)
         } else if DailyCheckin.today(in: checkins) == nil {
             checkinChip
         } else if let readout = morningReadiness {
@@ -1662,6 +1697,15 @@ struct TodayView: View {
             }
         }
         return adaptedTodayMemo.value
+    }
+
+    private func recordFirstEntitledEntry() {
+        let defaults = UserDefaults.standard
+        guard activationPaywall.isPro,
+              defaults.string(forKey: "analytics.onboarding.flow") == "activation_v2",
+              !defaults.bool(forKey: "analytics.activation.firstToday") else { return }
+        defaults.set(true, forKey: "analytics.activation.firstToday")
+        services.analytics.log(.onboardingMilestone(action: "first_entitled_today", step: "today", durationMs: nil))
     }
 
     /// Tap-through from the morning readout → Progress → Health. One-shot mailbox: RootView

@@ -136,7 +136,7 @@ extension SocialBackending {
             return
         }
         var dto = SocialSyncEngine.profileDTO(for: profile, isPro: viewerIsPro)
-        guard !dto.handle.isEmpty || !dto.displayName.isEmpty else { return }
+        guard !dto.handle.isEmpty, !SocialPrivacy.isReservedHandle(dto.handle) else { return }
         if let avatar = profile.avatarData, let path = await uploadAvatar(jpeg: avatar) {
             dto.avatarPath = path
         }

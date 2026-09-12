@@ -40,6 +40,8 @@ struct OnboardingDraftTests {
         vm.bodyMassKg = 63
         vm.weeklyRunVolumeM = 45_000
         vm.longestRunM = 20_000
+        vm.targetWeeklyRunVolumeM = 60_000
+        vm.strengthSplit = .upperLower
         vm.calibrationMode = .time
         vm.paceFeel = .regular
         vm.benchmark = .half
@@ -84,6 +86,8 @@ struct OnboardingDraftTests {
         #expect(restored.bodyMassKg == 63)
         #expect(restored.weeklyRunVolumeM == 45_000)
         #expect(restored.longestRunM == 20_000)
+        #expect(restored.targetWeeklyRunVolumeM == 60_000)
+        #expect(restored.strengthSplit == .upperLower)
         #expect(restored.calibrationMode == .time)
         #expect(restored.paceFeel == .regular)
         #expect(restored.benchmark == .half)
@@ -102,6 +106,19 @@ struct OnboardingDraftTests {
         #expect(restored.step == .days)
         #expect(restored.intensity == .podium)
         #expect(restored.raceDistance == .marathon)
+    }
+
+    @Test func unknownRecentRunningKeepsAnExplicitFutureLimitOnRestore() throws {
+        let original = fullyAnswered()
+        original.weeklyRunVolumeM = nil
+        original.longestRunM = nil
+        let data = try JSONEncoder().encode(original.draft())
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: try JSONDecoder().decode(OnboardingDraft.self, from: data)))
+        #expect(restored.weeklyRunVolumeM == nil)
+        #expect(restored.longestRunM == nil)
+        #expect(restored.targetWeeklyRunVolumeM == 60_000)
+        #expect(restored.strengthSplit == .upperLower)
     }
 
     @Test func olderDraftCollectsMissingIdentityWithoutLosingTrainingAnswers() {
@@ -135,7 +152,7 @@ struct OnboardingDraftTests {
         #expect(restored.calibrationMode == .none)     // non-optional → default
         #expect(restored.name == "Maya Rivera")        // untouched fields intact
         #expect(restored.daysPerWeek == 5)
-        #expect(restored.step == .days)
+        #expect(restored.step == .goal)
     }
 
     @Test func unrecognizedStepIsDiscardedNotMisplaced() {
@@ -161,7 +178,7 @@ struct OnboardingDraftTests {
             draft.savedStep = String(describing: step)
             let restored = OnboardingViewModel()
             #expect(restored.restore(from: draft))
-            #expect(restored.step == step)
+            #expect(restored.step == .intensity)
         }
     }
 
@@ -189,8 +206,8 @@ struct OnboardingDraftTests {
     }
     @Test func retiredPagesResumeOnTheirCombinedPageWithoutLosingAnswers() {
         let pairs: [(OnboardingViewModel.Step, OnboardingViewModel.Step)] = [
-            (.name, .name), (.identity, .name), (.units, .disciplines), (.raceGoalTime, .race),
-            (.preferredDays, .days), (.strengthSplit, .equipment), (.why, .health)
+            (.name, .name), (.identity, .name), (.units, .goal), (.disciplines, .goal), (.raceGoalTime, .race),
+            (.preferredDays, .days), (.session, .days), (.metrics, .metrics), (.strengthSplit, .equipment), (.why, .intensity), (.health, .intensity)
         ]
         for (old, current) in pairs {
             var draft = fullyAnswered().draft()
@@ -204,6 +221,23 @@ struct OnboardingDraftTests {
             #expect(restored.intensity == .podium)
             restored.advance()
             #expect(restored.step != current, "A migrated draft must never have a dead Continue")
+        }
+    }
+
+    @Test func laterDraftCollectsMissingBodyDetailsWithoutLosingTrainingAnswers() {
+        for checkpoint in ["days", "intensity", "building", "reveal"] {
+            var draft = fullyAnswered().draft()
+            draft.savedStep = checkpoint
+            draft.heightCm = nil
+            let restored = OnboardingViewModel()
+            #expect(restored.restore(from: draft))
+            #expect(restored.step == .metrics)
+            #expect(!restored.canAdvance)
+            #expect(restored.name == "Maya Rivera")
+            #expect(restored.weeklyRunVolumeM == 45_000)
+            #expect(restored.preferredDays == [2, 4, 6])
+            restored.heightCm = 168
+            #expect(restored.canAdvance)
         }
     }
 
@@ -224,14 +258,54 @@ struct OnboardingDraftTests {
         let restored = OnboardingViewModel()
         #expect(restored.restore(from: draft))
         #expect(restored.restoredAtOrPast(.intensity))
-        restored.back()
         #expect(restored.step == .intensity)
+        restored.back()
+        #expect(restored.step == .hybridFocus)
         #expect(restored.intensity == .podium)
     }
 
 }
 
 extension OnboardingDraftTests {
+    @Test func explicitApproachSurvivesBacktrackingAndTwoRestarts() throws {
+        let vm = fullyAnswered()
+        vm.daysPerWeek = 2
+        vm.daysPerWeekChosen = false
+        vm.chooseIntensity(.podium)
+        vm.step = .days
+        var draft = try JSONDecoder().decode(OnboardingDraft.self, from: JSONEncoder().encode(vm.draft()))
+        for _ in 0..<2 {
+            let restored = OnboardingViewModel()
+            #expect(restored.restore(from: draft))
+            restored.applyRecommendedDaysIfUntouched()
+            restored.applyRecommendedIntensityIfUntouched()
+            #expect(restored.intensity == .podium)
+            #expect(restored.intensityChosen)
+            #expect(restored.daysPerWeek == PlanIntensity.podium.floorDays)
+            restored.step = .metrics
+            draft = restored.draft()
+        }
+    }
+
+    @Test func untouchedApproachStillReceivesRecommendation() {
+        let vm = fullyAnswered()
+        vm.intensity = .balanced
+        let expected = vm.feasibility.recommended
+        vm.applyRecommendedIntensityIfUntouched()
+        #expect(vm.intensity == expected)
+        #expect(!vm.intensityChosen)
+    }
+
+    @Test func legacyApproachAtItsPageKeepsItsChoice() {
+        var draft = fullyAnswered().draft()
+        draft.savedStep = "intensity"
+        draft.intensityChosen = nil
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: draft))
+        restored.applyRecommendedIntensityIfUntouched()
+        #expect(restored.intensity == .podium)
+    }
+
     @Test func resumingNeverOverwritesChosenTrainingDays() {
         let vm = fullyAnswered()
         vm.daysPerWeek = 3

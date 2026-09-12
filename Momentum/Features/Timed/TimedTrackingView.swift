@@ -26,6 +26,7 @@ struct TimedTrackingView: View {
             let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
             let model = TimedTrackingViewModel(type: type, container: container, voice: voice)
             model.start()
+            services.analytics.log(.workoutStarted(type: type.rawValue))
             vm = model
             if !reduceMotion { withAnimation(.easeInOut(duration: 1).repeatForever(autoreverses: true)) { pulse = true } }
         }

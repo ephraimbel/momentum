@@ -974,7 +974,7 @@ struct LogActivityView: View {
             // backfill is one-shot behind a version flag, so nothing rescued it later) and Health
             // never saw it either.
             RecordsBook.record(w, in: context)
-            services.analytics.log(.workoutCompleted(type: w.type.rawValue))
+            services.analytics.log(.workoutCompleted(type: w.type.rawValue, planned: w.plannedSession != nil))
             if w.durationS >= 60 || (w.gps?.distanceM ?? 0) > 0 {
                 let saved = w
                 Task { await services.health.save(saved) }

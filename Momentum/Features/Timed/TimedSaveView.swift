@@ -436,7 +436,7 @@ struct TimedSaveView: View {
             AwardsBook.syncSoon()
             AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
             // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
-            services.analytics.log(.workoutCompleted(type: saved.type.rawValue))
+            services.analytics.log(.workoutCompleted(type: saved.type.rawValue, planned: saved.plannedSession != nil))
         }
         // The celebration is the exit: its own haptic fires (no extra success buzz), and it calls
         // `onDone` when the beat completes or is tapped through.

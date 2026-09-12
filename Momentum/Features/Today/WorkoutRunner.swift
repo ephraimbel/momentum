@@ -273,7 +273,8 @@ struct WorkoutRunner: ViewModifier {
             CardioTrackingView(type: type, goalMeters: goal, container: context.container,
                                distanceUnit: distanceUnit,
                                guideRoute: guide, structured: structured,
-                               targetPaceSPerKm: structured == nil ? planned?.targetPaceSPerKm : nil) { id in
+                               targetPaceSPerKm: structured == nil ? planned?.targetPaceSPerKm : nil,
+                               isPlannedSession: planned != nil) { id in
                 finish(id, type: type, planned: planned)
             }
             // The shell's `@Query`s (this modifier's `profiles`, RootView's recent workouts — a set

@@ -56,12 +56,7 @@ struct RootView: View {
     /// The athlete's photo, drawn as the Profile tab's icon. Nil until rendered, and while nil the
     /// tab falls back to its SF Symbol — so a profile with no photo behaves exactly as before.
     @State private var profileTabIcon: UIImage?
-    /// Second phase of the onboarding hard gate: they subscribed from the RELAUNCH wall (having
-    /// force-quit onboarding at the paywall), so they never reached onboarding's `.account` beat and
-    /// would otherwise land in the app as a paying permanent guest — anonymous to RevenueCat, with
-    /// no cloud copy of anything they paid for. Rides the SAME cover as the wall rather than adding a
-    /// fifth presentation modifier to this chain (see the ceiling note above).
-    @State private var gateAccountBeat = false
+
     #if DEBUG
     /// One-shot latch for the launch-arg deep links in `onAppear` — see the guard there.
     @MainActor private static var didFireDebugArgs = false
@@ -264,7 +259,7 @@ struct RootView: View {
         let shell = ZStack {
             if !auth.isSignedIn || welcomeLingers {
                 // The welcome (2026-07-27): brand only, no account. "Get started" enters setup
-                // local-only and the account is offered on the LAST beat of onboarding. Told
+                // local-only; account backup is available later in Settings. Told
                 // whether training already lives on this device so it can offer to resume it
                 // rather than run a second athlete through setup on top of it.
                 SignInView(hasLocalProfile: !profiles.isEmpty,
@@ -342,32 +337,10 @@ struct RootView: View {
                 // The unpersisted store-unreachable deferral remains the safety valve for a real
                 // StoreKit/RevenueCat outage and returns on the next launch.
                 .fullScreenCover(isPresented: Binding(
-                    get: { gateAccountBeat
-                        || (paywall.onboardingGatePending && !paywall.isPro && !paywall.storeUnreachableDeferral
-                            && !showOnboarding && !profiles.isEmpty) },
-                    set: { if !$0 { gateAccountBeat = false } })) {
-                    if gateAccountBeat {
-                        AccountOptionsView(
-                            presentation: .onboardingBeat,
-                            onSkip: { gateAccountBeat = false },
-                            onSignedIn: {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { gateAccountBeat = false }
-                            })
-                        .environment(\.colorScheme, .light)   // same light sequence onboarding runs in
-                    } else {
-                        // Re-enters the two-page flow AT checkout — the athlete already saw the
-                        // showcase before force-quitting, so re-telling it would read as a loop.
-                        OnboardingPaywallFlow(startAtCheckout: true, onEntitled: {
-                            // A purchase landed HERE, so onboarding's own paywall → `.account`
-                            // hand-off never ran. Swap this cover to the account beat instead of
-                            // letting the paywall dismiss — flipping `gateAccountBeat` keeps `get`
-                            // true, so the cover is never torn down and there is no re-presentation
-                            // to lose under load. If they already have a real account there's nothing
-                            // to offer: leave it alone and `get` goes false on its own.
-                            guard !(auth.isSignedIn && !auth.isGuest) else { return }
-                            gateAccountBeat = true
-                        })
-                    }
+                    get: { paywall.onboardingGatePending && !paywall.isPro && !paywall.storeUnreachableDeferral
+                        && !showOnboarding && !profiles.isEmpty },
+                    set: { _ in })) {
+                    OnboardingPaywallFlow(startAtCheckout: true)
                 }
                 // The ONE coach chat surface — every entry point (Today's floating button, Settings)
                 // opens the same thread through `CoachPresenter`. Free to talk; Apply is the Pro gate.
@@ -581,18 +554,9 @@ struct RootView: View {
                 }
             }
             coach.isSuspended = showing
-            // The account is the last beat of onboarding now, so a sign-in can land with a freshly
-            // built profile and plan on disk — `noteRealSignIn` must not read that as a
-            // hand-me-down account switch and delete it.
-            auth.isOnboarding = showing || gateAccountBeat
-        }
-        // The relaunch gate's account beat is that SAME last beat, just hosted here instead of by
-        // `OnboardingFlow` — so it needs the identical protection. Without this, an athlete who
-        // force-quit at the wall, subscribed on relaunch, and then signed in with an account that
-        // differs from the last real one this device saw would trip `onAccountSwitch` and have the
-        // profile and plan they just built deleted underneath them, moments after paying for it.
-        .onChange(of: gateAccountBeat) { _, showing in
-            auth.isOnboarding = showing || showOnboarding
+            // A guest may link an account after creating local training data. Keep onboarding
+            // state accurate while AuthController handles verified account ownership.
+            auth.isOnboarding = showing
         }
         #if DEBUG
         .fullScreenCover(isPresented: $showWidgetPreview) {

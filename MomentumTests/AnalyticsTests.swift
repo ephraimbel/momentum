@@ -37,6 +37,12 @@ struct AnalyticsEventTests {
                 == ["latency_ms": "420", "fallback": "false"])
         #expect(AnalyticsEvent.paywallConvert(product: "weekly", placement: "fuel_locked").parameters
                 == ["product": "weekly", "placement": "fuel_locked"])
+        #expect(AnalyticsEvent.onboardingMilestone(action: "generation_succeeded", step: "building", durationMs: 120).parameters
+                == ["action": "generation_succeeded", "step": "building", "duration_ms": "120"])
+        #expect(AnalyticsEvent.onboardingMilestone(action: "generation_failed", step: "building", durationMs: -1).parameters["duration_ms"] == "0")
+        #expect(AnalyticsEvent.onboardingMilestone(action: "reveal_visible", step: "reveal", durationMs: nil).parameters["duration_ms"] == nil)
+        #expect(AnalyticsEvent.workoutStarted(type: "run", planned: true).parameters == ["type": "run", "planned": "true"])
+        #expect(AnalyticsEvent.workoutCompleted(type: "strength", planned: true).parameters == ["type": "strength", "planned": "true"])
         #expect(AnalyticsEvent.restTimerComplete.parameters.isEmpty)
         #expect(AnalyticsEvent.planSessionAdapted.parameters.isEmpty)
         // The install denominator: `first` must serialize as the literal the funnel views filter on

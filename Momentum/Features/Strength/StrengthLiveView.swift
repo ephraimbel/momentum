@@ -60,7 +60,7 @@ struct StrengthLiveView: View {
             let voice = services.paywall.isEntitled(to: .voiceCoach) ? services.voiceCoach : nil
             let model = StrengthViewModel(container: container, type: type, voice: voice)
             await model.start()
-            services.analytics.log(.workoutStarted(type: type.rawValue))
+            services.analytics.log(.workoutStarted(type: type.rawValue, planned: plannedSession != nil))
             if let plannedSession { await model.loadPlanned(plannedSession) }
             #if DEBUG
             // --superset-demo: pair the first two exercises for screenshot verification

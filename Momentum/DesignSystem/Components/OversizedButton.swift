@@ -15,6 +15,8 @@ struct OversizedButton: View {
     var systemImage: String? = nil
     var kind: Kind = .filled
     var isEnabled: Bool = true
+    /// Opt in for form actions whose full label must remain readable at accessibility sizes.
+    var expandsForText = false
     let action: () -> Void
 
     var body: some View {
@@ -25,10 +27,13 @@ struct OversizedButton: View {
             HStack(spacing: Theme.Space.sm) {
                 if let systemImage { Image(systemName: systemImage) }
                 Text(title)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: expandsForText)
             }
             .font(.rounded(Theme.FontSize.body + 1, weight: .semibold))
             .frame(maxWidth: .infinity)
-            .frame(height: 58)
+            .padding(.vertical, expandsForText ? 12 : 0)
+            .frame(minHeight: 58, maxHeight: expandsForText ? nil : 58)
             // The label on the ink capsule is `Theme.background`, not `.white`: the capsule is
             // `Theme.ink`, which is near-white in dark mode — a hard-coded white label vanished
             // into it (owner report 2026-08-28, "Start run"). Adaptive: white on ink in light,

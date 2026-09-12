@@ -21,7 +21,7 @@ final class OnboardingNoRatingUITests: XCTestCase {
 
     @MainActor private func verifyScrollableReveal(reduceMotion: Bool) {
         let app = XCUIApplication()
-        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal"]
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal", "--review-no-ask"]
         if reduceMotion { app.launchArguments.append("--ui-test-reduce-motion") }
         app.launch()
         let cta = app.buttons["onboarding.reveal.continue"]
@@ -41,12 +41,13 @@ final class OnboardingNoRatingUITests: XCTestCase {
             XCTAssertTrue(element.isHittable, "Plan detail must be reachable without opening another page")
             XCTAssertTrue(cta.isHittable, "Continue must remain available while reading the plan")
         }
+        reach(app.staticTexts["YOUR TRAINING BRIEFING"])
+        XCTAssertTrue(app.staticTexts["onboarding.reveal.firstSession"].exists)
         reach(app.staticTexts["YOUR PATH"])
         let path = XCTAttachment(screenshot: app.screenshot())
         path.name = reduceMotion ? "plan-chart-first-reduced-motion" : "plan-chart-first"
         path.lifetime = .keepAlways
         add(path)
-        reach(app.staticTexts["YOUR TRAINING BRIEFING"])
         reach(app.staticTexts["YOUR FIRST WEEK"])
         // Seeded hybrid plan has four first-week sessions. Each already contains its prescription.
         for index in 0..<4 {
@@ -75,67 +76,19 @@ final class OnboardingNoRatingUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Done"].exists)
     }
 
-    func testNoRatingAskAnywhereAfterTheReveal() {
+    func testReviewIsOptionalAndDoesNotReturnOnToday() {
         let app = XCUIApplication()
-        // Land on the notifications step. Since 2026-09-01 the two permission beats sit BEFORE
-        // plan generation (notifications → location → building → reveal → account), so from here
-        // to the app is every beat a rating ask could ever have lived on.
-        // `--review-no-ask` holds the review beat's native sheet: this walk has to read the page
-        // under it, and a system surface owns accessibility while it is up. The sheet's own
-        // behaviour is `OnboardingReviewUITests`' job.
-        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding",
-                               "--onboarding-notifications", "--review-no-ask"]
-        addUIInterruptionMonitor(withDescription: "System alert") { alert in
-            for label in ["Allow While Using App", "Allow", "Allow Once", "OK", "Don’t Allow", "Don't Allow"] {
-                let b = alert.buttons[label]
-                if b.exists { b.tap(); return true }
-            }
-            return false
-        }
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal", "--review-no-ask"]
         app.launch()
-        app.tap()
-
-        // Notifications step: no rating ask here.
-        let maybeLater = app.buttons["Maybe later"]
-        XCTAssertTrue(maybeLater.waitForExistence(timeout: 15), "Expected the notifications step.")
-        assertNoRatingSurface(app, on: "the notifications step")
-        maybeLater.tap()
-
-        // Location step: still no rating ask. Its CTA is "Continue" — it must NOT promise an ending,
-        // since the reveal, the paywall and the account beat all still follow it.
-        let locationContinue = app.buttons["Continue"]
-        XCTAssertTrue(locationContinue.waitForExistence(timeout: 10), "Expected the location step.")
-        assertNoRatingSurface(app, on: "the location step")
-        XCTAssertFalse(app.buttons["Start training"].exists,
-                       "The location step must not claim to end onboarding — beats follow it.")
-        locationContinue.tap()
-        // On a FRESH simulator this raises the system location alert, and the flow waits on its
-        // answer. The interruption monitor above only fires around an action, never during the
-        // plain wait that follows, so answer the alert here (the walk passed before only when an
-        // earlier test on the same simulator had already granted location, 2026-09-05).
-        let locationAlert = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for label in ["Allow While Using App", "Allow Once", "Allow"] {
-            let button = locationAlert.buttons[label]
-            if button.waitForExistence(timeout: label == "Allow While Using App" ? 4 : 1) { button.tap(); break }
-        }
-
-        // Continue hands to the build and then the plan reveal. The plan owns this screen whole:
-        // the ask lives on the page AFTER it, and may not reach back onto the reveal itself.
-        let revealCTA = app.buttons["onboarding.reveal.continue"]
-        XCTAssertTrue(revealCTA.waitForExistence(timeout: 30), "Expected the plan reveal after the build.")
-        assertNoRatingSurface(app, on: "the plan reveal")
-        revealCTA.tap()
-
-        // The review beat (2026-09-05). Its own suite pins the shape; here we only check that it
-        // is the one place the ask lives, and that it hands straight on.
-        let reviewCTA = app.buttons["onboarding.review.continue"]
-        XCTAssertTrue(reviewCTA.waitForExistence(timeout: 15), "Expected the review beat after the reveal.")
-        reviewCTA.tap()
-
-        // This athlete is seeded Pro, so the wall stands down and the flow completes into the app.
-        assertNoRatingSurface(app, on: "the hand-off after the review beat")
-        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20),
-                      "Onboarding must complete into the app.")
+        let cta = app.buttons["onboarding.reveal.continue"]
+        XCTAssertTrue(cta.waitForExistence(timeout: 20))
+        cta.tap()
+        let review = app.buttons["onboarding.review.continue"]
+        XCTAssertTrue(review.waitForExistence(timeout: 10))
+        review.tap()
+        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
+        assertNoRatingSurface(app, on: "entry to Today")
+        XCTAssertFalse(app.staticTexts["Save your progress"].exists)
     }
 
     private func assertNoRatingSurface(_ app: XCUIApplication, on screen: String) {

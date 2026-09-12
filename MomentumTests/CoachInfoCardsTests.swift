@@ -102,8 +102,11 @@ struct CoachInfoCardsTests {
         let container = try makeContainer()
         let ctx = container.mainContext
         let profile = makeProfile(in: ctx)
+        // Keep the next session inside the visible training week. A relative +2 days crossed
+        // the week boundary on Fridays, where future prescriptions correctly stay adaptive.
+        let today = cal.date(from: DateComponents(year: 2026, month: 9, day: 7))!
         let next = PlannedSession()
-        next.date = day(2)
+        next.date = cal.date(byAdding: .day, value: 2, to: today)!
         next.discipline = .running
         next.runType = .easy
         next.status = .planned

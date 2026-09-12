@@ -108,13 +108,13 @@ struct OnboardingFlowTests {
         // runners on the grounds that it only sized a lifting day — but running honours it too
         // now (`PlanEngine.cardioSessions` caps a midweek session at the stated time), so hiding
         // it meant a runner's plan was shaped by an answer they were never allowed to give.
-        #expect(vm.steps.contains(.session))
+        #expect(vm.steps.contains(.days))
         vm.activities = [.strength]
         #expect(vm.steps.contains(.equipment))
-        #expect(vm.steps.contains(.session))          // lifters set it (it drives exercise count)
+        #expect(vm.steps.contains(.days))          // lifters set it (it drives exercise count)
         #expect(vm.running)                           // every coached plan keeps its running foundation
         vm.activities = [.run, .strength]
-        #expect(vm.steps.contains(.session))          // hybrids lift too → keep it
+        #expect(vm.steps.contains(.days))          // hybrids lift too → keep it
 
         vm.step = .disciplines
         #expect(vm.canAdvance)                        // activities chosen
@@ -168,27 +168,8 @@ struct OnboardingFlowTests {
         vm.longestRunM = 12_000
         vm.intensity = .aggressive
 
-        // Step order: the coach-interview arc holds (broad → specific → consent → commitment).
         let steps = vm.steps
-        func idx(_ s: OnboardingViewModel.Step) throws -> Int { try #require(steps.firstIndex(of: s)) }
-        #expect(steps.first == .name)
-        #expect(try idx(.goal) < idx(.experience))
-        #expect(try idx(.experience) < idx(.disciplines))           // destination → starting point
-        #expect(try idx(.experience) < idx(.injuries))       // who you are → what to protect
-        #expect(try idx(.runVolume) < idx(.injuries))        // baseline stays together
-        #expect(try idx(.metrics) < idx(.days))              // starting point → training week
-        #expect(try idx(.experience) < idx(.health))         // running level + pace → recovery consent
-        #expect(try idx(.health) < idx(.intensity))          // consent → how hard to push
-        #expect(try idx(.intensity) < idx(.notifications))   // decisions → required permission context
-        #expect(try idx(.notifications) < idx(.primers))     // reminders → location
-        #expect(try idx(.primers) < idx(.building))          // permissions settle before generation
-        #expect(try idx(.building) < idx(.reveal))           // anticipation → personalized payoff
-        // The review beat sits BETWEEN the payoff and checkout (2026-09-05) — never before the
-        // plan exists, and never as the last thing standing between the athlete and the app.
-        #expect(try idx(.reveal) < idx(.review))             // payoff → the ask
-        #expect(try idx(.review) < idx(.account))            // the ask → checkout + account
-        #expect(!steps.contains(.equipment))                 // no lifting → no gym questions
-        #expect(steps.contains(.session))                    // …but session length is everyone's
+        #expect(steps == [.name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .days, .intensity, .building, .reveal, .review])
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!
@@ -224,50 +205,39 @@ struct OnboardingFlowTests {
         #expect(easy.recommended == .gentle)
     }
 
-    /// Where the review beat may sit (owner call 2026-09-05, reversing the 2026-08-22 removal).
-    ///
-    /// A rating ask shipped from 2026-07-26 as the last screen before checkout and this app was
-    /// rejected under App Review 5.6.3 with it in place. It is back, but only in one position: it
-    /// follows the reveal, so the plan exists before anything is asked for, and it precedes the
-    /// paywall + account beats, so it is never the last thing between the athlete and the app.
-    /// `OnboardingReviewUITests` pins the page's own shape; this pins its seat in the flow.
-    @Test func theReviewBeatSitsBetweenTheRevealAndCheckout() throws {
-        let steps = OnboardingViewModel().steps
-        #expect(steps.firstIndex(of: .primers)! < steps.firstIndex(of: .building)!)
-        #expect(steps.firstIndex(of: .review)! == steps.firstIndex(of: .reveal)! + 1,
-                "the ask follows the plan and nothing comes between them")
-        #expect(steps.firstIndex(of: .account)! == steps.firstIndex(of: .review)! + 1,
-                "the review beat raises checkout, which advances to account")
-        #expect(steps.last == .account, "the ask is never the last beat")
-    }
-
-    /// The account beat is the LAST step, AFTER the paywall (owner call 2026-07-27 — the sign-in
-    /// screen used to gate the app on launch, which is the cheapest place in the funnel to lose
-    /// someone). It must not be an answerable question, and onboarding must read as *finished* by
-    /// the time it shows, since every question was answered a while back.
-    @Test func accountBeatIsTheFinalStepAndIsNotAQuestion() throws {
+    @Test func reviewImmediatelyFollowsRevealWithoutAddingAQuestion() {
         let vm = OnboardingViewModel()
-        let all = vm.steps
-        #expect(all.last == .account, "account must be the last step — nothing follows it")
-        #expect(all.firstIndex(of: .account)! == all.firstIndex(of: .review)! + 1,
-                "the paywall is raised from the review beat, then advances to account")
-
-        vm.step = .account
-        #expect(!vm.isQuestionStep, "no header, no Continue bar, no progress notch")
-        #expect(vm.progress == 1, "every question is long since answered")
-
-        // `advance()` from the REVIEW beat lands here — that is how the paywall's onDismiss
-        // reaches it (`goToAccountBeat` → `goNext`), since the wall never changed the step
-        // underneath it. The wall is now raised one beat later than it used to be (the review
-        // page's Continue calls `finishOnboarding`), so this is the step it returns to.
+        for retired in [OnboardingViewModel.Step.health, .notifications, .primers, .account] {
+            #expect(!vm.steps.contains(retired))
+        }
+        #expect(vm.steps.suffix(3) == [.building, .reveal, .review])
         vm.step = .reveal
+        #expect(vm.progress == 1)
+        #expect(!vm.isQuestionStep)
         vm.advance()
         #expect(vm.step == .review)
+        #expect(vm.progress == 1)
+        #expect(!vm.isQuestionStep)
+        #expect(vm.canAdvance)
+        #expect(OnboardingViewModel.currentStep(for: .review) == .review)
         vm.advance()
-        #expect(vm.step == .account)
-        // And it is a genuine terminus: advancing off the end must not wrap or stall elsewhere.
-        vm.advance()
-        #expect(vm.step == .account)
+        #expect(vm.step == .review)
+    }
+
+    @Test func namelessAthletePersistsARealPlanWithoutInventedBodyMeasurements() throws {
+        let pc = PersistenceController.inMemory()
+        let vm = OnboardingViewModel()
+        vm.goal = .stayConsistent
+        vm.chooseRunningBackground(.new)
+        let profile = try vm.finish(in: pc.container.mainContext)
+        #expect(profile.displayName.isEmpty)
+        #expect(profile.handle.isEmpty)
+        #expect(profile.bodyMassKg == nil)
+        #expect(profile.heightCm == nil)
+        #expect(profile.birthYear == nil)
+        #expect(profile.maxHR == nil)
+        #expect(profile.plan?.sessions.isEmpty == false)
+        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 7)
     }
 
     @Test func raceRevealFramesTheTargetAsAPursuitNotAGuarantee() throws {
@@ -293,16 +263,16 @@ struct OnboardingFlowTests {
         vm.goal = .stayConsistent
         vm.calibrationMode = .feel
         vm.paceFeel = .regular
-        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 10)
+        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 8)
         #expect(vm.steps.contains(.name))
         #expect(!vm.steps.contains(.identity))
         #expect(!vm.steps.contains(.units))
         #expect(!vm.steps.contains(.preferredDays))
         #expect(!vm.steps.contains(.why))
-        for step in [OnboardingViewModel.Step.experience, .runVolume, .injuries, .metrics, .days, .session, .intensity] {
+        for step in [OnboardingViewModel.Step.experience, .runVolume, .injuries, .metrics, .days, .intensity] {
             #expect(vm.steps.contains(step))
         }
-        vm.step = .account
+        vm.step = .review
         var backwards: [OnboardingViewModel.Step] = [vm.step]
         while vm.canGoBack {
             vm.back()
@@ -325,34 +295,31 @@ struct OnboardingFlowTests {
         vm.calibrationMode = .feel
         vm.paceFeel = .newRunner
         #expect(vm.canAdvance)
-        vm.step = .health
+        vm.step = .days
         #expect(vm.progress > 0 && vm.progress < 1)
-        vm.step = .notifications
+        vm.step = .intensity
         #expect(vm.progress == 1)
-        vm.step = .primers
+        vm.step = .building
         #expect(vm.progress == 1)
     }
 
-    @Test func identityStartsTheFlowAndKeepsCustomUsernames() throws {
+    @Test func identityAndBodyDetailsAreExplicitBeforeGeneration() {
         let vm = OnboardingViewModel()
         #expect(vm.step == .name)
         #expect(!vm.canAdvance)
         vm.name = "Maya Rivera"
         vm.suggestHandle(afterEditing: "")
-        #expect(!vm.handle.isEmpty)
         #expect(vm.canAdvance)
         vm.handle = "maya_runs"
         vm.name = "Maya R"
         vm.suggestHandle(afterEditing: "Maya Rivera")
         #expect(vm.handle == "maya_runs")
-        let restored = OnboardingViewModel()
-        #expect(restored.restore(from: vm.draft()))
-        #expect(restored.name == "Maya R")
-        #expect(restored.handle == "maya_runs")
-        vm.handle = "admin"
+        vm.step = .metrics
         #expect(!vm.canAdvance)
-        vm.handle = ""
+        vm.sex = .female; vm.birthYear = 1996; vm.heightCm = 172
         #expect(!vm.canAdvance)
+        vm.bodyMassKg = 63
+        #expect(vm.canAdvance)
     }
 
 }

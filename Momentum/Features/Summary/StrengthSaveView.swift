@@ -287,7 +287,7 @@ struct StrengthSaveView: View {
         guard booksCompletion else { return }   // already booked by the creating flow — see the flag
         AppReview.recordWorkoutSaved()   // a KEPT workout — engagement toward the rating ask (not discards)
         // See CardioSaveView: fires on the KEPT workout, and is what advances the north-star funnel.
-        if let workout { services.analytics.log(.workoutCompleted(type: workout.type.rawValue)) }
+        if let workout { services.analytics.log(.workoutCompleted(type: workout.type.rawValue, planned: workout.plannedSession != nil)) }
         let capturedReader = reader
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(CompletionCelebration.duration + 0.4))
