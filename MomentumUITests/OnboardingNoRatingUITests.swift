@@ -27,13 +27,13 @@ final class OnboardingNoRatingUITests: XCTestCase {
         let cta = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(cta.waitForExistence(timeout: 20))
         XCTAssertTrue(cta.isHittable)
-        XCTAssertTrue(app.staticTexts["YOUR WEEK"].exists)
+        XCTAssertTrue(app.staticTexts["YOUR FIRST WEEK"].exists)
         XCTAssertFalse(app.buttons["onboarding.reveal.explore"].exists)
         XCTAssertFalse(app.buttons["Leave a review for momentum on the App Store"].exists)
         XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists)
         // The card names the opening session before any tap, and a tapped rest day says what
         // a rest day is for (never "nothing"). Buttons, not gestures.
-        let callout = app.otherElements["onboarding.reveal.weekCallout"]
+        let callout = app.descendants(matching: .any)["onboarding.reveal.weekCallout"].firstMatch
         XCTAssertTrue(callout.waitForExistence(timeout: 5))
         XCTAssertFalse(callout.label.contains("Rest."), "the opening session is chosen first: \(callout.label)")
         let restDay = app.buttons.matching(NSPredicate(format: "label ENDSWITH ', rest'")).firstMatch
@@ -51,23 +51,34 @@ final class OnboardingNoRatingUITests: XCTestCase {
         details.tap()
         let scroll = app.scrollViews["onboarding.reveal.scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 8))
+        // `isHittable` answers false for everything inside an iOS 26 detent sheet, so "reachable"
+        // is the element's frame sitting inside the window (the same thing a finger can reach).
+        func onScreen(_ element: XCUIElement) -> Bool {
+            guard element.exists else { return false }
+            if element.isHittable { return true }
+            let frame = element.frame, window = app.windows.firstMatch.frame
+            return frame.height > 0 && frame.minY >= window.minY && frame.maxY <= window.maxY - 24
+        }
         func reach(_ element: XCUIElement) {
+            // The sheet is still rising when the first section is queried: give it a moment
+            // where it already is before swiping it away from the top.
+            for _ in 0..<10 where !onScreen(element) { usleep(300_000) }
             for _ in 0..<18 {
-                if element.isHittable { break }
+                if onScreen(element) { break }
                 scroll.swipeUp(velocity: .slow)
             }
-            XCTAssertTrue(element.isHittable, "Plan detail must be reachable inside the sheet")
+            XCTAssertTrue(onScreen(element), "Plan detail must be reachable inside the sheet")
         }
-        reach(app.staticTexts["YOUR TRAINING BRIEFING"])
-        XCTAssertTrue(app.staticTexts["onboarding.reveal.firstSession"].exists)
+        reach(app.staticTexts["YOUR TRAINING BRIEFING"].firstMatch)
+        XCTAssertTrue(app.staticTexts["onboarding.reveal.firstSession"].firstMatch.exists)
         let path = XCTAttachment(screenshot: app.screenshot())
         path.name = reduceMotion ? "plan-chart-first-reduced-motion" : "plan-chart-first"
         path.lifetime = .keepAlways
         add(path)
-        reach(app.staticTexts["YOUR FIRST WEEK"])
+        reach(app.staticTexts["YOUR FIRST WEEK"].firstMatch)
         // Seeded hybrid plan has four first-week sessions. Each already contains its prescription.
         for index in 0..<4 {
-            let card = app.otherElements["onboarding.reveal.session.\(index)"]
+            let card = app.otherElements["onboarding.reveal.session.\(index)"].firstMatch
             reach(card)
             XCTAssertGreaterThan(card.staticTexts.count, 4, "Session details should already be expanded")
             XCTAssertEqual(card.buttons.count, 0, "The first week must not require disclosure taps")
@@ -76,7 +87,7 @@ final class OnboardingNoRatingUITests: XCTestCase {
         week.name = reduceMotion ? "first-week-reduced-motion" : "first-week-expanded"
         week.lifetime = .keepAlways
         add(week)
-        reach(app.staticTexts["THE WEEKS AHEAD"])
+        reach(app.staticTexts["THE WEEKS AHEAD"].firstMatch)
         reach(app.descendants(matching: .any)["onboarding.reveal.week.6"].firstMatch)
         let end = XCTAttachment(screenshot: app.screenshot())
         end.name = reduceMotion ? "complete-plan-reduced-motion" : "complete-plan"
@@ -84,13 +95,13 @@ final class OnboardingNoRatingUITests: XCTestCase {
         add(end)
         // Scroll back through sections: entrances must not reset or leave transparent content.
         for _ in 0..<18 {
-            if app.staticTexts["YOUR TRAINING BRIEFING"].isHittable { break }
+            if onScreen(app.staticTexts["YOUR TRAINING BRIEFING"].firstMatch) { break }
             scroll.swipeDown(velocity: .fast)
         }
-        XCTAssertTrue(app.staticTexts["YOUR TRAINING BRIEFING"].isHittable)
+        XCTAssertTrue(onScreen(app.staticTexts["YOUR TRAINING BRIEFING"].firstMatch))
         XCTAssertFalse(app.buttons["Done"].exists)
         // Closing the sheet lands back on the card with Continue live.
-        app.buttons["Close"].tap()
+        app.buttons["Close"].firstMatch.tap()
         XCTAssertTrue(cta.waitForExistence(timeout: 5))
         XCTAssertTrue(cta.isHittable)
     }
