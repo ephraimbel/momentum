@@ -160,57 +160,18 @@ struct OnboardingSheen: ViewModifier {
     }
 }
 
-/// A resting pulse behind an object: one soft halo beating lub-dub, forever, at ~50 bpm — an
-/// endurance athlete's resting heart rate, which is one of the signals the Health beat is asking
-/// to read. Light only; the object it sits behind is never deformed (Apple's icon stays Apple's
-/// icon). Reduce Motion draws one still halo.
-struct HeartbeatHalo: View {
+/// A still glow behind an object: one soft radial halo, never moving. The Health beat wears it
+/// in Health's red so Apple's icon reads as lit from behind, not animated (owner call 2026-09-13:
+/// the icon stays still; the light is the only accent).
+struct StillGlow: View {
     var tint: Color
     var diameter: CGFloat
-    @ReducedMotionPreference private var reduceMotion
-
-    /// The cardiac cycle as phases. `lub` is the big beat, `dub` the smaller second sound a
-    /// fraction later, and `rest` the long diastole that makes the pair read as a heartbeat
-    /// rather than a blink. The durations below sum to ~1.2 s.
-    private enum Beat: CaseIterable {
-        case rest, lub, lubFall, dub, dubFall
-        var scale: CGFloat {
-            switch self {
-            case .lub: 1.16
-            case .dub: 1.08
-            default: 0.96
-            }
-        }
-        var opacity: Double {
-            switch self {
-            case .lub: 0.85
-            case .lubFall: 0.34
-            case .dub: 0.6
-            default: 0.22
-            }
-        }
-        var duration: Double {
-            switch self {
-            case .lub: 0.13
-            case .lubFall: 0.15
-            case .dub: 0.12
-            case .dubFall: 0.22
-            case .rest: 0.58
-            }
-        }
-    }
 
     var body: some View {
-        let halo = RadialGradient(colors: [tint.opacity(0.55), tint.opacity(0.12), .clear],
-                                  center: .center, startRadius: diameter * 0.18, endRadius: diameter * 0.55)
+        RadialGradient(colors: [tint.opacity(0.32), tint.opacity(0.08), .clear],
+                       center: .center, startRadius: diameter * 0.16, endRadius: diameter * 0.52)
             .frame(width: diameter, height: diameter)
-        if reduceMotion {
-            halo.opacity(0.3)
-        } else {
-            halo.phaseAnimator(Beat.allCases) { view, beat in
-                view.scaleEffect(beat.scale).opacity(beat.opacity)
-            } animation: { beat in .easeOut(duration: beat.duration) }
-        }
+            .allowsHitTesting(false)
     }
 }
 

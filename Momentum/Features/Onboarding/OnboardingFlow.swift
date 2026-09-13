@@ -1194,11 +1194,9 @@ struct OnboardingFlow: View {
     private var healthStep: some View {
         OnboardingHeroPage {
             Spacer(minLength: Theme.Space.lg)
-            // The icon rests on its own pulse — the resting heart rate this beat is asking to
-            // read, beating behind Apple's mark rather than deforming it.
+            // Apple's icon stays still; a soft red light behind it is the whole accent.
             HealthTile()
-                .background { HeartbeatHalo(tint: Color(hex: "FF4563"), diameter: 190) }
-                .onboardingHover(amplitude: 3, tilt: 0, period: 3.6)
+                .background { StillGlow(tint: Color(hex: "FF4563"), diameter: 200) }
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Train around your recovery",
                               subtitle: "Share Apple Health signals to help your plan respond to recovery. Tracking starts when you connect. You choose what to share; workout history is never imported.", alignment: .center)
