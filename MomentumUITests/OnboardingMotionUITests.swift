@@ -342,7 +342,7 @@ final class OnboardingMotionUITests: XCTestCase {
             let cta = app.buttons["onboarding.reveal.continue"]
             XCTAssertTrue(cta.waitForExistence(timeout: 25))
             XCTAssertTrue(cta.isHittable)
-            XCTAssertTrue(app.staticTexts["YOUR FIRST WEEK"].exists)
+            XCTAssertTrue(app.buttons["onboarding.reveal.details"].exists)
             XCTAssertFalse(app.staticTexts["Building your plan"].exists)
             capture(app, name: reduced ? "generated-plan-still" : "generated-plan-motion")
             app.terminate()

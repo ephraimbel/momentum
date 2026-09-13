@@ -71,6 +71,12 @@ final class HealthService: HealthServing {
             && store.authorizationStatus(for: HKObjectType.workoutType()) == .sharingAuthorized
     }
 
+    func needsSignalsAuthorization() async -> Bool {
+        guard HKHealthStore.isHealthDataAvailable() else { return false }
+        let status = try? await store.statusForAuthorizationRequest(toShare: Self.shareTypes, read: Self.readTypes)
+        return status == .shouldRequest
+    }
+
     func requestAuthorization() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else { return false }
         do { try await store.requestAuthorization(toShare: Self.shareTypes, read: Self.readTypes) }

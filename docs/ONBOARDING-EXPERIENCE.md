@@ -30,11 +30,21 @@ permission/account sequence. The owner restored the optional review ask after th
    tiers; selecting Podium still enforces its minimum days. No tier selection is required to proceed. The running-only path has seven core questions for beginners, eight for
    established runners; race and strength add only their relevant questions.
 5. **Build and reveal.** Save the real plan immediately. No simulated analysis or timed checklist
-   delays generation. The reveal (redesigned September 12) opens on the athlete, the road (the
-   block's terrain, run by a runner glyph, hold-to-scrub afterwards) and the numbers; the opening
-   schedule, honest starting-effort line, first week and the weeks ahead read below the fold. Keep the chart, complete first week,
-   adaptive future-week explanation, premium materials, and local earned animation. The CTA is
-   visible immediately and stays available while scrolling. No full-page overture blocks reading.
+   delays generation. The reveal (rebuilt September 13, owner call: "this is your plan", one
+   screen, creative, subtle micro-motion, enterprise level) is one screen with one hero: a
+   lavender "PLAN READY" tick, "Your plan, Name." and the plan named the way a coach names one
+   ("Half marathon build · 10 weeks · 4 days a week", the race date only if one was given), then
+   the **first week as a skyline** in a card placed onto the canvas: seven bars, one per day,
+   each as tall as its session is big, the long run tallest, rest days a dot on the baseline; the
+   bars stand up day by day with a touch of overshoot and the sport glyph rising to sit on top,
+   the opening session chosen in lavender (it breathes, slowly) and named; tap a bar to choose a
+   day. Under it, **the paces** as three raised pills dealt a beat apart, each settling onto the
+   plan's own number, and **how it grows** as one bar of the block's phases in shades of ink
+   ending in race day or a checkpoint, with one sentence. On a device the week card tilts a few
+   degrees with the hand. Every session, the briefing and the weeks ahead live one tap away in
+   the "See every session" sheet (house sheet grammar; the `--reveal-scroll-*` links open it).
+   No terrain chart, no end date, no stat tiles, no gradients on type, no stamp. The CTA is
+   visible immediately.
 6. **Review → checkout → Today.** The reveal's Continue opens a dedicated review page. After its
    entrance, request Apple's native review sheet once while the app is active. Apple decides whether
    a sheet appears; there are no custom stars or rating-dependent branches. Continue is live immediately,

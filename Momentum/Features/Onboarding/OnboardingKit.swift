@@ -16,6 +16,11 @@ struct OnboardingHeroPage<Content: View, Actions: View>: View {
                 }
                 .scrollIndicators(.hidden)
                 .scrollBounceBehavior(.basedOnSize)
+                // The permission heroes carry a glow and pings wider than the glyph; a scroll
+                // view clips to its bounds and cut them at the top (owner, 2026-09-13). Let
+                // the light spill; the pages keep their own top spacing so it never reads as
+                // running into the clock.
+                .scrollClipDisabled()
             }
             actions
         }

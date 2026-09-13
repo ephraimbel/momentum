@@ -97,6 +97,9 @@ final class Services {
 @MainActor
 protocol LocationServing: AnyObject {
     var isAuthorized: Bool { get }
+    /// True while iOS has not asked yet (the alert WILL appear on the next request). The
+    /// onboarding location page raises its alert on arrival only then.
+    var awaitsAuthorization: Bool { get }
     /// The last one-shot fix, if we have one. On the protocol (2026-08-28) so every surface can
     /// share the SAME service: onboarding's location grant has to reach Today's map, and it can't
     /// if each screen owns a private `LocationService` whose `lastLocation` nobody else sees.
@@ -133,6 +136,9 @@ protocol HealthServing: AnyObject {
     var isAuthorized: Bool { get }
     /// Request Health read/write permission (opt-in). Returns whether workout-sharing is granted.
     func requestAuthorization() async -> Bool
+    /// True while iOS still has something to ask for the signal set (the sheet WILL appear on
+    /// the next request). The onboarding Health page raises its sheet on arrival only then.
+    func needsSignalsAuthorization() async -> Bool
     /// Save a completed workout to Apple Health (best-effort, de-duplicated, never blocks).
     /// `includeEnergy: false` skips the active-energy sample — for a workout whose calorie number
     /// was READ from Health in the first place (writing it back would double-count the Move ring).
@@ -367,4 +373,14 @@ final class StubVoiceCoachService: VoiceCoachServing {
     var isEnabled = false
     func announce(_ text: String) {}
     func stop() {}
+}
+
+extension HealthServing {
+    /// Stubs and spies have nothing to ask.
+    func needsSignalsAuthorization() async -> Bool { false }
+}
+
+extension LocationServing {
+    /// Stubs and spies have nothing to ask.
+    var awaitsAuthorization: Bool { false }
 }

@@ -27,22 +27,37 @@ final class OnboardingNoRatingUITests: XCTestCase {
         let cta = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(cta.waitForExistence(timeout: 20))
         XCTAssertTrue(cta.isHittable)
-        XCTAssertTrue(app.staticTexts["YOUR TRAINING BRIEFING"].exists)
+        XCTAssertTrue(app.staticTexts["YOUR WEEK"].exists)
         XCTAssertFalse(app.buttons["onboarding.reveal.explore"].exists)
         XCTAssertFalse(app.buttons["Leave a review for momentum on the App Store"].exists)
         XCTAssertFalse(app.staticTexts["Enjoying momentum?"].exists)
+        // The card names the opening session before any tap, and a tapped rest day says what
+        // a rest day is for (never "nothing"). Buttons, not gestures.
+        let callout = app.otherElements["onboarding.reveal.weekCallout"]
+        XCTAssertTrue(callout.waitForExistence(timeout: 5))
+        XCTAssertFalse(callout.label.contains("Rest."), "the opening session is chosen first: \(callout.label)")
+        let restDay = app.buttons.matching(NSPredicate(format: "label ENDSWITH ', rest'")).firstMatch
+        let trainingDay = app.buttons.matching(NSPredicate(format: "label CONTAINS ', ' AND NOT label ENDSWITH ', rest'")).firstMatch
+        if restDay.exists, trainingDay.exists {
+            restDay.tap()
+            XCTAssertTrue(callout.label.contains("Rest."), callout.label)
+            trainingDay.tap()
+            XCTAssertFalse(callout.label.contains("Rest."), callout.label)
+        }
+        // Every session lives one tap away (the package redesign, 2026-09-13): the sheet holds
+        // the briefing, the complete first week and the weeks ahead, in that order.
+        let details = app.buttons["onboarding.reveal.details"]
+        XCTAssertTrue(details.waitForExistence(timeout: 8))
+        details.tap()
         let scroll = app.scrollViews["onboarding.reveal.scroll"]
-        XCTAssertTrue(scroll.exists)
+        XCTAssertTrue(scroll.waitForExistence(timeout: 8))
         func reach(_ element: XCUIElement) {
             for _ in 0..<18 {
                 if element.isHittable { break }
                 scroll.swipeUp(velocity: .slow)
             }
-            XCTAssertTrue(element.isHittable, "Plan detail must be reachable without opening another page")
-            XCTAssertTrue(cta.isHittable, "Continue must remain available while reading the plan")
+            XCTAssertTrue(element.isHittable, "Plan detail must be reachable inside the sheet")
         }
-        // The road is the first screen's hero (redesign 2026-09-12); the briefing reads below it.
-        reach(app.staticTexts["YOUR PATH"])
         reach(app.staticTexts["YOUR TRAINING BRIEFING"])
         XCTAssertTrue(app.staticTexts["onboarding.reveal.firstSession"].exists)
         let path = XCTAttachment(screenshot: app.screenshot())
@@ -73,8 +88,11 @@ final class OnboardingNoRatingUITests: XCTestCase {
             scroll.swipeDown(velocity: .fast)
         }
         XCTAssertTrue(app.staticTexts["YOUR TRAINING BRIEFING"].isHittable)
-        XCTAssertTrue(cta.isHittable)
         XCTAssertFalse(app.buttons["Done"].exists)
+        // Closing the sheet lands back on the card with Continue live.
+        app.buttons["Close"].tap()
+        XCTAssertTrue(cta.waitForExistence(timeout: 5))
+        XCTAssertTrue(cta.isHittable)
     }
 
     func testReviewIsOptionalAndDoesNotReturnOnToday() {

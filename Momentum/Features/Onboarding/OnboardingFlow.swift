@@ -71,6 +71,8 @@ struct OnboardingFlow: View {
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
     @State private var locationRequestInFlight = false // wait for the real Core Location response
+    @State private var healthAutoAsked = false          // the Health page raises its sheet once on arrival
+    @State private var locationAutoAsked = false        // the location page raises its alert once on arrival
     @State private var lastStepChangeAt = Date.distantPast   // double-tap guard for goNext/goBack
     /// True while the paywall's exit advances the step UNDER the still-presented cover — the
     /// travel animation is suppressed so the account beat is fully composed before the cover
@@ -208,6 +210,12 @@ struct OnboardingFlow: View {
                 vm.activities = args.contains("--reveal-runs") ? [.run] : [.run, .strength]
                 vm.daysPerWeek = demo.daysPerWeek; vm.goal = demo.goal
                 vm.name = "Maya"; vm.step = .reveal
+                // --reveal-dated: the dated-race reveal (race day row, dated ladder, countdown).
+                if args.contains("--reveal-dated") {
+                    vm.activities = [.run]; vm.goal = .raceDistance; vm.raceDistance = .half
+                    vm.hasRace = true
+                    vm.raceDate = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date()) ?? Date()
+                }
                 // --reveal-podium: the Podium outlook card (race path w/ goal time; add
                 // --reveal-podium-open for the no-race "become great" variant).
                 if args.contains("--reveal-podium") {
@@ -1193,7 +1201,7 @@ struct OnboardingFlow: View {
     /// the system sheet itself — declining there advances the flow exactly like accepting.
     private var healthStep: some View {
         OnboardingHeroPage {
-            Spacer(minLength: Theme.Space.lg)
+            Spacer(minLength: Theme.Space.xl)
             // Apple's icon stays still; a soft red light behind it is the whole accent.
             HealthTile()
                 .background { StillGlow(tint: Color(hex: "FF4563"), diameter: 200) }
@@ -1216,9 +1224,31 @@ struct OnboardingFlow: View {
             // answered there are still two HealthKit reads before the step advances, and on a
             // device with real Health data that wait is not instant. Without the spinner the
             // athlete taps Continue, dismisses iOS's sheet, and then watches a dead button.
-            OnboardingCTA(title: "Continue", inFlight: healthRequestInFlight) {
-                // One-shot: when permission is already determined the awaits return instantly
-                // with no system sheet to swallow taps, and a double-tap advanced two steps.
+            OnboardingCTA(title: "Continue", inFlight: healthRequestInFlight) { requestHealthAndAdvance() }
+            .padding(.top, Theme.Space.sm)
+            .onboardingEntrance(0.26)
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.bottom, Theme.Space.md)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The page asks for itself (owner call 2026-09-13: the connection starts the moment the
+        // athlete arrives, every time): once the hero has landed, raise the Health sheet if iOS
+        // still has something to ask. When it does not (already answered on this device), the
+        // page waits for Continue rather than bouncing the athlete past a page they never saw.
+        .task {
+            guard !healthAutoAsked else { return }
+            healthAutoAsked = true
+            do { try await Task.sleep(for: .seconds(0.9)) } catch { return }
+            guard vm.step == .health, !healthRequestInFlight,
+                  await services.health.needsSignalsAuthorization() else { return }
+            requestHealthAndAdvance()
+        }
+    }
+
+    /// One request, one advance. The CTA and the page's own arrival both come through here, and
+    /// the latch makes a second call a no-op: when permission is already determined the awaits
+    /// return instantly with no system sheet to swallow taps, and a double-tap advanced two steps.
+    private func requestHealthAndAdvance() {
                 guard !healthRequestInFlight else { return }
                 healthRequestInFlight = true
                 Task {
@@ -1239,13 +1269,6 @@ struct OnboardingFlow: View {
                     // back) — an immediate reset would re-open the double-tap window.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { healthRequestInFlight = false }
                 }
-            }
-            .padding(.top, Theme.Space.sm)
-            .onboardingEntrance(0.26)
-        }
-        .padding(.horizontal, Theme.Space.lg)
-        .padding(.bottom, Theme.Space.md)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     /// Propose the coach's approach and honest feasibility assessment up front. All four
@@ -2100,7 +2123,7 @@ struct OnboardingFlow: View {
     /// the headline and CTA stay neutral and promise no ending.
     private var primersStep: some View {
         OnboardingHeroPage {
-            Spacer(minLength: Theme.Space.md)
+            Spacer(minLength: Theme.Space.xl)
             // A device finding you: rings ping out from the glyph while the needle swings past
             // north and rocks to rest. Both finish in the first second; then the page is still.
             GlowGlyph(systemName: "location.north.fill", tint: Theme.iridescent[0])
@@ -2132,27 +2155,40 @@ struct OnboardingFlow: View {
             Spacer(minLength: 0)
         } actions: {
             // Permissions settle before generation. The personal reveal leads into checkout.
-            OnboardingCTA(title: "Continue", inFlight: locationRequestInFlight) {
-                guard !locationRequestInFlight else { return }
-                locationRequestInFlight = true
-                // The CTA owns the request so a fast tap can never outrun the prompt. Advance only
-                // after iOS returns the athlete's real choice; the shared service retains the grant
-                // for Today's map and every later GPS session.
-                services.location.requestAuthorization { granted in
-                    services.analytics.log(.onboardingPermission(
-                        kind: "location", status: granted ? "granted" : "denied"))
-                    locationRequestInFlight = false
-                    leftPrimers = true
-                    // The last beat: the athlete's answer (either way) opens checkout.
-                    finishOnboarding()
-                }
-            }
+            OnboardingCTA(title: "Continue", inFlight: locationRequestInFlight) { requestLocationAndFinish() }
                 .padding(.top, Theme.Space.sm)
                 .onboardingEntrance(0.26)
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.bottom, Theme.Space.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The page asks for itself (owner call 2026-09-13): once the hero has landed, raise the
+        // location alert if iOS has not asked yet. Already answered: wait for Continue.
+        .task {
+            guard !locationAutoAsked else { return }
+            locationAutoAsked = true
+            do { try await Task.sleep(for: .seconds(0.9)) } catch { return }
+            guard vm.step == .primers, !locationRequestInFlight,
+                  services.location.awaitsAuthorization else { return }
+            requestLocationAndFinish()
+        }
+    }
+
+    /// One request, one finish. The CTA and the page's own arrival both come through here; the
+    /// latch keeps a fast tap from outrunning the prompt. Advance only after iOS returns the
+    /// athlete's real choice; the shared service retains the grant for Today's map and every
+    /// later GPS session.
+    private func requestLocationAndFinish() {
+        guard !locationRequestInFlight else { return }
+        locationRequestInFlight = true
+        services.location.requestAuthorization { granted in
+            services.analytics.log(.onboardingPermission(
+                kind: "location", status: granted ? "granted" : "denied"))
+            locationRequestInFlight = false
+            leftPrimers = true
+            // The last beat: the athlete's answer (either way) opens checkout.
+            finishOnboarding()
+        }
     }
 
 

@@ -1,85 +1,47 @@
 import SwiftUI
+import CoreMotion
 
 /// The unified plan reveal (PRD §4.1 step 4, §7.1) — the moment the athlete is sold.
 ///
-/// Rebuilt 2026-09-02 as one choreographed arrival in three acts, every beat a transform
-/// (opacity / scale / offset / rotation / trim), never a layout change:
+/// Rebuilt 2026-09-13 as ONE SCREEN with one hero (owner: "this is your plan", creative, subtle
+/// micro-motion, enterprise level). The hero is the athlete's first week drawn as a skyline:
+/// seven bars, one per day, each as tall as the session is long, the long run the tallest, rest
+/// days a dot on the baseline. It is the honest shape of the week they are about to live, and it
+/// grows up in front of them, day by day. Under it, the paces as three pills settling onto their
+/// numbers, and the block as one bar of phases ending in what it ends in (race day for a racer,
+/// a checkpoint for everyone else). Nothing on the page is a date unless the athlete gave one;
+/// every session and every week ahead is one tap away in a sheet.
 ///
-///  1. **The overture.** A full-screen title card: the athlete's own name lands one letter at a
-///     time out of blur in the display face, a start line draws beneath it, one specular pass
-///     runs through the letters, and the whole card lifts away as the page rises under it.
-///  2. **The ascent.** The seal draws its check, the headline arrives, and the path card lands
-///     with one spent aurora pulse. The block's weekly volume is drawn as terrain that a runner
-///     glyph runs along — a comet tail behind it, each week's gridline lighting as it passes,
-///     the peak flaring once and the runner arriving at the goal beacon.
-///     The stat tiles stand up off the page one after another and tally in the order the light
-///     crosses them; the CTA rises and catches that light once.
-///  3. **With the reader.** One scroll holds the briefing, complete first week and block outlook.
-///     Every session is open; the path and later sections arrive when they enter the viewport.
-///
-/// Every light on this page travels ONCE and ends off its own view, so the settled page is
-/// perfectly still and readable. Reduce Motion: no overture, no motion — the finished page.
-/// Uses `OnboardingKit` surfaces to match the interview and its optional detail sheets.
+/// Motion: staggered entrances that overlap rather than queue, bars that settle with a touch of
+/// overshoot, numerals that roll, a chosen bar that breathes. On a device the week card tilts a
+/// few degrees with the hand. Every beat is a transform, it all plays once, and the settled page
+/// is still and readable. Reduce Motion: the finished page, no breathing, no tilt.
 struct PlanRevealView: View {
     let vm: OnboardingViewModel
     let profile: UserProfile?
     var onContinue: () -> Void
 
-    // MARK: Act I — arrival
     @State private var arrivalStarted = false
-    @State private var pathStarted = false
-    @State private var pathReached = false
-    @State private var pathIn = 0.0
-
-    // MARK: Act II — the ascent
-    @State private var heroIn = 0.0
-    @State private var checkDraw = 0.0      // the PLAN READY tick drawing itself
-    @State private var arrivalHalo = 0.0
-    @State private var nameSheen = 0.0      // specular pass across the athlete's name
-    @State private var artifactIn = 0.0
-    @State private var artifactGlow = 0.0   // one aurora pulse as the card lands, then spent
-    @State private var curveIn = 0.0        // the runner's progress along the terrain, 0…1
-    @State private var calloutIn = false    // peak callout pops once the runner has passed it
-    @State private var pathArrival = 0.0    // goal beacon lands once, then is perfectly still
-    @State private var curveGleam = 0.0     // a highlight running the finished line, after the runner
-    @State private var statsIn = 0.0        // the tiles standing up, one after another
-    /// The tiles stand up when the athlete REACHES them: on a tall phone that is during the
-    /// arrival, on a smaller one it is the first scroll. `revealClock` is when the arrival began
-    /// and `statsBeat` where the tiles sit in it, so an early reach still waits its turn.
-    @State private var statsStarted = false
-    @State private var statsReached = false
-    @State private var revealClock: Date?
-    @State private var statsBeat = 0.0
-    @State private var shownWeeks = 0.0
-    @State private var shownDays = 0.0
-    @State private var shownSessions = 0.0
-    @State private var tileSheen = 0.0      // light crossing the stat tiles, left to right
-    @State private var ctaIn = 0.0
-    @State private var ctaSheen = 0.0       // the ink capsule catching the light once
-
-    // MARK: Act III — with the reader
-    @State private var stripFill = 0.0      // the first week's day dots lighting in order
-    @State private var chipsIn = 0.0        // "built around you" arriving one chip at a time
-    /// The week under the athlete's thumb on the road, nil when they are not touching it.
-    @State private var scrubWeek: Int?
-
-    /// The choreography's clocks, held so they can be cancelled if the page goes away mid-sequence.
+    @State private var checkDraw = 0.0      // the tick beside the chapter word
+    @State private var cardIn = 0.0         // the week card placed on the canvas
+    @State private var skylineClock = 0.0   // the bars growing, day by day
+    @State private var chosenDay: Int?
+    @State private var pillClock = 0.0      // the pace pills dealt and settling
+    @State private var phaseClock = 0.0     // the block filling in
+    @State private var tailIn = 0.0         // the way to every session
+    @State private var showingDetails = false
+    @State private var stripFill = 0.0
+    @State private var chipsIn = 0.0
     @State private var sequence: Task<Void, Never>?
-    /// Whether the stat tiles are on screen. Their ghosts are the only continuous clocks on this
-    /// page, and a `TimelineView` running behind six weeks of plan the athlete has scrolled to is
-    /// pure heat — the paywall gates its own tile arts the same way.
-    @State private var tilesOnScreen = false
+    @State private var motion = MotionTilt()
     @ReducedMotionPreference private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
     private var totalSessions: Int { profile?.plan?.sessions.count ?? 0 }
 
     private var distanceUnit: DistanceUnit { DistanceUnit(rawValue: profile?.distanceUnit ?? "auto") ?? .auto }
 
-    // MARK: One-pass derivation (perf audit 2026-08-13)
-    //
-    // Every week-bucketed read below comes from ONE pass, memoized in a reference box (invisible
-    // to SwiftUI). Safe to hold `PlannedSession` refs: the reveal only exists in onboarding, after
-    // generation — nothing can rebuild (and so delete) the plan underneath it.
+    /// Grouping the block's sessions into weeks is cheap, but this body renders every frame of a
+    /// three-second arrival; computed once and boxed so the animation never re-buckets the plan.
     private struct Derived {
         var weekCount = 0
         var weeksGrouped: [(week: Int, sessions: [PlannedSession])] = []
@@ -109,227 +71,143 @@ struct PlanRevealView: View {
 
     private var planWeekCount: Int { derived.weekCount }
     private var weeksGrouped: [(week: Int, sessions: [PlannedSession])] { derived.weeksGrouped }
+    /// The block's first day: every seven-day strip on the page starts on its weekday.
+    private var planAnchor: Date? { weeksGrouped.first?.sessions.map(\.date).min() }
 
-    /// A narrow specular band travelling left to right, for masking onto whatever should catch the
-    /// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of
-    /// the animation are a clean no-op — nothing to fade in or out.
-    ///
-    /// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across
-    /// a surface, and on the name it brightens the gradient instead of painting over it.
-    private func sheenBand(_ clock: Double, index: Int? = nil, strength: Double = 0.9) -> some View {
-        SheenBand(clock: clock, index: index, strength: strength)
-    }
+    /// The racer's page says the date once; the open-ended athlete's page never says one. This
+    /// is the switch every date-bearing element reads.
+    private var datedRace: Bool { vm.goal == .raceDistance && vm.hasRace }
 
     var body: some View {
-        // The outer reader respects the safe area, so it can tell the full-bleed scroll below how
-        // deep the status bar is; the scroll itself runs under it.
-        GeometryReader { outer in
-        let topInset = outer.safeAreaInsets.top
-        ScrollViewReader { proxy in
-        ScrollView {
-            VStack(spacing: Theme.Space.md + 4) {
-                // The first screen is the sold moment: the athlete, the road, the numbers. Every
-                // line of reading matter waits below the fold (redesign 2026-09-12 — the terrain
-                // used to sit under two paragraphs and a text card, and the page's one animation
-                // played where nobody was looking).
+        OnboardingHeroPage {
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
                 hero
-                animatedTrainingPath
-                statTiles
-                trainingBriefing
-                detailedPlan
+                weekCard
+                    .modifier(CardPlacement(progress: reduceMotion ? 1 : cardIn))
+                    .padding(.top, Theme.Space.xs)
+                if startingPaces != nil { pacePills }
+                blockLine
+                Button {
+                    Haptics.selection()
+                    showingDetails = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("See every session")
+                        Image(systemName: "arrow.up.right").font(.system(size: 11, weight: .semibold))
+                    }
+                    .font(.rounded(14, weight: .semibold))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Space.sm)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("onboarding.reveal.details")
+                .opacity(reduceMotion ? 1 : tailIn)
             }
-            .frame(maxWidth: .infinity)
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.top, topInset + Theme.Space.sm)
-            .padding(.bottom, Theme.Space.lg)
-            // The crown: the PAYWALL'S OWN FIELD, falling from the very top of the screen and
-            // part of the CONTENT, so it still scrolls away with the hero (owner call 2026-08-27:
-            // not sticky, subtle). `AiryField` is the paywall's premium feel — separated hues
-            // reading as air rather than as one purple wash — and `paintsBackground: false` keeps
-            // onboarding's lighter canvas underneath. The mask dissolves it into that canvas.
-            .background(alignment: .top) {
-                AiryField(intensity: colorScheme == .dark ? 0.55 : 0.85, paintsBackground: false)
-                    .frame(height: 440 + topInset)
-                    .mask(LinearGradient(stops: [.init(color: .black, location: 0),
-                                                 .init(color: .black, location: 0.58),
-                                                 .init(color: .clear, location: 1)],
-                                         startPoint: .top, endPoint: .bottom))
-                    .allowsHitTesting(false)
-            }
-        }
-        .ignoresSafeArea(edges: .top)
-        // Status-bar scrim: scrolled content dissolves under the clock instead of colliding with it.
-        .overlay(alignment: .top) {
-            LinearGradient(stops: [
-                .init(color: OnboardingStyle.canvas(colorScheme), location: 0),
-                .init(color: OnboardingStyle.canvas(colorScheme), location: topInset / (topInset + 16)),
-                .init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 1),
-            ], startPoint: .top, endPoint: .bottom)
-                .frame(height: topInset + 16)
-                .ignoresSafeArea(edges: .top)
-                .allowsHitTesting(false)
-        }
-        .scrollIndicators(.hidden)
-        .scrollBounceBehavior(.basedOnSize)
-        .accessibilityIdentifier("onboarding.reveal.scroll")
-        #if DEBUG
-        .task {
-            let args = ProcessInfo.processInfo.arguments
-            let target = args.contains("--reveal-scroll-plan") ? "plan"
-                : args.contains("--reveal-scroll-podium") ? "podium"
-                : args.contains("--reveal-scroll-week-one") ? "week-one" : nil
-            if let target {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard !Task.isCancelled else { return }
-                proxy.scrollTo(target, anchor: .top)
-            }
-        }
-        #endif
-        .safeAreaInset(edge: .bottom) {
+            .padding(.top, Theme.Space.lg)
+            Spacer(minLength: Theme.Space.sm)
+        } actions: {
             VStack(spacing: Theme.Space.sm) {
                 // The locker-room line, not a victory line: the promise that a bad week is planned
                 // for is what the athlete needs to hear right before they commit.
-                Text("Your plan adapts every week. Your goal stays the same.")
+                Text(datedRace ? "Your plan adapts every week. Your goal stays the same."
+                               : "Your plan adapts every week. It starts where you are.")
                     .font(.rounded(Theme.FontSize.caption, weight: .medium))
                     .foregroundStyle(Theme.inkSecondary)
                     .multilineTextAlignment(.center)
                 OnboardingCTA(title: "Continue") { onContinue() }
                     .accessibilityIdentifier("onboarding.reveal.continue")
-                    // The ink capsule catches the light once as it settles — the same band that
-                    // crossed the tiles, so the page's one light source is consistent.
-                    .overlay { sheenBand(ctaSheen, strength: 0.28).clipShape(Capsule()) }
             }
-            // Checkout stays visible and usable throughout the decorative reveal.
             .padding(.horizontal, Theme.Space.lg)
-            .padding(.top, Theme.Space.md)
-            .padding(.bottom, Theme.Space.sm)
-            // ONE fade, owned by the inset: clear → canvas rising above it, bled past the
-            // column and under the home indicator. (A separate scroll-edge overlay plus an
-            // opaque button background left a hairline seam between the two while scrolling —
-            // owner report 2026-08-27.) The stop is pulled all the way up to 0.24 — roughly
-            // where the inset's own content starts, given the `-xl` bleed above it, so the CTA
-            // always lands on a clean bed instead of plan content ghosting underneath it.
-            .background {
-                LinearGradient(stops: [.init(color: OnboardingStyle.canvas(colorScheme).opacity(0), location: 0),
-                                       .init(color: OnboardingStyle.canvas(colorScheme), location: 0.24),
-                                       .init(color: OnboardingStyle.canvas(colorScheme), location: 1)],
-                               startPoint: .top, endPoint: .bottom)
-                    .padding(.top, -Theme.Space.xl)
-                    .padding(.horizontal, -Theme.Space.xxl)
-                    .ignoresSafeArea(edges: .bottom)
+            .padding(.top, Theme.Space.sm)
+            .padding(.bottom, Theme.Space.md)
+        }
+        .sheet(isPresented: $showingDetails) { detailSheet }
+        #if DEBUG
+        .task {
+            let args = ProcessInfo.processInfo.arguments
+            if args.contains(where: { $0.hasPrefix("--reveal-scroll-") }) {
+                try? await Task.sleep(for: .milliseconds(400))
+                showingDetails = true
             }
         }
-        // Keep the interactive scroll and checkout layer untransformed. Celebration is local
-        // to the artwork so a decorative compositing layer cannot swallow the first tap.
+        #endif
         .onAppear(perform: animateIn)
         .onDisappear {
             sequence?.cancel()
-            calloutTask?.cancel()
-            scrubClearTask?.cancel()
+            motion.stop()
             settleArrival()
         }
         .onChange(of: reduceMotion) { _, reduced in
             if reduced {
                 sequence?.cancel()
+                motion.stop()
                 settleArrival()
             }
-        }
-        }
         }
         .trackScreen(.planReveal)
     }
 
+    /// The small chapter word: the pace page's caption, so the page reads as the same product
+    /// the questions were.
     private func sectionLabel(_ text: String) -> some View {
         Text(text)
-            .font(.rounded(Theme.FontSize.label, weight: .bold))
+            .font(.rounded(10, weight: .semibold))
             .tracking(1.4)
-            .foregroundStyle(Theme.inkTertiary)
+            .foregroundStyle(Theme.inkSecondary)
     }
 
-    // MARK: Hero — the sold moment
+    // MARK: Hero — ready
 
-    /// No wordmark (owner call 2026-08-27): the page opens on the athlete, not the brand. A quiet
-    /// "plan ready" seal with a drawn check, then the headline in the display face — "Your plan,"
-    /// and the athlete's name on its own line in the brand gradient, the one place color enters
-    /// the type. Below it, the outcome sentence.
+    /// The interview's heading, left-aligned, with the drawn tick beside the chapter word. The
+    /// tick is the only ceremony: drawn, not stamped, and small. The plan is named the way a
+    /// coach names one, with its shape beside it.
     private var hero: some View {
-        Clocked(t: heroIn) { h in
-        VStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
-                // Drawn, not stamped. This badge is the first thing on the page and its whole job
-                // is to say "done" — so it does the gesture rather than asserting it.
-                DrawnCheck(progress: checkDraw).frame(width: 14, height: 14)
+                DrawnCheck(progress: reduceMotion ? 1 : checkDraw).frame(width: 15, height: 15)
                 Text("PLAN READY")
-                    .font(.rounded(11, weight: .bold)).tracking(1.6)
-                    .foregroundStyle(Theme.inkSecondary)
+                    .font(.rounded(10, weight: .semibold)).tracking(1.4)
+                    .foregroundStyle(Theme.purple)
             }
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .raised(Capsule())
-            .overlay {
-                Capsule().strokeBorder(
-                    LinearGradient(colors: [Theme.iridescent[1], Theme.purple.opacity(0.72),
-                                            Theme.iridescent[2]],
-                                   startPoint: .leading, endPoint: .trailing),
-                    lineWidth: 1
-                )
-                .opacity(0.72)
-            }
-            // The halo is ceremonial motion, not layout. Keeping it in the background lets its
-            // rings breathe outside the seal without leaving a 92-point hole in the settled page.
-            .background {
-                PlanArrivalHalo(progress: arrivalHalo)
-                    .frame(width: 180, height: 72)
-            }
-            .opacity(revealStage(h, 0.00, 0.32))
-            .scaleEffect(0.82 + revealStage(h, 0.00, 0.32) * 0.18)
-            VStack(spacing: 0) {
-                Text("Your plan,")
-                    .font(.display(44, weight: .semibold))
+            .onboardingEntrance(0.02, lift: 6)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Your plan, \(heroName)")
+                    .font(.display(34, weight: .semibold)).tracking(-0.6)
                     .foregroundStyle(Theme.ink)
-                // The one moment on this page that is purely about THEM, so it is the one thing
-                // given a specular pass. The band is masked to the letterforms, so the light moves
-                // through the name rather than over a rectangle containing it.
-                heroNameText
-                    .foregroundStyle(LinearGradient(colors: [Theme.purple, Color(hex: "B48CF2"), Theme.iridescent[1]],
-                                                    startPoint: .leading, endPoint: .trailing))
-                    .overlay { sheenBand(nameSheen).mask(heroNameText) }
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityLabel(planReadyTitle)
+                Text(planTitle)
+                    .font(.rounded(15, weight: .regular))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .tracking(-1.0)
-            .lineLimit(1).minimumScaleFactor(0.7)
-            .multilineTextAlignment(.center)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(planReadyTitle)
-            .accessibilityAddTraits(.isHeader)
-            .opacity(revealStage(h, 0.16, 0.42))
-            .scaleEffect(0.965 + revealStage(h, 0.16, 0.42) * 0.035)
-            .offset(y: 12 * (1 - revealStage(h, 0.16, 0.42)))
-            Text(vm.projectedOutcome())
-                .font(.rounded(15, weight: .regular))
-                .foregroundStyle(Theme.inkSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, Theme.Space.sm)
-                .opacity(revealStage(h, 0.42, 0.42))
-                .offset(y: 10 * (1 - revealStage(h, 0.42, 0.42)))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, Theme.Space.md)
+            .onboardingEntrance(0.10, lift: 12)
         }
     }
 
-    /// Stagger one coordinated 0…1 hero animation without starting independent animations that
-    /// can drift apart under load. The values stay clamped, including during spring overshoot.
-    /// `clock` is the INTERPOLATED hero value (from `Clocked`), never the state itself.
-    private func revealStage(_ clock: Double, _ start: Double, _ span: Double) -> Double {
-        if reduceMotion { return 1 }
-        return min(1, max(0, (clock - start) / max(0.001, span)))
-    }
-
-    /// "Maya." when we have a first name, "ready." otherwise.
-    /// One definition, drawn twice: once as the name, once as the mask its light travels through.
-    private var heroNameText: some View {
-        Text(heroName).font(.display(44, weight: .semibold))
+    /// "Half marathon build · 10 weeks · 4 days a week" / "Base block · 6 weeks · 4 days a week".
+    private var planTitle: String {
+        let name: String
+        if vm.goal == .raceDistance, let r = vm.raceDistance {
+            name = "\(r.label) build"
+        } else {
+            switch vm.goal {
+            case .endurance:      name = "Endurance block"
+            case .stayConsistent: name = "Consistency block"
+            case .loseFat:        name = "Fitness block"
+            case .buildMuscle, .getStronger: name = vm.running ? "Strength for running block" : "Strength block"
+            default:              name = "Base block"
+            }
+        }
+        let weeks = planWeekCount == 1 ? "1 week" : "\(planWeekCount) weeks"
+        var line = "\(name) · \(weeks) · \(vm.daysPerWeek) days a week"
+        if datedRace { line += " · \(vm.raceDate.formatted(.dateTime.month(.abbreviated).day()))" }
+        return line
     }
 
     private var firstName: String? {
@@ -343,148 +221,186 @@ struct PlanRevealView: View {
         firstName.map { "Your plan is ready, \($0)" } ?? "Your plan is ready"
     }
 
-    // MARK: The block, as terrain
+    // MARK: The week, as a skyline
 
-    /// Per-week planned volume across the block: run distance for runners, else session count.
-    /// The plan's actual periodization — never a decorative line.
-    private var weekly: (values: [Double], caption: String, raceWeek: Int?) {
-        let weeks = derived.weeksGrouped
-        guard !weeks.isEmpty else { return ([], "", nil) }
-        let totalWeeks = derived.weekCount
-        let weekCount = min(20, totalWeeks)
-        guard weekCount > 0 else { return ([], "", nil) }
-        let truncationNote = totalWeeks > weekCount ? " · first \(weekCount) of \(totalWeeks) weeks shown" : ""
-        var raceWeek: Int?
-        if vm.running {
-            var m = [Double](repeating: 0, count: weekCount)
-            for group in weeks where group.week <= weekCount {
-                for s in group.sessions where s.discipline == .running {
-                    if s.runType == .race { raceWeek = group.week; continue }
-                    m[group.week - 1] += s.targetDistanceM ?? 0
-                }
-            }
-            let peak = m.max() ?? 0
-            let cap = "Projected peak: \(planDistance(peak)) in week \((m.firstIndex(of: peak) ?? 0) + 1)"
-            return (m, peak > 0 ? cap + truncationNote : "", raceWeek)
-        } else {
-            var c = [Double](repeating: 0, count: weekCount)
-            for group in weeks where group.week <= weekCount {
-                c[group.week - 1] += Double(group.sessions.count)
-            }
-            return (c, "\(Int(c.max() ?? 0)) sessions at your busiest week" + truncationNote, nil)
+    /// The seven days from the opening session. Anchored on the plan's own first day rather than
+    /// on Monday: the week the athlete is about to live starts with their first run, and a
+    /// Mon-first grid would open on two or three "rest" days that are really just yesterday.
+    private var weekDays: [WeekSkyline.Day] {
+        guard let first = weeksGrouped.first,
+              let start = first.sessions.map(\.date).min() else { return [] }
+        let cal = Calendar.current
+        let day0 = cal.startOfDay(for: start)
+        let runs = first.sessions.filter { $0.discipline == .running }.compactMap(\.targetDistanceM)
+        let longest = max(runs.max() ?? 0, 1)
+        return (0..<7).map { offset in
+            let date = cal.date(byAdding: .day, value: offset, to: day0) ?? day0
+            let session = first.sessions.first { cal.isDate($0.date, inSameDayAs: date) }
+            // A bar's height is the session's size against the week's biggest run: runs by
+            // distance, a lift or a ride by a coach's rule of thumb (about half a long run).
+            let load: Double
+            if let session {
+                if session.discipline == .running, let m = session.targetDistanceM { load = max(0.18, m / longest) }
+                else { load = 0.5 }
+            } else { load = 0 }
+            return WeekSkyline.Day(date: date, session: session, load: load)
         }
     }
 
-    @ViewBuilder
-    private var blockCurveCard: some View {
-        let data = weekly
-        if data.values.count > 1, (data.values.max() ?? 0) > 0 {
-            let maxV = data.values.max() ?? 1
-            let peakIdx = data.values.firstIndex(of: maxV) ?? 0
-            VStack(alignment: .leading, spacing: Theme.Space.md + 2) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .firstTextBaseline) {
-                        sectionLabel("YOUR PATH")
-                        Spacer()
-                        Text("\(data.values.count) weeks")
-                            .font(.rounded(13, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(Theme.inkSecondary)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(Capsule().fill(Theme.tintedField))
-                    }
-                    Text(pathGoalTitle)
-                        .font(.display(22, weight: .bold))
+    /// The opening session is chosen from the start: the lavender bar is how the skyline says
+    /// "this one, and you can choose another", without an instruction printed on the card.
+    private var selectedDay: Int? {
+        chosenDay ?? weekDays.firstIndex { $0.session != nil }
+    }
+
+    private var weekCard: some View {
+        let days = weekDays
+        let chosen = selectedDay.flatMap { days.indices.contains($0) ? days[$0] : nil }
+        return VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionLabel("YOUR FIRST WEEK")
+                Spacer(minLength: Theme.Space.sm)
+                if let chosen {
+                    Text("\(chosen.date.formatted(.dateTime.weekday(.abbreviated))) · \(sessionName(chosen.session))")
+                        .font(.rounded(12, weight: .semibold))
                         .foregroundStyle(Theme.ink)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                // The terrain is the page's hero object, so it gets the height a hero gets, and
-                // once the runner has arrived it answers a thumb: drag across the block and a
-                // marker walks the weeks, naming each one. The run itself is never interrupted.
-                AscentCurve(values: data.values, peakIndex: peakIdx, raceWeek: data.raceWeek,
-                            peakLabel: vm.running ? planDistance(maxV) : "\(Int(maxV)) sessions",
-                            weekLabels: data.values.map { vm.running ? planDistance($0) : "\(Int($0)) sessions" },
-                            destinationLabel: pathGoalLabel,
-                            destinationSystemImage: vm.goal.planSystemImage,
-                            progress: reduceMotion ? 1 : curveIn,
-                            calloutIn: reduceMotion || calloutIn,
-                            arrival: reduceMotion ? 1 : pathArrival,
-                            gleam: reduceMotion ? 1 : curveGleam,
-                            scrub: scrubWeek)
-                    .frame(height: 188)
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { chartWidth = $0 }
-                    .contentShape(Rectangle())
-                    .gesture(scrubGesture(count: data.values.count))
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(data.caption.isEmpty ? pathGoalTitle : "\(pathGoalTitle). \(data.caption)")
-                if !data.caption.isEmpty {
-                    // "Peaks at 13.5 mi in week 6" is the pill's own sentence, so it arrives WITH
-                    // the pill. While a thumb is on the road, the line names the week under it.
-                    Text(scrubWeek.map { "Week \($0 + 1) · \(vm.running ? planDistance(data.values[$0]) : "\(Int(data.values[$0])) sessions")" } ?? data.caption)
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                        .foregroundStyle(scrubWeek == nil ? Theme.inkSecondary : Theme.ink)
-                        .monospacedDigit()
-                        .fixedSize(horizontal: false, vertical: true)
                         .contentTransition(.opacity)
-                        .animation(Motion.crossfade, value: scrubWeek)
-                        .opacity(calloutIn || reduceMotion ? 1 : 0)
+                        .animation(Motion.crossfade, value: selectedDay)
+                        .opacity(reduceMotion ? 1 : min(1, max(0, (skylineClock - 0.75) / 0.25)))
                 }
             }
-            .padding(Theme.Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
-        }
-    }
-
-    /// Tap a week on the road and the marker stands there with the week's figure, then clears on
-    /// its own. A TAP, not a drag: the road lives in a scroll view, and on this OS a drag gesture
-    /// on a scroll view's child — even a simultaneous, axis-locked one — poisoned the page's own
-    /// scrolling (three walkers, three failures, 2026-09-12). A tap can never fight a scroll.
-    /// Armed only once the run has arrived (or under Reduce Motion, where the terrain is finished
-    /// from the first frame): the runner's own pass is the thing to watch.
-    private func scrubGesture(count: Int) -> some Gesture {
-        SpatialTapGesture(coordinateSpace: .local)
-            .onEnded { value in
-                guard count > 1, reduceMotion || curveIn >= 1 else { return }
-                // `AscentCurve` insets its points by 8 on each side; the same mapping in reverse.
-                let inset: CGFloat = 8
-                let usable = max(1, chartWidth - inset * 2)
-                let fraction = min(1, max(0, (value.location.x - inset) / usable))
-                let index = Int((fraction * CGFloat(count - 1)).rounded())
+            WeekSkyline(days: days, clock: reduceMotion ? 1 : skylineClock, selected: selectedDay,
+                        breathing: !reduceMotion) { index in
                 Haptics.selection()
-                withAnimation(Motion.crossfade) { scrubWeek = scrubWeek == index ? nil : index }
-                scrubClearTask?.cancel()
-                guard scrubWeek != nil else { return }
-                scrubClearTask = Task { @MainActor in
-                    do { try await Task.sleep(for: .seconds(3.2)) } catch { return }
-                    withAnimation(Motion.crossfade) { scrubWeek = nil }
-                }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { chosenDay = index }
             }
+            .frame(height: 132)
+            if let chosen {
+                Text(sessionDetail(chosen.session))
+                    .font(.rounded(13, weight: .regular))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .monospacedDigit()
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .id(selectedDay)
+                    .transition(.opacity)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("onboarding.reveal.weekCallout")
+                    .accessibilityLabel("\(chosen.date.formatted(.dateTime.weekday(.wide))), \(sessionName(chosen.session)). \(sessionDetail(chosen.session))")
+                    .opacity(reduceMotion ? 1 : min(1, max(0, (skylineClock - 0.8) / 0.2)))
+            }
+        }
+        .padding(Theme.Space.md + 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onboardingCard()
+        // On a device the card follows the hand, a few degrees, the way a pass does.
+        .rotation3DEffect(.degrees(reduceMotion ? 0 : motion.pitch), axis: (x: 1, y: 0, z: 0), perspective: 0.6)
+        .rotation3DEffect(.degrees(reduceMotion ? 0 : motion.roll), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+        .accessibilityElement(children: .contain)
     }
-    @State private var scrubClearTask: Task<Void, Never>?
-    /// The road's laid-out width, for mapping a touch back onto a week.
-    @State private var chartWidth: CGFloat = 320
 
-    /// Short enough to sit at the end of the curve. The longer coaching rationale lives above it.
-    private var pathGoalLabel: String {
-        if vm.goal == .raceDistance, let race = vm.raceDistance {
-            return vm.goalTimeLabel.map { "\($0) \(race.label)" } ?? race.label
-        }
-        return switch vm.goal {
-        case .endurance: "MORE ENDURANCE"
-        case .stayConsistent: "CONSISTENCY"
-        case .generalFitness: "RUNNING FITNESS"
-        case .loseFat: "FITTER + LEANER"
-        case .buildMuscle: "MORE MUSCLE"
-        case .getStronger: "STRONGER RUNNER"
-        case .raceDistance: "RACE READY"
+    private func sessionName(_ session: PlannedSession?) -> String {
+        guard let session else { return "Rest" }
+        switch session.discipline {
+        case .running: return session.runType?.planTitle ?? "Run"
+        case .strength: return StrengthSplit.dayTitle(forLabel: session.strengthLabel) ?? "Strength"
+        default: return session.workoutType?.title ?? session.discipline.rawValue.capitalized
         }
     }
 
-    private var pathGoalTitle: String {
-        if vm.goal == .raceDistance, let race = vm.raceDistance {
-            return "Road to your \(race.label)"
+    private func sessionDetail(_ session: PlannedSession?) -> String {
+        guard let session else { return "Rest. The training lands on the days between." }
+        return PlanCoaching.brief(for: session, distanceUnit: distanceUnit, dropLeadingType: true)
+    }
+
+    // MARK: Your paces
+
+    /// The plan's OWN paces (the calibrated `p5kSPerKm` the engine trained from), falling back
+    /// to what the anchor implied while the plan was being built. The numbers on this page are
+    /// the numbers the sessions carry; a page that rounded differently would be a second truth.
+    private var startingPaces: (easy: Double, steady: Double, repeats: Double)? {
+        guard vm.running else { return nil }
+        let p5k = profile?.plan?.p5kSPerKm ?? vm.impliedPaces?.p5k
+        guard let p5k, p5k.isFinite, p5k > 0 else { return nil }
+        return (DanielsPaces.trainingPace(.easy, p5kSPerKm: p5k),
+                DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k),
+                DanielsPaces.trainingPace(.intervals, p5kSPerKm: p5k))
+    }
+
+    /// Three pills, dealt a beat apart, each settling DOWN onto its number from a slower one:
+    /// the plan finding the athlete's pace, not counting up from nothing.
+    @ViewBuilder
+    private var pacePills: some View {
+        if let p = startingPaces {
+            HStack(spacing: 8) {
+                pacePill("EASY", p.easy, 0)
+                pacePill("STEADY", p.steady, 1)
+                pacePill("REPEATS", p.repeats, 2)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Easy \(Formatters.pace(secPerKm: p.easy, unit: distanceUnit)), steady \(Formatters.pace(secPerKm: p.steady, unit: distanceUnit)), repeats \(Formatters.pace(secPerKm: p.repeats, unit: distanceUnit))")
         }
-        return vm.goal.planLabel
+    }
+
+    private func pacePill(_ label: String, _ secPerKm: Double, _ index: Int) -> some View {
+        let deal = reduceMotion ? 1.0 : min(1, max(0, (pillClock - Double(index) * 0.12) / 0.5))
+        let settle = 1 - pow(1 - deal, 3)
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.rounded(9, weight: .semibold)).tracking(1.2).foregroundStyle(Theme.inkTertiary)
+            AnimatedCounter(value: secPerKm + 70 * (1 - settle)) { Formatters.pace(secPerKm: $0, unit: distanceUnit) }
+                .font(.display(17, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .raised(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .scaleEffect(0.92 + 0.08 * settle, anchor: .bottom)
+        .opacity(settle)
+    }
+
+    // MARK: How it grows
+
+    /// The engine's phase per week (`weekPhases`) as one bar filling left to right, ending in
+    /// what the block ends in — race day for a racer, a checkpoint that recalibrates the paces
+    /// for everyone else (the rolling block, 2026-09-07).
+    private var weekPhaseList: [PlanPhase] {
+        let stored = (profile?.plan?.weekPhases ?? []).compactMap(PlanPhase.init(rawValue:))
+        if stored.count >= planWeekCount { return Array(stored.prefix(max(planWeekCount, 1))) }
+        return stored + Array(repeating: .build, count: max(0, planWeekCount - stored.count))
+    }
+
+    private var blockLine: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionLabel("HOW IT GROWS")
+                Spacer(minLength: Theme.Space.sm)
+                Text(datedRace ? "TO RACE DAY" : "BLOCK \((profile?.plan?.blockIndex ?? 0) + 1)")
+                    .font(.rounded(10, weight: .semibold)).tracking(1.4)
+                    .foregroundStyle(Theme.inkTertiary).monospacedDigit()
+            }
+            PhaseBar(phases: weekPhaseList, end: datedRace ? .race : .checkpoint,
+                     clock: reduceMotion ? 1 : phaseClock)
+            Text(phaseSentence)
+                .font(.rounded(13, weight: .regular))
+                .foregroundStyle(Theme.inkSecondary)
+                .monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
+                .opacity(reduceMotion ? 1 : min(1, max(0, (phaseClock - 0.5) / 0.4)))
+        }
+        .padding(.top, Theme.Space.xs)
+        .opacity(reduceMotion ? 1 : min(1, phaseClock * 4))
+    }
+
+    private var phaseSentence: String {
+        var names: [String] = []
+        for phase in weekPhaseList where names.last != phase.label { names.append(phase.label) }
+        let arc = names.map { $0.replacingOccurrences(of: " week", with: "").lowercased() }
+        let arcLine = arc.enumerated().map { $0.offset == 0 ? $0.element.prefix(1).uppercased() + $0.element.dropFirst() : $0.element }
+            .joined(separator: ", then ")
+        if datedRace, let r = vm.raceDistance {
+            return "\(arcLine), then race day. Everything points at your \(r.label.lowercased())."
+        }
+        return "\(arcLine), then a checkpoint. Your paces update from it and the next block starts from what you ran."
     }
 
     /// A planned weekly volume, written the way a coach writes one.
@@ -505,113 +421,63 @@ struct PlanRevealView: View {
         return "\(numeral) \(imperial ? "mi" : "km")"
     }
 
-    // MARK: Stat tiles
+    // MARK: Every session — the sheet
 
-    private var statTiles: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                statTile(shownWeeks, "WEEKS", 0) { "\(Int($0.rounded()))" }
-                statTile(shownDays, "DAYS A WEEK", 1) { "\(Int($0.rounded()))" }
-                statTile(shownSessions, "SESSIONS", 2) { "\(Int($0.rounded()))" }
-            }
-            if vm.running, let s = peakWeekStats {
-                HStack(spacing: 12) {
-                    textTile(planDistance(s.volumeM), "PEAK WEEK", 3)
-                    textTile(planDistance(s.longestM), "LONGEST RUN", 4)
+    /// Everything that used to make the page long: the briefing, the complete first week, the
+    /// weeks ahead. One tap away, in the house sheet grammar, and still every session open.
+    private var detailSheet: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Text("every session")
+                    .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
+                HStack {
+                    Spacer()
+                    Button {
+                        showingDetails = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.ink)
+                            .frame(width: 34, height: 34)
+                            .raised(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
                 }
             }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(planWeekCount) weeks, \(vm.daysPerWeek) days per week, \(totalSessions) sessions")
-        .onScrollVisibilityChange(threshold: 0.2) { visible in
-            tilesOnScreen = visible
-            guard visible, !statsReached else { return }
-            statsReached = true
-            startStats()
-        }
-    }
-
-    /// Deal the tiles, then tally them in the order the light crosses them. Runs once, at the
-    /// later of "the athlete can see them" and "their beat in the arrival" — so a tall phone gets
-    /// them in sequence and a small one gets them the moment they scroll up, never a page that
-    /// has already finished counting behind the fold.
-    private func startStats() {
-        guard !statsStarted, !reduceMotion, statsReached, let began = revealClock else { return }
-        statsStarted = true
-        let d = max(0, statsBeat - Date().timeIntervalSince(began))
-        withAnimation(.easeOut(duration: 1.05).delay(d)) { statsIn = 1 }
-        withAnimation(.easeOut(duration: 0.92).delay(d + 0.24)) { shownWeeks = Double(planWeekCount) }
-        withAnimation(.easeOut(duration: 0.92).delay(d + 0.37)) { shownDays = Double(vm.daysPerWeek) }
-        withAnimation(.easeOut(duration: 0.92).delay(d + 0.50)) { shownSessions = Double(totalSessions) }
-        withAnimation(.easeInOut(duration: 1.15).delay(d + 0.54)) { tileSheen = 1 }
-    }
-
-    /// The tiles' light and their deal are both derived from ONE clock each, inside animatable
-    /// views (`SheenBand`, `TileDeal`, `RevealTileGhost`), so every tile reads its own slice per
-    /// frame: one wave crossing the row, each tile a beat behind the last.
-    private var tileSheenClock: Double { reduceMotion ? 10 : tileSheen }
-    private var tileDealClock: Double { reduceMotion ? 10 : statsIn }
-
-    /// The band is clipped to the tile's OWN shape rather than the tile being clipped to the band:
-    /// clipping the tile would take its contact shadow with it, and the raised material is the
-    /// whole reason these read as objects.
-    private func tileShape() -> RoundedRectangle {
-        RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-    }
-
-    /// What each tile is actually counting, drawn as quiet texture under its number.
-    private func ghost(for label: String) -> RevealTileGhost.Kind? {
-        switch label {
-        case "WEEKS": .weeks(weekly.values)
-        case "DAYS A WEEK": .days(trainingWeekdays)
-        case "SESSIONS": .sessions(totalSessions)
-        default: nil
-        }
-    }
-
-    /// The weekday indices (0 = Monday) the athlete actually trains, read off week one rather than
-    /// assumed from the count — a 4-day athlete's four days are a specific four.
-    private var trainingWeekdays: Set<Int> {
-        guard let first = weeksGrouped.first else { return [] }
-        let cal = Calendar.current
-        return Set(first.sessions.map { (cal.component(.weekday, from: $0.date) + 5) % 7 })
-    }
-
-    private func statTile(_ value: Double, _ label: String, _ index: Int,
-                          _ format: @escaping (Double) -> String) -> some View {
-        // The art is a ROW OF THE STACK, not a background. It used to be a `.background`, which
-        // meant it shared the tile's box with the type and the label sat on top of the bars —
-        // "WEEKS" across the first two weeks, "SESSIONS" across the dot grid (owner, 2026-08-29).
-        // Laid out in sequence it cannot collide, whatever the label's length.
-        VStack(spacing: 4) {
-            AnimatedCounter(value: value, format: format)
-                .font(.display(30, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-            Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            if let kind = ghost(for: label) {
-                RevealTileGhost(kind: kind, clock: tileSheenClock, index: index, alive: tilesOnScreen)
-                    .frame(height: 15)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 3)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.top, Theme.Space.lg)
+            .padding(.bottom, Theme.Space.md)
+            ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: Theme.Space.lg) {
+                    trainingBriefing
+                    detailedPlan
+                }
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.bottom, Theme.Space.xl)
+            }
+            .scrollIndicators(.hidden)
+            .accessibilityIdentifier("onboarding.reveal.scroll")
+            #if DEBUG
+            .task {
+                let args = ProcessInfo.processInfo.arguments
+                let target = args.contains("--reveal-scroll-plan") ? "plan"
+                    : args.contains("--reveal-scroll-podium") ? "podium"
+                    : args.contains("--reveal-scroll-week-one") ? "week-one" : nil
+                if let target {
+                    try? await Task.sleep(for: .milliseconds(600))
+                    guard !Task.isCancelled else { return }
+                    proxy.scrollTo(target, anchor: .top)
+                }
+            }
+            #endif
             }
         }
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity).frame(height: 104)
-        .raised(tileShape())
-        .overlay { sheenBand(tileSheenClock, index: index).clipShape(tileShape()) }
-        .modifier(TileDeal(clock: tileDealClock, index: index))
-    }
-
-    private func textTile(_ value: String, _ label: String, _ index: Int) -> some View {
-        VStack(spacing: 4) {
-            Text(value).font(.display(24, weight: .bold)).monospacedDigit().foregroundStyle(Theme.ink)
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(label).font(.rounded(10, weight: .bold)).tracking(1.0).foregroundStyle(Theme.inkTertiary)
-        }
-        .frame(maxWidth: .infinity).frame(height: 84)
-        .raised(tileShape())
-        .overlay { sheenBand(tileSheenClock, index: index).clipShape(tileShape()) }
-        .modifier(TileDeal(clock: tileDealClock, index: index))
+        .background(OnboardingStyle.canvas(colorScheme))
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
     }
 
     // MARK: Reflections
@@ -775,42 +641,6 @@ struct PlanRevealView: View {
         return "\(days.count) training days to begin\n\(labels)"
     }
 
-    private var animatedTrainingPath: some View {
-        blockCurveCard
-            .opacity(reduceMotion ? 1 : pathIn)
-            .scaleEffect(reduceMotion ? 1 : 0.955 + pathIn * 0.045, anchor: .top)
-            .offset(y: reduceMotion ? 0 : 26 * (1 - pathIn))
-            .onScrollVisibilityChange(threshold: 0.08) { visible in
-                pathReached = visible
-                if visible { startPath() }
-            }
-            // A single aurora pulse makes the generated plan feel like the thing that just
-            // arrived, then spends itself completely so the chart is quiet and readable.
-            // One bell-shaped flash: invisible at 0, brightest halfway, invisible at rest.
-            // Derived per FRAME (`Clocked`) — computed in the body it would read sin(π) = 0
-            // on the very first frame and the pulse would never exist.
-            .background {
-                Clocked(t: artifactGlow) { g in
-                    RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-                        .fill(LinearGradient(colors: Theme.iridescentDeep,
-                                             startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .blur(radius: 26)
-                        .scaleEffect(0.94 + g * 0.10)
-                        .opacity(max(0, sin(g * .pi)) * 0.36)
-                }
-            }
-            .overlay {
-                Clocked(t: artifactGlow) { g in
-                    RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous)
-                        .strokeBorder(LinearGradient(colors: Theme.iridescentDeep,
-                                                     startPoint: .leading, endPoint: .trailing),
-                                      lineWidth: 1.5)
-                        .scaleEffect(0.99 + g * 0.025)
-                        .opacity(max(0, sin(g * .pi)) * 0.85)
-                }
-            }
-    }
-
     private var detailedPlan: some View {
         VStack(spacing: Theme.Space.lg) {
                 firstWeek.id("week-one")
@@ -827,6 +657,7 @@ struct PlanRevealView: View {
         }
     }
 
+
     // MARK: Week 1 — the seven-day strip + the sessions
 
     @ViewBuilder
@@ -834,7 +665,7 @@ struct PlanRevealView: View {
         if let first = weeksGrouped.first {
             VStack(alignment: .leading, spacing: Theme.Space.sm + 2) {
                 sectionLabel("YOUR FIRST WEEK")
-                WeekStrip(sessions: first.sessions, fill: reduceMotion ? 1 : stripFill)
+                WeekStrip(sessions: first.sessions, fill: reduceMotion ? 1 : stripFill, anchor: planAnchor)
                     .onScrollVisibilityChange(threshold: 0.5) { visible in
                         guard visible, stripFill == 0, !reduceMotion else { return }
                         withAnimation(.easeOut(duration: 0.75)) { stripFill = 1 }
@@ -888,7 +719,7 @@ struct PlanRevealView: View {
                                         .textCase(.uppercase)
                                         .monospacedDigit()
                                         .foregroundStyle(Theme.inkTertiary)
-                                    Text(weekDateRange(group))
+                                    Text(datedRace ? weekDateRange(group) : weekPhaseLabel(group.week))
                                         .font(.rounded(15, weight: .semibold))
                                         .monospacedDigit()
                                         .foregroundStyle(Theme.ink)
@@ -918,7 +749,7 @@ struct PlanRevealView: View {
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.8)
                                 Spacer(minLength: Theme.Space.sm)
-                                WeekStrip(sessions: group.sessions, compact: true)
+                                WeekStrip(sessions: group.sessions, compact: true, anchor: planAnchor)
                             }
 
                             GeometryReader { geo in
@@ -981,6 +812,14 @@ struct PlanRevealView: View {
             : "\(startMonth) \(startDay)–\(endMonth) \(endDay)"
     }
 
+    /// The phase the engine gave this week ("Build", "Recovery week"), for the athlete whose
+    /// plan has no date to count toward.
+    private func weekPhaseLabel(_ week: Int) -> String {
+        let phases = profile?.plan?.weekPhases ?? []
+        guard week - 1 < phases.count, let phase = PlanPhase(rawValue: phases[week - 1]) else { return "Building" }
+        return phase.label
+    }
+
     /// A truthful one-line description of what fills the seven day rhythm beside it.
     private func weekWorkMix(_ sessions: [PlannedSession]) -> String {
         let runs = sessions.filter { $0.discipline == .running }.count
@@ -997,9 +836,10 @@ struct PlanRevealView: View {
 
     // MARK: Reveal orchestration
 
-    /// The whole arrival as one timed sequence, in seconds from appear. Every beat is placed
-    /// relative to `T`, the moment the overture lifts — which depends on how long the name is,
-    /// since each letter takes its own beat to land.
+    /// The whole arrival as one timed sequence, in seconds from appear, ~2.6 s and then still.
+    /// Beats overlap rather than queue: the heading is still settling as the card is placed, the
+    /// bars are still growing as the first pill is dealt. A page that waits for each beat to
+    /// finish reads as a slideshow; one that overlaps reads as a thing arriving.
     private func animateIn() {
         guard !arrivalStarted else { return }
         arrivalStarted = true
@@ -1008,27 +848,19 @@ struct PlanRevealView: View {
             return
         }
         Haptics.warm()
+        motion.start()
 
-        // The page is readable from its first frame; the sequence is the story told over it,
-        // ~3 s and then still (redesign 2026-09-12): acknowledge → name → the road is run → the
-        // numbers stand up → go. Every beat is placed off `T`, the moment of arrival.
-        let T = 0.0
-        withAnimation(Motion.pen(0.9).delay(T + 0.10)) { heroIn = 1 }
-        withAnimation(.easeOut(duration: 0.5).delay(T + 0.20)) { checkDraw = 1 }
-        withAnimation(.easeOut(duration: 1.15).delay(T + 0.22)) { arrivalHalo = 1 }
-        withAnimation(.easeInOut(duration: 0.9).delay(T + 0.55)) { nameSheen = 1 }
-        withAnimation(.spring(response: 0.7, dampingFraction: 0.80).delay(T + 0.40)) { artifactIn = 1 }
-        // The tiles: see `startStats` — their beat is after the runner crests the block, but they
-        // still wait to be seen on a phone where they sit under the fold.
-        revealClock = Date()
-        statsBeat = T + 1.70
-        startStats()
-        withAnimation(.spring(response: 0.56, dampingFraction: 0.78).delay(T + 2.1)) { ctaIn = 1 }
-        withAnimation(.easeInOut(duration: 0.9).delay(T + 2.35)) { ctaSheen = 1 }
+        withAnimation(.easeOut(duration: 0.45).delay(0.12)) { checkDraw = 1 }
+        withAnimation(.spring(response: 0.7, dampingFraction: 0.84).delay(0.30)) { cardIn = 1 }
+        withAnimation(.easeOut(duration: 1.25).delay(Self.skylineBeatS)) { skylineClock = 1 }
+        withAnimation(.easeOut(duration: 1.1).delay(1.45)) { pillClock = 1 }
+        withAnimation(.easeInOut(duration: 0.9).delay(1.9)) { phaseClock = 1 }
+        withAnimation(.easeOut(duration: 0.5).delay(2.5)) { tailIn = 1 }
 
-        // The haptics belong to the moments: the card landing, the runner cresting the peak, the
-        // beacon landing at the goal. The reveal finishes quietly.
+        // The haptics belong to the moments: each training day standing up (a selection tick,
+        // at most six), the block's end landing (a light tick), then quiet.
         sequence?.cancel()
+        let ticks = min(6, weekDays.filter { $0.session != nil }.count)
         sequence = Task { @MainActor in
             let clock = ContinuousClock()
             let start = clock.now
@@ -1037,55 +869,264 @@ struct PlanRevealView: View {
                 if target > clock.now { try? await Task.sleep(until: target, clock: clock) }
                 return !Task.isCancelled
             }
-            guard await at(T + 0.45) else { return }
+            for k in 0..<ticks {
+                guard await at(Self.skylineBeatS + 0.12 + Double(k) * WeekSkyline.stagger * 1.25) else { return }
+                Haptics.selection()
+            }
+            guard await at(1.9 + 0.85) else { return }
             Haptics.light()
-            startPath()
-            guard await at(T + 0.45 + Self.roadPeakBeatS) else { return }
-            Haptics.light()
-            guard await at(T + 0.45 + Self.roadArrivalBeatS) else { return }
-            Haptics.success()
         }
     }
 
-    /// Seconds after `startPath` at which the runner crests the peak (a light tick) and lands at
-    /// the goal (the success press). The pen curve is not linear, so these are the moments the
-    /// haptics are tuned to feel, not a formula.
-    private static let roadPeakBeatS = 1.05
-    private static let roadArrivalBeatS = 1.75
-
-    private func startPath() {
-        guard pathReached, !pathStarted, !reduceMotion else { return }
-        pathStarted = true
-        withAnimation(.spring(response: 0.62, dampingFraction: 0.86)) { pathIn = 1 }
-        withAnimation(.easeInOut(duration: 1.1)) { artifactGlow = 1 }
-        withAnimation(Motion.pen(1.5).delay(0.25)) { curveIn = 1 }
-        withAnimation(.easeOut(duration: 0.72).delay(1.6)) { pathArrival = 1 }
-        withAnimation(.easeInOut(duration: 0.86).delay(2.0)) { curveGleam = 1 }
-        // The peak pill is a Bool, and a Bool cannot be delayed by the transaction: the callout's
-        // own `.animation(value:)` runs the moment the state flips. It flips when the runner
-        // crests the peak, from a clock, so the pill pops where the eye already is.
-        calloutTask?.cancel()
-        calloutTask = Task { @MainActor in
-            do { try await Task.sleep(for: .seconds(1.45)) } catch { return }
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { calloutIn = true }
-        }
-    }
-    @State private var calloutTask: Task<Void, Never>?
+    /// When the bars start standing up, once the card has been placed.
+    private static let skylineBeatS = 0.62
 
     /// Finish presentation on interruption or an accessibility change. Returning from checkout
-    /// never replays the overture or leaves delayed animation state over the readable plan.
+    /// never replays the arrival or leaves delayed animation state over the readable page.
     private func settleArrival() {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            shownWeeks = Double(planWeekCount); shownDays = Double(vm.daysPerWeek)
-            shownSessions = Double(totalSessions); curveIn = 1; calloutIn = true
-            nameSheen = 1; curveGleam = 1; tileSheen = 1; stripFill = 1; ctaSheen = 1
-            checkDraw = 1; chipsIn = 1; heroIn = 1; artifactIn = 1; statsIn = 1; ctaIn = 1
-            arrivalHalo = 1; artifactGlow = 1; pathArrival = 1; pathIn = 1
-            statsStarted = true; pathStarted = true
+            checkDraw = 1; cardIn = 1; skylineClock = 1
+            pillClock = 1; phaseClock = 1; tailIn = 1
+            stripFill = 1; chipsIn = 1
         }
+    }
+}
+
+// MARK: - The skyline
+
+/// The first week as seven bars: a training day stands as tall as its session is big, the long
+/// run tallest, a rest day a dot on the baseline. The bars stand up in the order the days come,
+/// each with a touch of overshoot, the sport's glyph rising to sit on top; the chosen bar wears
+/// lavender and breathes, slowly, because it is the one happening. Tap a bar to choose a day.
+/// Buttons, never gestures: the page underneath keeps scrolling.
+private struct WeekSkyline: View, Animatable {
+    struct Day {
+        let date: Date
+        let session: PlannedSession?
+        let load: Double   // 0…1 against the week's biggest run
+    }
+    let days: [Day]
+    var clock: Double
+    var selected: Int?
+    var breathing: Bool
+    var onSelect: (Int) -> Void
+    var animatableData: Double {
+        get { clock }
+        set { clock = newValue }
+    }
+
+    /// The clock runs 1.25 s; a training bar starts this fraction after the one before it.
+    static let stagger = 0.09
+
+    var body: some View {
+        GeometryReader { geo in
+            let barMax = geo.size.height - 44   // room for the glyph above and the letter below
+            HStack(alignment: .bottom, spacing: 0) {
+                ForEach(Array(days.enumerated()), id: \.offset) { index, day in
+                    Button { onSelect(index) } label: {
+                        column(day, index: index, barMax: barMax)
+                            .frame(maxWidth: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(accessibilityLabel(day))
+                    .accessibilityAddTraits(selected == index ? [.isSelected] : [])
+                }
+            }
+        }
+    }
+
+    /// Training bars stand up in order; rest dots are present by the time the first one lands.
+    private func progress(for index: Int) -> Double {
+        let ordinal = days.prefix(index).filter { $0.session != nil }.count
+        guard days[index].session != nil else { return min(1, max(0, clock / 0.2)) }
+        return min(1, max(0, (clock - 0.05 - Double(ordinal) * Self.stagger) / 0.42))
+    }
+
+    /// Ease-out-back: the bar overshoots its height a little and settles, an object placed
+    /// rather than a value reached.
+    private func settle(_ p: Double) -> Double {
+        let c1 = 1.25, c3 = c1 + 1
+        return 1 + c3 * pow(p - 1, 3) + c1 * pow(p - 1, 2)
+    }
+
+    private func column(_ day: Day, index: Int, barMax: CGFloat) -> some View {
+        let p = progress(for: index)
+        let chosen = selected == index
+        let height = day.session == nil ? 0 : max(14, barMax * day.load)
+        return VStack(spacing: 6) {
+            Spacer(minLength: 0)
+            if let session = day.session {
+                Image(systemName: symbol(session))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(chosen ? Theme.purple : Theme.ink)
+                    .opacity(min(1, max(0, (p - 0.55) / 0.3)))
+                    .offset(y: 4 * (1 - min(1, max(0, (p - 0.55) / 0.3))))
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(chosen ? Theme.purple : Theme.ink)
+                    .frame(width: 24, height: height)
+                    .scaleEffect(x: 1, y: max(0.001, settle(p)), anchor: .bottom)
+                    .opacity(p > 0.02 ? 1 : 0)
+                    // The chosen bar breathes: slow, small, the one thing on the page that is
+                    // alive once the arrival is over.
+                    .modifier(Breathing(on: chosen && breathing && p >= 1))
+            } else {
+                Circle().fill(Theme.ink.opacity(chosen ? 0.6 : 0.18))
+                    .frame(width: 5, height: 5)
+                    .padding(.bottom, 4)
+                    .scaleEffect(0.4 + 0.6 * p)
+                    .opacity(p)
+            }
+            Text(day.date.formatted(.dateTime.weekday(.narrow)))
+                .font(.rounded(11, weight: chosen ? .semibold : .medium))
+                .foregroundStyle(chosen ? Theme.ink : Theme.inkTertiary)
+                .frame(height: 14)
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: chosen)
+    }
+
+    private func symbol(_ session: PlannedSession) -> String {
+        if let type = session.workoutType { return type.systemImage }
+        switch session.discipline {
+        case .running: return "figure.run"
+        case .strength: return "dumbbell.fill"
+        case .cycling: return "bicycle"
+        case .walking: return "figure.walk"
+        default: return "figure.mixed.cardio"
+        }
+    }
+
+    private func accessibilityLabel(_ day: Day) -> String {
+        let weekday = day.date.formatted(.dateTime.weekday(.wide))
+        guard let session = day.session else { return "\(weekday), rest" }
+        let name = session.discipline == .running ? (session.runType?.planTitle ?? "Run")
+            : session.discipline == .strength ? "Strength" : session.discipline.rawValue.capitalized
+        return "\(weekday), \(name)"
+    }
+}
+
+/// A slow, small breath: opacity only, 3.2 s a cycle, never a size change. Nothing when off.
+private struct Breathing: ViewModifier {
+    let on: Bool
+    func body(content: Content) -> some View {
+        if on {
+            content.phaseAnimator([1.0, 0.78]) { view, phase in
+                view.opacity(phase)
+            } animation: { _ in .easeInOut(duration: 1.6) }
+        } else {
+            content
+        }
+    }
+}
+
+// MARK: - Placing the card
+
+/// The card comes down onto the canvas: a little perspective off its bottom edge, a rise, and
+/// the shadow arriving with it. A card that only fades in is a layer; one that is placed is an
+/// object.
+private struct CardPlacement: ViewModifier, Animatable {
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .rotation3DEffect(.degrees(12 * (1 - progress)), axis: (x: 1, y: 0, z: 0),
+                              anchor: .bottom, perspective: 0.7)
+            .scaleEffect(0.95 + 0.05 * progress, anchor: .bottom)
+            .offset(y: 28 * (1 - progress))
+            .opacity(progress)
+    }
+}
+
+// MARK: - The block bar
+
+/// The block as one bar: a segment per week in the phase's shade of ink, filling left to right
+/// off one clock, and the block's end as a small ink disc wearing what it ends in.
+private struct PhaseBar: View, Animatable {
+    enum End { case race, checkpoint }
+    let phases: [PlanPhase]
+    let end: End
+    var clock: Double
+    var animatableData: Double {
+        get { clock }
+        set { clock = newValue }
+    }
+
+    private func shade(_ phase: PlanPhase) -> Double {
+        switch phase {
+        case .base: 0.28
+        case .build: 0.55
+        case .peak: 0.9
+        case .recovery: 0.16
+        case .taper: 0.4
+        }
+    }
+
+    var body: some View {
+        let count = max(1, phases.count)
+        HStack(spacing: 8) {
+            HStack(spacing: 3) {
+                ForEach(Array(phases.enumerated()), id: \.offset) { i, phase in
+                    let lit = min(1, max(0, (clock * Double(count + 1) - Double(i)) / 1.2))
+                    Capsule()
+                        .fill(Theme.ink.opacity(shade(phase)))
+                        .frame(height: 8)
+                        .scaleEffect(x: max(0.001, lit), anchor: .leading)
+                        .opacity(lit)
+                }
+            }
+            let endLit = min(1, max(0, (clock - 0.8) / 0.2))
+            ZStack {
+                Circle().fill(Theme.ink)
+                Image(systemName: end == .race ? "flag.checkered" : "stopwatch")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 20, height: 20)
+            .scaleEffect(0.5 + 0.5 * endLit)
+            .opacity(endLit)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Following the hand
+
+/// The card tilts with the device, the way a pass does in Wallet: attitude deltas from the
+/// moment the page appears, clamped to a few degrees and smoothed. Nothing on the simulator, and
+/// nothing under Reduce Motion (the view never reads it then).
+@Observable
+private final class MotionTilt {
+    private(set) var pitch = 0.0
+    private(set) var roll = 0.0
+    @ObservationIgnored private let manager = CMMotionManager()
+    @ObservationIgnored private var reference: (pitch: Double, roll: Double)?
+
+    func start() {
+        guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
+        manager.deviceMotionUpdateInterval = 1.0 / 30.0
+        manager.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
+            guard let self, let attitude = motion?.attitude else { return }
+            if reference == nil { reference = (attitude.pitch, attitude.roll) }
+            guard let reference else { return }
+            let targetPitch = max(-6, min(6, (attitude.pitch - reference.pitch) * 18))
+            let targetRoll = max(-6, min(6, (attitude.roll - reference.roll) * 18))
+            withAnimation(.easeOut(duration: 0.12)) {
+                self.pitch = targetPitch
+                self.roll = targetRoll
+            }
+        }
+    }
+
+    func stop() {
+        manager.stopDeviceMotionUpdates()
+        reference = nil
+        pitch = 0; roll = 0
     }
 }
 
@@ -1108,502 +1149,6 @@ private struct Clocked<Content: View>: View, Animatable {
     var body: some View { content(t) }
 }
 
-/// A narrow specular band travelling left to right, for masking onto whatever should catch the
-/// light. `progress` runs 0…1 and the band starts and ends fully off the view, so both ends of the
-/// animation are a clean no-op — nothing to fade in or out. With an `index`, the band reads its
-/// own slice of a shared clock: one light crossing a row of tiles, each a beat behind the last.
-///
-/// `plusLighter` rather than a white fill: on the raised tiles it reads as light moving across a
-/// surface, and on the name it brightens the gradient instead of painting over it.
-private struct SheenBand: View, Animatable {
-    var clock: Double
-    var index: Int? = nil
-    var strength = 0.9
-
-    var animatableData: Double {
-        get { clock }
-        set { clock = newValue }
-    }
-
-    private var progress: Double {
-        guard let index else { return clock }
-        return min(1, max(0, (clock - Double(index) * 0.11) / 0.62))
-    }
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = max(geo.size.width, 1)
-            let band = max(56, w * 0.32)
-            LinearGradient(colors: [.white.opacity(0), .white.opacity(strength), .white.opacity(0)],
-                           startPoint: .leading, endPoint: .trailing)
-                .frame(width: band)
-                .offset(x: -band + (w + band * 2) * progress)
-                .blendMode(.plusLighter)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-// MARK: - The tiles standing up
-
-/// A stat tile is dealt onto the page: it stands up from lying almost flat (a perspective tilt
-/// about its top edge), rising and brightening as it does. A card that only fades in is a layer;
-/// one that stands up is an object being placed.
-private struct TileDeal: ViewModifier, Animatable {
-    var clock: Double
-    let index: Int
-    var animatableData: Double {
-        get { clock }
-        set { clock = newValue }
-    }
-
-    /// The tiles are dealt one after another off one clock; each eases into its rest on its own
-    /// slice of it.
-    private var progress: Double {
-        let p = min(1, max(0, (clock - Double(index) * 0.13) / 0.58))
-        return 1 - pow(1 - p, 3)
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .rotation3DEffect(.degrees(-28 * (1 - progress)), axis: (x: 1, y: 0, z: 0),
-                              anchor: .top, perspective: 0.7)
-            .offset(y: 18 * (1 - progress))
-            .opacity(progress)
-    }
-}
-
-// MARK: - Arrival halo
-
-/// Three quiet rings spend themselves behind the ready seal. This is the reveal's opening breath:
-/// a one-shot expansion, never a loop, and fully gone at rest so the final page stays precise.
-private struct PlanArrivalHalo: View, Animatable {
-    var progress: Double
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    var body: some View {
-        ZStack {
-            ring(start: 0.00, span: 0.62, lineWidth: 1.2)
-            ring(start: 0.16, span: 0.68, lineWidth: 0.9)
-            ring(start: 0.34, span: 0.66, lineWidth: 0.7)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-
-    private func ring(start: Double, span: Double, lineWidth: CGFloat) -> some View {
-        let p = min(1, max(0, (progress - start) / max(span, 0.001)))
-        let alpha = sin(p * .pi)
-        return Capsule()
-            .strokeBorder(
-                AngularGradient(colors: [Theme.iridescentDeep[1], Theme.purple,
-                                         Theme.iridescentDeep[2], Theme.iridescentDeep[0],
-                                         Theme.iridescentDeep[1]], center: .center),
-                lineWidth: lineWidth
-            )
-            .scaleEffect(0.48 + p * 0.76)
-            .opacity(alpha * 0.46)
-    }
-}
-
-
-// MARK: - The ascent curve
-
-/// The block's weekly volume as terrain. A smooth line over an aurora fill, with a runner glyph
-/// that RUNS it as it draws — leaning into the climbs, a comet tail behind it, each week's
-/// gridline lighting as it is passed and settling faint again, the peak flaring once, the race
-/// week flagged, the goal beacon landing as the runner arrives. Every moving part is a path
-/// transform (`trim`) or a transform on a placed view; the geometry is computed once per layout.
-///
-/// Reduce Motion, and the settled page: the finished terrain, the beacon, the pill — no runner,
-/// no tail, no light. The final frame has to be a chart you can read.
-private struct AscentCurve: View, Animatable {
-    let values: [Double]
-    let peakIndex: Int
-    let raceWeek: Int?
-    /// What the peak IS, for its callout: "13.5 mi" or "5 sessions".
-    let peakLabel: String
-    /// Every week's value, for the marker a thumb drags along the road.
-    var weekLabels: [String] = []
-    let destinationLabel: String
-    let destinationSystemImage: String
-    var progress: Double
-    let calloutIn: Bool
-    var arrival: Double
-    /// A highlight travelling the finished stroke, 0…1 once. Runs AFTER the runner: a line that
-    /// is still being run is already the interesting thing on screen, and two lights on one path
-    /// read as a glitch rather than as craft.
-    var gleam: Double = 1
-    /// The week under the athlete's thumb, nil when nobody is touching the road.
-    var scrub: Int? = nil
-
-    /// The run, the arrival and the gleam all interpolate, so the runner's position, the wake and
-    /// the flare are read off the line per frame rather than jumping to their end state.
-    var animatableData: AnimatablePair<Double, AnimatablePair<Double, Double>> {
-        get { AnimatablePair(progress, AnimatablePair(arrival, gleam)) }
-        set { progress = newValue.first; arrival = newValue.second.first; gleam = newValue.second.second }
-    }
-    private let inset: CGFloat = 8
-    private let top: CGFloat = 40      // room for the destination pill and the peak callout
-    private let axis: CGFloat = 22     // room for week labels
-
-    var body: some View {
-        GeometryReader { geo in
-            let w = geo.size.width, h = geo.size.height
-            let pts = points(in: CGSize(width: w, height: h))
-            let curve = smoothPath(pts)
-            let n = values.count
-            let destinationIndex = min(max((raceWeek ?? n) - 1, 0), n - 1)
-            let stroke = LinearGradient(colors: [Theme.iridescent[1], Theme.purple, Theme.iridescent[0]],
-                                        startPoint: .leading, endPoint: .trailing)
-            ZStack(alignment: .topLeading) {
-                // Week gridlines. Each one lights as the runner passes and settles back to a
-                // whisper — the wake of the run, rather than a grid that was always there.
-                ForEach(0..<n, id: \.self) { i in
-                    let wake = wakeAt(index: i, count: n)
-                    Rectangle()
-                        .fill(Theme.purple.opacity(0.05 + 0.34 * wake))
-                        .frame(width: 1)
-                        .frame(height: h - axis - top, alignment: .top)
-                        .offset(x: pts[i].x, y: top)
-                }
-                // Fill under the curve, revealed with the runner. The mask is a TRANSFORM, not a
-                // width: `Rectangle().frame(width: w * progress)` inside a mask is a layout change,
-                // and it was not clipping at all — the whole fill stood there complete while the
-                // line was still being drawn (caught on video, 2026-08-28). Scaling from the
-                // leading edge is also the rule this project holds itself to.
-                fillPath(curve, base: h - axis, last: pts.last!, first: pts.first!)
-                    .fill(LinearGradient(stops: [
-                        .init(color: Theme.purple.opacity(0.30), location: 0),
-                        .init(color: Theme.iridescent[1].opacity(0.16), location: 0.55),
-                        .init(color: Theme.iridescent[1].opacity(0.0), location: 1),
-                    ], startPoint: .top, endPoint: .bottom))
-                    .mask(alignment: .leading) {
-                        Rectangle().scaleEffect(x: max(0.0001, progress), y: 1, anchor: .leading)
-                    }
-                // The peak flares once, as the runner crests it: a soft pool of light that blooms
-                // and is spent, so the highest week is felt as a moment and not marked as a spot.
-                let flare = max(0, sin(min(1, max(0, (progress - peakThreshold + 0.02) / 0.22)) * .pi))
-                Circle()
-                    .fill(RadialGradient(colors: [Theme.purple.opacity(0.42), Theme.iridescent[1].opacity(0.16), .clear],
-                                         center: .center, startRadius: 0, endRadius: 40))
-                    .frame(width: 80, height: 80)
-                    .scaleEffect(0.6 + 0.6 * flare)
-                    .opacity(flare)
-                    .position(pts[peakIndex])
-                    .blendMode(.plusLighter)
-                // The line itself.
-                curve.trim(from: 0, to: progress)
-                    .stroke(stroke, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
-                    .shadow(color: Theme.purple.opacity(0.35), radius: 6, y: 3)
-                // The comet tail: the last stretch of the line the runner has just covered, lit
-                // and softened, so the run has a wake. Gone the moment the runner arrives.
-                if progress > 0.01, progress < 1 {
-                    curve.trim(from: max(0, progress - 0.11), to: progress)
-                        .stroke(LinearGradient(colors: [.white.opacity(0), .white.opacity(0.95)],
-                                               startPoint: .leading, endPoint: .trailing),
-                                style: StrokeStyle(lineWidth: 5, lineCap: .round))
-                        .blur(radius: 2.2)
-                        .blendMode(.plusLighter)
-                }
-                // The gleam: a short segment of the SAME path, lit. Travels past 1 so it leaves
-                // the line cleanly at the end instead of pooling at the last point.
-                if progress >= 1, gleam > 0, gleam < 1 {
-                    curve.trim(from: max(0, gleam * 1.16 - 0.14), to: min(1, gleam * 1.16))
-                        .stroke(Color.white.opacity(0.92),
-                                style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
-                        .blendMode(.plusLighter)
-                        .allowsHitTesting(false)
-                }
-                // The runner. Leans into the slope it is on, and hands over to the beacon on
-                // arrival rather than standing on top of it.
-                if progress > 0.005, arrival < 1 {
-                    let track = CurveTrack(controlPoints: pts)
-                    let here = track.point(at: progress)
-                    let lean = leanAngle(tangent: track.tangent(at: progress))
-                    AscentRunner(lean: lean)
-                        .position(here)
-                        .opacity(1 - min(1, arrival * 1.6))
-                        .scaleEffect(1 - 0.3 * min(1, arrival * 1.6))
-                }
-                // Three quiet beats make the data read as a journey instead of a chart. They are
-                // pinned to the real path and appear only when the run reaches them.
-                pathBeat("START", point: pts[0], visible: pathVisibility(at: 0, count: n),
-                         width: w, chartHeight: h)
-                if peakIndex > 0, peakIndex < destinationIndex, scrub == nil {
-                    peakCallout(point: pts[peakIndex], destination: pts[destinationIndex], width: w)
-                }
-                let destination = pts[destinationIndex]
-                PlanGoalBeacon(progress: arrival, systemImage: destinationSystemImage)
-                    .position(destination)
-                goalPill(width: w, point: destination).opacity(scrub == nil ? 1 : 0)
-                // The scrub: a lavender marker standing on the week under the thumb, with the
-                // week's own figure above it. Ink and lavender only, the road's own materials.
-                if let i = scrub, i >= 0, i < n {
-                    Rectangle().fill(Theme.purple.opacity(0.45)).frame(width: 1.5)
-                        .frame(height: h - axis - top, alignment: .top)
-                        .offset(x: pts[i].x - 0.75, y: top)
-                    Circle().fill(Theme.purple).frame(width: 12, height: 12)
-                        .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                        .shadow(color: Theme.purple.opacity(0.45), radius: 6)
-                        .position(pts[i])
-                    if i < weekLabels.count {
-                        let halfWidth = min(64.0, max(36.0, Double(weekLabels[i].count) * 3.6 + 26))
-                        HStack(spacing: 4) {
-                            Text("WK \(i + 1)").font(.rounded(8, weight: .black)).tracking(0.8)
-                                .foregroundStyle(Theme.purpleDeep)
-                            Text(weekLabels[i]).font(.rounded(10, weight: .bold)).monospacedDigit()
-                                .foregroundStyle(Theme.ink)
-                        }
-                        .padding(.horizontal, 8).padding(.vertical, 5)
-                        .raised(Capsule())
-                        .fixedSize()
-                        .position(x: min(max(pts[i].x, CGFloat(halfWidth)), w - CGFloat(halfWidth)),
-                                  y: max(14, pts[i].y - 26))
-                    }
-                }
-                // Week labels: first, peak, last, plus sparse ticks — each rising in as the runner
-                // passes its week.
-                ForEach(0..<n, id: \.self) { i in
-                    let tickEvery = n <= 8 ? 1 : (n <= 12 ? 2 : 4)
-                    if i == 0 || i == n - 1 || i == peakIndex || i.isMultiple(of: tickEvery) {
-                        let vis = pathVisibility(at: i, count: n)
-                        Text(i == 0 ? "Wk 1" : "\(i + 1)")
-                            .font(.rounded(11, weight: .semibold)).monospacedDigit()
-                            .foregroundStyle(i == peakIndex ? Theme.ink : Theme.inkTertiary)
-                            .opacity(vis)
-                            .offset(y: 5 * (1 - vis))
-                            .position(x: pts[i].x, y: h - 8)
-                    }
-                }
-            }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func points(in size: CGSize) -> [CGPoint] {
-        let n = max(2, values.count)
-        let maxV = max(values.max() ?? 1, 0.0001)
-        let usableW = size.width - inset * 2
-        let usableH = size.height - axis - top
-        return values.enumerated().map { i, v in
-            CGPoint(x: inset + usableW * CGFloat(i) / CGFloat(n - 1),
-                    y: top + usableH * (1 - CGFloat(v / maxV)))
-        }
-    }
-
-    /// Where along the run (0…1) the peak week sits.
-    private var peakThreshold: Double {
-        Double(peakIndex) / Double(max(values.count - 1, 1))
-    }
-
-    /// How lit week `index`'s gridline is right now: a bell around the moment the runner passes
-    /// it, so the light arrives with the runner and fades behind. At rest every line is faint.
-    private func wakeAt(index: Int, count: Int) -> Double {
-        guard progress < 1 else { return 0 }
-        let threshold = Double(index) / Double(max(count - 1, 1))
-        let d = (progress - threshold) / 0.09
-        guard d > -1, d < 1.6 else { return 0 }
-        return max(0, d < 0 ? 1 + d : 1 - d / 1.6)
-    }
-
-    /// The runner's lean, from the local slope: uphill leans forward, downhill eases back. Screen
-    /// y grows downward, so a climb is a negative dy. Clamped so a steep first week never tips the
-    /// glyph over.
-    private func leanAngle(tangent: CGVector) -> Double {
-        guard tangent.dx > 0.001 else { return 0 }
-        let slope = atan2(Double(tangent.dy), Double(tangent.dx)) * 180 / .pi     // negative = climbing
-        return max(-18, min(12, slope * 0.55))
-    }
-
-    /// A path beat comes alive as the run reaches its week. Its final frame is only a dot and a
-    /// whisper of type; no animated clock survives the entrance.
-    private func pathBeat(_ title: String, point: CGPoint, visible: Double,
-                          width: CGFloat, chartHeight: CGFloat) -> some View {
-        HStack(spacing: 4) {
-            Circle().fill(Theme.purple).frame(width: 4, height: 4)
-            Text(title)
-                .font(.rounded(9, weight: .bold))
-                .tracking(0.9)
-                .foregroundStyle(Theme.inkTertiary)
-        }
-        .fixedSize()
-        .position(x: min(max(point.x, 26), width - 26),
-                  y: min(chartHeight - axis - 11, point.y + 20))
-        .opacity(visible)
-        .scaleEffect(0.86 + 0.14 * visible)
-    }
-
-    /// The peak's callout: a small raised pill above the highest week, popping in once the
-    /// runner has crested it. It says what the peak IS, not just that it is one.
-    private func peakCallout(point: CGPoint, destination: CGPoint, width: CGFloat) -> some View {
-        let show = calloutIn ? 1.0 : 0.0
-        let halfWidth = min(70.0, max(38.0, Double(peakLabel.count) * 3.6 + 22))
-        let goalHalfWidth = min(92.0, max(49.0, Double(destinationLabel.count) * 3.7 + 22))
-        let x = min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth))
-        let goalX = min(max(destination.x, CGFloat(goalHalfWidth)), width - CGFloat(goalHalfWidth))
-        let y = max(14, point.y - 24)
-        let goalY = max(14, destination.y - 27)
-        let overlaps = abs(x - goalX) < CGFloat(halfWidth + goalHalfWidth + 6) && abs(y - goalY) < 30
-
-        return HStack(spacing: 4) {
-            Text("PEAK")
-                .font(.rounded(8, weight: .black)).tracking(0.8)
-                .foregroundStyle(Theme.purpleDeep)
-            Text(peakLabel)
-                .font(.rounded(10, weight: .bold)).monospacedDigit()
-                .foregroundStyle(Theme.ink)
-        }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .raised(Capsule())
-        .fixedSize()
-        .position(x: x, y: overlaps ? goalY + 38 : y)
-        .opacity(show)
-        .scaleEffect(0.78 + 0.22 * show, anchor: .bottom)
-        .animation(.spring(response: 0.5, dampingFraction: 0.72), value: calloutIn)
-    }
-
-    private func pathVisibility(at index: Int, count: Int) -> Double {
-        let threshold = Double(index) / Double(max(count - 1, 1))
-        return min(1, max(0, (progress - threshold + 0.035) / 0.14))
-    }
-
-    private func goalPill(width: CGFloat, point: CGPoint) -> some View {
-        let reveal = calloutIn ? min(1, max(0, arrival * 1.7)) : 0
-        let halfWidth = min(92.0, max(49.0, Double(destinationLabel.count) * 3.7 + 22))
-        return HStack(spacing: 5) {
-            Text(destinationLabel.uppercased())
-                .font(.rounded(10, weight: .bold))
-                .tracking(0.65)
-                .lineLimit(1)
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .background(Capsule().fill(Color(hex: "1C1C1E")))
-        .fixedSize()
-        .position(x: min(max(point.x, CGFloat(halfWidth)), width - CGFloat(halfWidth)),
-                  y: max(14, point.y - 27))
-        .opacity(reveal)
-        .scaleEffect(0.80 + 0.20 * reveal, anchor: .bottom)
-    }
-
-    /// Catmull-Rom through the points, so the build reads as one continuous line.
-    private func smoothPath(_ pts: [CGPoint]) -> Path {
-        var path = Path()
-        guard pts.count > 1 else { return path }
-        path.move(to: pts[0])
-        for i in 0..<(pts.count - 1) {
-            let p0 = pts[max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[min(i + 2, pts.count - 1)]
-            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
-            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
-            path.addCurve(to: p2, control1: c1, control2: c2)
-        }
-        return path
-    }
-
-    private func fillPath(_ curve: Path, base: CGFloat, last: CGPoint, first: CGPoint) -> Path {
-        var p = curve
-        p.addLine(to: CGPoint(x: last.x, y: base))
-        p.addLine(to: CGPoint(x: first.x, y: base))
-        p.closeSubpath()
-        return p
-    }
-
-}
-
-/// The curve as a run: the same Catmull-Rom segments the stroke draws, flattened once into an
-/// arc-length table so a position can be read at any FRACTION OF THE LINE'S LENGTH — the same
-/// quantity `trim` uses — and the runner sits exactly on the pen's tip. (`Path.trimmedPath`'s
-/// `currentPoint` reports the path's END, not the trim point, which left the runner parked at the
-/// destination for the whole draw.)
-private struct CurveTrack {
-    private var samples: [CGPoint] = []
-    private var cumulative: [CGFloat] = []
-
-    init(controlPoints pts: [CGPoint], stepsPerSegment: Int = 24) {
-        guard pts.count > 1 else { return }
-        samples.reserveCapacity((pts.count - 1) * stepsPerSegment + 1)
-        samples.append(pts[0])
-        for i in 0..<(pts.count - 1) {
-            let p0 = pts[max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[min(i + 2, pts.count - 1)]
-            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
-            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
-            for s in 1...stepsPerSegment {
-                let t = CGFloat(s) / CGFloat(stepsPerSegment), u = 1 - t
-                let x = u*u*u*p1.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*p2.x
-                let y = u*u*u*p1.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*p2.y
-                samples.append(CGPoint(x: x, y: y))
-            }
-        }
-        cumulative.reserveCapacity(samples.count)
-        var total: CGFloat = 0
-        cumulative.append(0)
-        for i in 1..<samples.count {
-            total += hypot(samples[i].x - samples[i - 1].x, samples[i].y - samples[i - 1].y)
-            cumulative.append(total)
-        }
-    }
-
-    /// The index of the last sample at or before `fraction` of the total length, and how far
-    /// into the following span that fraction falls.
-    private func locate(_ fraction: Double) -> (Int, CGFloat) {
-        guard samples.count > 1, let total = cumulative.last, total > 0 else { return (0, 0) }
-        let target = total * CGFloat(min(1, max(0, fraction)))
-        var lo = 0, hi = cumulative.count - 1
-        while lo < hi - 1 {
-            let mid = (lo + hi) / 2
-            if cumulative[mid] <= target { lo = mid } else { hi = mid }
-        }
-        let span = cumulative[hi] - cumulative[lo]
-        return (lo, span > 0 ? (target - cumulative[lo]) / span : 0)
-    }
-
-    func point(at fraction: Double) -> CGPoint {
-        guard samples.count > 1 else { return samples.first ?? .zero }
-        let (i, f) = locate(fraction)
-        let a = samples[i], b = samples[min(i + 1, samples.count - 1)]
-        return CGPoint(x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f)
-    }
-
-    func tangent(at fraction: Double) -> CGVector {
-        guard samples.count > 1 else { return CGVector(dx: 1, dy: 0) }
-        let (i, _) = locate(fraction)
-        let a = samples[max(0, i - 1)], b = samples[min(i + 2, samples.count - 1)]
-        return CGVector(dx: b.x - a.x, dy: b.y - a.y)
-    }
-}
-
-/// The runner on the terrain: a small white disc with a lavender rim and a soft pool of light
-/// beneath it, the running figure inside, leaning with the slope. It is the pen of this chart —
-/// so it is drawn as the thing the plan is for, not as a dot.
-private struct AscentRunner: View {
-    let lean: Double
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(RadialGradient(colors: [Theme.purple.opacity(0.55), .clear],
-                                     center: .center, startRadius: 0, endRadius: 22))
-                .frame(width: 44, height: 44)
-                .blendMode(.plusLighter)
-            Circle()
-                .fill(.white)
-                .frame(width: 24, height: 24)
-                .overlay(Circle().strokeBorder(Theme.purple, lineWidth: 2.2))
-                .shadow(color: Theme.purple.opacity(0.35), radius: 5, y: 2)
-            Image(systemName: "figure.run")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.purpleDeep)
-                .rotationEffect(.degrees(lean))
-        }
-        .frame(width: 44, height: 44)
-        .accessibilityHidden(true)
-    }
-}
-
 // MARK: - Seven-day strip
 
 /// Mon…Sun as dots — lavender for a run, ink for a lift, sky for anything else, hollow for rest —
@@ -1621,17 +1166,21 @@ private struct WeekStrip: View, Animatable {
     /// noise, not craft.
     var fill: Double = 1
 
+    /// The plan's weeks are seven-day buckets from its first day, not calendar weeks, so the
+    /// strip starts on that weekday too (the same anchor as the week board above it). A Mon-first
+    /// strip under a block that starts on Sunday put the opening run on the last dot.
+    var anchor: Date? = nil
+
     private var days: [(letter: String, sessions: [PlannedSession])] {
         let cal = Calendar.current
-        let letters = ["M", "T", "W", "T", "F", "S", "S"]
-        // ISO week: Monday first.
+        let letters = ["S", "M", "T", "W", "T", "F", "S"]   // index = weekday - 1, Sunday first
+        let first = (cal.component(.weekday, from: anchor ?? sessions.map(\.date).min() ?? Date()) - 1)
         var buckets = Array(repeating: [PlannedSession](), count: 7)
         for s in sessions {
-            let wd = cal.component(.weekday, from: s.date)   // 1 = Sunday
-            let idx = (wd + 5) % 7
-            buckets[idx].append(s)
+            let wd = cal.component(.weekday, from: s.date) - 1
+            buckets[(wd - first + 7) % 7].append(s)
         }
-        return (0..<7).map { (letters[$0], buckets[$0]) }
+        return (0..<7).map { (letters[(first + $0) % 7], buckets[$0]) }
     }
 
     var body: some View {
@@ -1809,198 +1358,6 @@ private struct PlanSessionCard: View {
             return Formatters.distance(meters: dist, unit: distanceUnit)
         }
         return session.discipline.rawValue.capitalized
-    }
-}
-
-// MARK: - Tile ghosts
-
-/// The quiet texture under a stat tile's number: a small, TRUE drawing of the thing the number
-/// counts. Six weeks are six ticks at the block's real heights, four days a week are the athlete's
-/// four actual weekdays, twenty-four sessions are twenty-four marks.
-///
-/// The paywall's grammar is that every tile is an illustration of its own subject, and this is that
-/// idea kept honest: a number with a picture of itself underneath reads as considered, a number
-/// with decoration underneath reads as filler. Held at a whisper (ink at 0.06–0.13) so it is
-/// texture the eye finds on the second look, never a second chart competing with the first.
-private struct RevealTileGhost: View, Animatable {
-    enum Kind {
-        case weeks([Double])        // the block's real weekly volumes
-        case days(Set<Int>)         // 0 = Monday
-        case sessions(Int)
-    }
-
-    let kind: Kind
-    /// The row's shared light clock; the tile's slice of it is derived below, per frame.
-    var clock: Double
-    let index: Int
-    /// Run the loop. False = hold the still frame: off screen, or Reduce Motion.
-    var alive: Bool = true
-
-    var animatableData: Double {
-        get { clock }
-        set { clock = newValue }
-    }
-
-    /// 0…1, left to right, sharing the tile's own light so the drawing arrives with it.
-    private var draw: Double { min(1, max(0, (clock - Double(index) * 0.11) / 0.62)) }
-
-    @ReducedMotionPreference private var reduceMotion
-
-    /// Each tile keeps its own clock, and the three periods share no common factor. On matched
-    /// clocks the row pulses in unison and reads as one metronome — three drifting loops read as
-    /// three things quietly doing their own work, which is what the paywall's marquee gets right.
-    private var period: Double {
-        switch kind {
-        case .weeks: 4.4
-        case .days: 3.7
-        case .sessions: 5.3
-        }
-    }
-
-    var body: some View {
-        if alive && !reduceMotion {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { ctx in
-                let t = ctx.date.timeIntervalSinceReferenceDate
-                marks(wave: (t.truncatingRemainder(dividingBy: period)) / period)
-            }
-        } else {
-            marks(wave: nil)
-        }
-    }
-
-    @ViewBuilder
-    private func marks(wave: Double?) -> some View {
-        switch kind {
-        case .weeks(let values): weeks(values, wave)
-        case .days(let set): days(set, wave)
-        case .sessions(let n): sessions(n, wave)
-        }
-    }
-
-    /// How much the mark at `i` of `n` is lifted by the passing wave, 0…1.
-    ///
-    /// The head travels 0→1 over the period and the lift falls off either side of it, so what the
-    /// eye sees is one soft crest walking the row rather than marks blinking on and off. The head
-    /// runs slightly past 1 before wrapping so the crest leaves the row cleanly instead of
-    /// reappearing on top of itself.
-    private func lift(_ i: Int, _ n: Int, _ wave: Double?) -> Double {
-        guard let wave, n > 0 else { return 0 }
-        let head = wave * 1.22 - 0.11
-        let d = abs(head - Double(i) / Double(max(n - 1, 1)))
-        return max(0, 1 - pow(d / 0.22, 2))
-    }
-
-    /// Arrival fraction for mark `i` — the row draws itself in the same direction the tile's light
-    /// travels, then the loop takes over.
-    private func lit(_ i: Int, _ n: Int) -> Double {
-        min(1, max(0, (draw * 1.25 - Double(i) / Double(max(n, 1))) * 4))
-    }
-
-    /// Six ticks at the block's real weekly heights. The crest walks them in order, so the loop is
-    /// literally the block being worked through a week at a time — and the peak week keeps its own
-    /// standing emphasis whether the crest is on it or not, because the peak is a fact about the
-    /// plan rather than a moment in the animation.
-    private func weeks(_ values: [Double], _ wave: Double?) -> some View {
-        let maxV = max(values.max() ?? 1, 0.0001)
-        let peak = values.firstIndex(of: values.max() ?? 0) ?? 0
-        return GeometryReader { geo in
-            let h = geo.size.height
-            HStack(alignment: .bottom, spacing: 3) {
-                ForEach(Array(values.enumerated()), id: \.offset) { i, v in
-                    // Lavender, not grey. The curve above and the ladder below already speak in
-                    // `Theme.purple`; a tile art in ink read as a smudge under the label instead of
-                    // as the same plan drawn a third way.
-                    let base = i == peak ? 0.62 : 0.26
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(Theme.purple.opacity(base + 0.34 * lift(i, values.count, wave)))
-                        .frame(height: max(3, h * (0.30 + 0.70 * v / maxV)))
-                        .scaleEffect(y: lit(i, values.count), anchor: .bottom)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        }
-    }
-
-    /// Seven days, the athlete's own training days filled. The crest walks Monday to Sunday, so the
-    /// loop is a week going by — and it lifts ONLY the days they actually train, which is what
-    /// makes it read as their week rather than as a light show.
-    private func days(_ set: Set<Int>, _ wave: Double?) -> some View {
-        HStack(spacing: 4) {
-            ForEach(0..<7, id: \.self) { i in
-                let trains = set.contains(i)
-                let l = trains ? lift(i, 7, wave) : 0
-                Circle()
-                    .fill(trains ? Theme.purple.opacity(0.42 + 0.45 * l)
-                                 : Theme.ink.opacity(0.08))
-                    .frame(height: 5.5)
-                    .scaleEffect(lit(i, 7) * (1 + 0.28 * l))
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-    }
-
-    /// Two rows, so twenty-odd marks stay legible at tile width. Capped at 30: past that the marks
-    /// stop being countable and become a smear, and an uncountable count is worse than none.
-    /// The crest sweeps both rows as one sequence — session 1 through session 24, in order.
-    private func sessions(_ n: Int, _ wave: Double?) -> some View {
-        let shown = min(n, 30)
-        let perRow = Int(ceil(Double(shown) / 2))
-        return VStack(spacing: 2.5) {
-            ForEach(0..<2, id: \.self) { row in
-                HStack(spacing: 2.5) {
-                    ForEach(0..<perRow, id: \.self) { col in
-                        let i = row * perRow + col
-                        Circle()
-                            .fill(i < shown ? Theme.purple.opacity(0.30 + 0.42 * lift(i, shown, wave))
-                                            : .clear)
-                            .frame(height: 3.8)
-                            .scaleEffect(lit(i, shown))
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-    }
-}
-
-/// The destination lands once and then becomes a perfectly still map pin. Its halo is bell-shaped:
-/// invisible before the arrival, brightest during it, and fully spent at rest. That gives the
-/// reveal one earned focal moment without leaving a pulsing ornament running over the final page.
-private struct PlanGoalBeacon: View, Animatable {
-    var progress: Double
-    let systemImage: String
-    var animatableData: Double {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    private var p: Double { min(1, max(0, progress)) }
-    private var pulse: Double { max(0, sin(p * .pi)) }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .strokeBorder(
-                    AngularGradient(colors: [Theme.iridescentDeep[1], Theme.purple,
-                                             Theme.iridescentDeep[2], Theme.iridescentDeep[0],
-                                             Theme.iridescentDeep[1]], center: .center),
-                    lineWidth: 1.6
-                )
-                .frame(width: 18 + 28 * p, height: 18 + 28 * p)
-                .opacity(pulse * 0.78)
-            Circle()
-                .fill(Theme.surface)
-                .frame(width: 27, height: 27)
-                .overlay(Circle().strokeBorder(Theme.purple, lineWidth: 2.5))
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(Theme.purpleDeep)
-        }
-        .frame(width: 48, height: 48)
-        .scaleEffect(0.72 + 0.28 * p)
-        .opacity(p)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 }
 

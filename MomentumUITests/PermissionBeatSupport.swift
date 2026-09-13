@@ -20,17 +20,23 @@ extension XCTestCase {
         let healthApp = XCUIApplication(bundleIdentifier: "com.apple.HealthPrivacyService")
         XCTAssertTrue(app.staticTexts["Train around your recovery"].waitForExistence(timeout: 15),
                       "the Health beat follows the review")
+        // The page raises the sheet ITSELF on arrival (owner call 2026-09-13); Continue is the
+        // fallback when iOS had nothing left to ask. Wait for the sheet first and tap Continue
+        // only if none has come up.
         let next = app.buttons["Continue"].firstMatch
-        XCTAssertTrue(next.waitForExistence(timeout: 5) && next.isHittable)
-        next.tap()
         let location = app.staticTexts["Map your runs"]
-        let deadline = Date().addingTimeInterval(timeout)
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeout)
         var categoriesEnabled = false
+        var tappedContinue = false
         while Date() < deadline, !location.exists {
             // Querying an absent cross-process element is the slow case; touch the Health
             // process only while it is in front.
             if healthApp.state == .runningForeground {
                 grantHealthSheet(healthApp, categoriesEnabled: &categoriesEnabled)
+            } else if !tappedContinue, Date().timeIntervalSince(started) > 3, next.exists, next.isHittable {
+                next.tap()
+                tappedContinue = true
             }
             usleep(300_000)
         }
@@ -41,16 +47,20 @@ extension XCTestCase {
     func crossLocationBeat(_ app: XCUIApplication, timeout: TimeInterval = 20) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 15))
+        // The page raises the alert ITSELF on arrival; Continue is the fallback.
         let next = app.buttons["Continue"].firstMatch
-        XCTAssertTrue(next.waitForExistence(timeout: 5) && next.isHittable)
-        next.tap()
-        let deadline = Date().addingTimeInterval(timeout)
+        let started = Date()
+        let deadline = started.addingTimeInterval(timeout)
+        var tappedContinue = false
         while Date() < deadline {
             if springboard.alerts.firstMatch.exists {
                 for label in ["Allow While Using App", "Allow Once", "Allow", "OK"] {
                     let allow = springboard.buttons[label]
                     if allow.exists && allow.isHittable { allow.tap(); return }
                 }
+            } else if !tappedContinue, Date().timeIntervalSince(started) > 3, next.exists, next.isHittable {
+                next.tap()
+                tappedContinue = true
             }
             // No alert: the simulator had already answered and the beat moved on.
             if !app.staticTexts["Map your runs"].exists { return }

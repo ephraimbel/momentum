@@ -43,6 +43,8 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
         authorizationStatus == .denied || authorizationStatus == .restricted
     }
 
+    var awaitsAuthorization: Bool { authorizationStatus == .notDetermined }
+
     func requestAuthorization(completion: ((Bool) -> Void)? = nil) {
 #if DEBUG
         // UI tests drive a synthetic route (see `fixes()`); skip the real prompt so no system alert

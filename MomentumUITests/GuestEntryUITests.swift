@@ -131,7 +131,7 @@ final class GuestEntryUITests: XCTestCase {
         app.buttons["Continue"].tap()
         let reveal = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 20))
-        XCTAssertTrue(app.staticTexts["YOUR FIRST WEEK"].exists)
+        XCTAssertTrue(app.buttons["onboarding.reveal.details"].exists)
         reveal.tap()
         let review = app.buttons["onboarding.review.continue"]
         XCTAssertTrue(review.waitForExistence(timeout: 10))
