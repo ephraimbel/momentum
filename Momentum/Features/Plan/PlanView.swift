@@ -189,7 +189,8 @@ struct PlanView: View {
     /// live plan; otherwise recomputes fresh (cheap, one pass over `plan.sessions`) — so it never
     /// reads a cascade-deleted/removed session, and never flashes an empty board on the first frame.
     private var liveWeekMap: [Date: [PlannedSession]] {
-        weekMapToken == currentWeekToken ? weekMap : computeWeekMap()
+        let map = weekMapToken == currentWeekToken ? weekMap : computeWeekMap()
+        return map.mapValues { $0.filter(PlanSessionPresentation.isLive) }
     }
     /// A cheap signature of everything the map depends on: plan identity, session count, and the week.
     /// A regenerated plan (new id), an added/removed session (count), or a week change all flip it.
@@ -205,7 +206,7 @@ struct PlanView: View {
         let cal = planCalendar
         let weekDays = Set(days.map { cal.startOfDay(for: $0) })
         var map: [Date: [PlannedSession]] = [:]
-        for s in plan.sessions {
+        for s in plan.sessions where PlanSessionPresentation.isLive(s) {
             if isCurrentWeek && s.status == .missed { continue }
             let d = cal.startOfDay(for: s.date)
             if weekDays.contains(d) { map[d, default: []].append(s) }
@@ -877,13 +878,17 @@ struct PlanView: View {
     }
 
     private func delete(_ session: PlannedSession) {
+        guard PlanSessionPresentation.isLive(session) else { return }
         let wasOpen = session.status != .completed
+        // Invalidate before save publishes the deletion, not after SwiftUI observes it.
+        weekMap = [:]
+        weekMapToken = 0
         let saved = PlanMutation.attempt(in: context, fallback: false) {
             plan?.sessions.removeAll { $0.id == session.id }
             context.delete(session)
             return true
         }
-        guard saved else { return }
+        guard saved else { rebuildDerived(); return }
         if wasOpen { services.analytics.log(.adaptive(action: "workout_skipped", week: AdaptiveTrainingWeek.key(weekStart, calendar: planCalendar), reason: "removed")) }
         rebuildDerived()
         Haptics.light()
@@ -1787,7 +1792,7 @@ struct PlanView: View {
 
     private func boardDayRow(_ day: Date, map: [Date: [PlannedSession]]) -> some View {
         let dayKey = planCalendar.startOfDay(for: day)
-        let sessions = map[dayKey] ?? []
+        let sessions = (map[dayKey] ?? []).filter(PlanSessionPresentation.isLive)
         let isToday = planCalendar.isDateInToday(day)
         // A hovered session owns the drop (the two trade days); the day beneath it stands down, so
         // the board never offers both readings of the same gesture at once.
@@ -1800,6 +1805,7 @@ struct PlanView: View {
                 } else {
                     VStack(spacing: Theme.Space.sm + 2) {
                         ForEach(sessions, id: \.persistentModelID) { session in
+                            if PlanSessionPresentation.isLive(session) {
                             // Long press belongs to the DRAG, and only the drag. `.contextMenu` on
                             // the same view competes for that gesture and wins nondeterministically
                             // — measured on the simulator, the identical press either lifted the
@@ -1816,15 +1822,16 @@ struct PlanView: View {
                                 // finished work would move the record of a run that already happened.
                                 // The drop falls through to the day row beneath, which is a plain move.
                                 .dropDestination(for: PlannedSessionTransfer.self) { items, _ in
-                                    guard session.status != .completed, let dropped = items.first else { return false }
+                                    guard PlanSessionPresentation.isLive(session), session.status != .completed, let dropped = items.first else { return false }
                                     return swap(sessionID: dropped.id, with: session)
                                 } isTargeted: { targeted in
-                                    guard session.status != .completed else { return }
+                                    guard PlanSessionPresentation.isLive(session), session.status != .completed else { return }
                                     withAnimation(reduceMotion ? nil : Motion.selection) {
                                         if targeted { swapTargetID = session.id }
                                         else if swapTargetID == session.id { swapTargetID = nil }
                                     }
                                 }
+                            }
                         }
                         // Adding a SECOND session to a day used to be impossible from that day:
                         // the per-day "+" lives on the rest line, which only renders when the day
@@ -2156,11 +2163,7 @@ struct PlanView: View {
     }
 
     private func neighborKind(_ s: PlannedSession) -> RestDayLine.Neighbor {
-        if s.discipline == .strength { return .strength }
-        guard let rt = s.runType else { return .easy }
-        if rt == .race { return .race }
-        if rt == .long { return .long }
-        return rt.isQuality ? .quality : .easy
+        PlanSessionPresentation.neighbor(s)
     }
 
     /// Never a dead end: the tab's whole job is the plan, so the empty state carries the way to one.

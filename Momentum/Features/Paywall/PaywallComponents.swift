@@ -501,8 +501,10 @@ struct PaywallCheckout: View {
                     // Never send StoreKit's free-form message — it can change and is not needed to
                     // identify the failed stage. Static issue + bounded tags are enough to triage.
                     SentryMonitor.capture(.storePurchaseFailed,
-                                          tags: ["placement": placement,
-                                                 "product": product.isAnnual ? "annual" : "weekly"])
+                                          tags: paywall.purchaseFailureTags.merging(
+                                            ["placement": placement,
+                                             "product": product.isAnnual ? "annual" : "weekly"],
+                                            uniquingKeysWith: { _, current in current }))
                     storeFailures += 1
                     purchaseError = message
                 }

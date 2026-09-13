@@ -335,13 +335,14 @@ struct RouteMapView: View {
 
     /// Frame the whole route with padding; fall back to a centered camera for a single point.
     private static func fit(_ coordinates: [CLLocationCoordinate2D], insets: SwiftUI.EdgeInsets) -> Viewport {
-        guard coordinates.count > 1 else {
-            if let c = coordinates.first { return .camera(center: c, zoom: 14) }
+        let bounds = RouteCameraBounds.coordinates(coordinates)
+        guard bounds.count > 1 else {
+            if let c = bounds.first { return .camera(center: c, zoom: 14) }
             return .idle
         }
         // maxZoom: a tiny route (a 100 m test lap, a track repeat) otherwise fits to
         // building-level zoom where the line is a scribble on one rooftop — clamp to street level.
-        return .overview(geometry: LineString(coordinates),
+        return .overview(geometry: LineString(bounds),
                          geometryPadding: insets,
                          maxZoom: 17)
     }

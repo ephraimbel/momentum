@@ -326,7 +326,11 @@ final class PaywallController: PaywallServing {
     /// mind" and "the store failed" into the same `false`, and the caller — having no way to tell
     /// them apart — stayed silent for both. The failure case was a dead button. Someone trying to
     /// pay tapped, the spinner stopped, and nothing happened or explained itself.
+    /// Bounded diagnostics only: never a receipt, account identifier or free-form store error.
+    @ObservationIgnored private(set) var purchaseFailureTags: [String: String] = [:]
+
     func purchase(_ product: PaywallProduct) async -> PurchaseOutcome {
+        purchaseFailureTags = [:]
         #if DEBUG
         // Unit tests pin the ENTITLEMENT FLIP, not StoreKit: with RevenueCat linked, the live
         // purchase path tries to present a confirmation sheet inside the headless test host and
@@ -346,6 +350,7 @@ final class PaywallController: PaywallServing {
             #if DEBUG
             grantLocally(); return .purchased
             #else
+            purchaseFailureTags = ["status": "sdk_unavailable"]
             return .failed("We couldn't reach the App Store. Check your connection and try again.")
             #endif
         }
@@ -362,6 +367,7 @@ final class PaywallController: PaywallServing {
                 result = try await Purchases.shared.purchase(product: sp)
                 bought = sp
             } else {
+                purchaseFailureTags = ["status": "product_unavailable"]
                 return .failed("We couldn't reach the App Store. Check your connection and try again.")
             }
             if result.userCancelled { return .cancelled }
@@ -379,6 +385,7 @@ final class PaywallController: PaywallServing {
             }
             // Purchase reported success but the entitlement didn't land (deferred/pending payment,
             // Ask to Buy). Point at Restore rather than leaving them staring at a locked app.
+            if !isPro { purchaseFailureTags = ["status": "entitlement_pending"] }
             return isPro ? .purchased
                          : .failed("That didn't complete. If you were charged, tap Restore.")
         } catch {
@@ -387,6 +394,8 @@ final class PaywallController: PaywallServing {
             let ns = error as NSError
             if ns.domain == ErrorCode.errorDomain,
                ns.code == ErrorCode.purchaseCancelledError.rawValue { return .cancelled }
+            purchaseFailureTags = ["status": ns.domain == ErrorCode.errorDomain ? "revenuecat" : "store_error",
+                                   "error_code": String(ns.code)]
             return .failed(ns.localizedDescription)
         }
         #else

@@ -254,8 +254,9 @@ enum NotificationPlanner {
     static func raceNotes(for plan: TrainingPlan, now: Date, unit: DistanceUnit,
                           calendar: Calendar) -> [LocalNotificationPayload] {
         let todayStart = calendar.startOfDay(for: now)
+        let disclosure = AdaptivePlanService.Disclosure(plan: plan, now: now, calendar: calendar)
         let races = plan.sessions
-            .filter { AdaptivePlanService.showsDetails($0, plan: plan, now: now, calendar: calendar) }
+            .filter { disclosure.showsDetails($0) }
             .filter { $0.runType == .race && $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil
                       && calendar.startOfDay(for: $0.date) >= todayStart }
             .sorted { $0.date < $1.date }
@@ -306,8 +307,9 @@ enum NotificationPlanner {
                               calendar: Calendar) -> [(day: Date, sessions: [PlannedSession])] {
         let today = calendar.startOfDay(for: now)
         let horizon = calendar.date(byAdding: .day, value: horizonDays, to: today) ?? today
+        let disclosure = AdaptivePlanService.Disclosure(plan: plan, now: now, calendar: calendar)
         let upcoming = plan.sessions
-            .filter { AdaptivePlanService.showsDetails($0, plan: plan, now: now, calendar: calendar) }
+            .filter { disclosure.showsDetails($0) }
             .filter { $0.status != .completed && $0.status != .missed && $0.completedWorkout == nil
                       && $0.date >= today && $0.date <= horizon }
             .sorted { a, b in

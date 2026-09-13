@@ -1,149 +1,141 @@
 import CoreLocation
 import Foundation
 import SwiftData
-import SwiftUI
 import UIKit
 
-/// Renders and persists the route map snapshot for saved workouts that are missing one.
-///
-/// The snapshot is normally rendered once at run-finish — but that single render can fail (radio
-/// still flaky right after an outdoor run, one bad tile fetch) and the workout was then stuck with
-/// a route-silhouette tile in the profile grid and History forever (user report 2026-07-11). Every
-/// display surface now self-heals: tiles request a render on appearance, and a launch sweep fixes
-/// the most recent stragglers so History thumbnails recover without being visited individually.
+/// Repairs route thumbnails without retaining SwiftData rows across suspension points.
+/// A deletion, sign-out, or replaced GPS detail can happen during any map render.
 @MainActor
 enum WorkoutSnapshotHealer {
     private static var inFlight: Set<UUID> = []
-    /// Workouts that failed to render this session — retried next launch, not per appearance.
     private static var failed: Set<UUID> = []
-    /// At most this many live render engines at once (same guard as the community feed).
     private static let maxConcurrent = 2
     private static var active = 0
 
-    /// Render + persist the snapshot for one workout, if it's missing and a route exists.
-    /// Renders with the workout's own map style (save-screen choice, else the app-wide style) and
-    /// STAMPS that style so the workout's map identity never drifts with later app-style changes.
+    typealias Renderer = @MainActor ([CLLocationCoordinate2D], MapStyleOption) async -> Data?
+
     static func healIfNeeded(_ workout: Workout, context: ModelContext) async {
-        guard let gps = workout.gps, gps.mapSnapshotData == nil else { return }
-        let id = workout.id
-        // Cheap Set dedupe BEFORE deriving coordinates: a failed-this-session workout otherwise
-        // re-paid the full sample fault + Kalman walk on every tile appearance just to bail here.
-        guard !inFlight.contains(id), !failed.contains(id) else { return }
+        guard !workout.isDeleted, workout.modelContext === context else { return }
+        await repair(workoutID: workout.id, in: context)
+    }
+
+    static func rerender(_ workout: Workout, style: MapStyleOption, context: ModelContext) async {
+        guard !workout.isDeleted, workout.modelContext === context else { return }
+        await repair(workoutID: workout.id, in: context, styleOverride: style)
+    }
+
+    /// Capture only IDs before awaiting. MOMENTUM-IOS-P filtered the original `recent` models
+    /// after healing suspended, when one of those workouts had already been deleted.
+    static func sweep(in context: ModelContext, limit: Int = 12) async {
+        guard limit > 0 else { return }
+        var query = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
+        query.fetchLimit = 200
+        guard let recent = try? context.fetch(query) else { return }
+        let ids = recent.map(\.id)
+        var missing: [UUID] = [], outdated: [UUID] = []
+        var stamped = false
+        for id in ids {
+            guard let workout = find(id, in: context), workout.type.isGPS,
+                  let gps = detail(for: workout, in: context) else { continue }
+            if gps.mapStyleRaw == nil {
+                gps.mapStyleRaw = MapStyleOption.persisted.rawValue
+                stamped = true
+            }
+            if gps.mapSnapshotData == nil { missing.append(id) }
+            else if gps.mapSnapshotVersion < RouteSnapshotter.renderVersion { outdated.append(id) }
+        }
+        if stamped { try? context.save() }
+        for id in missing.prefix(limit) {
+            guard !Task.isCancelled else { return }
+            await repair(workoutID: id, in: context)
+        }
+        for id in outdated.prefix(limit) {
+            guard !Task.isCancelled else { return }
+            await repair(workoutID: id, in: context, refreshOutdated: true)
+        }
+    }
+
+    private struct Input {
+        let detailID: PersistentIdentifier
+        let type: WorkoutType
+        let style: MapStyleOption
+        let originalStyle: String?
+        let originalImage: Data?
+        let originalVersion: Int
+    }
+
+    private static func find(_ id: UUID, in context: ModelContext) -> Workout? {
+        var q = FetchDescriptor<Workout>(predicate: #Predicate { $0.id == id })
+        q.fetchLimit = 1
+        guard let value = try? context.fetch(q).first,
+              !value.isDeleted, value.modelContext === context else { return nil }
+        return value
+    }
+
+    private static func detail(for workout: Workout, in context: ModelContext) -> GPSDetail? {
+        guard let id = workout.gps?.persistentModelID else { return nil }
+        var q = FetchDescriptor<GPSDetail>(predicate: #Predicate { $0.persistentModelID == id })
+        q.fetchLimit = 1
+        guard let value = try? context.fetch(q).first,
+              !value.isDeleted, value.modelContext === context else { return nil }
+        return value
+    }
+
+    private static func input(_ id: UUID, in context: ModelContext, style: MapStyleOption?,
+                              refreshOutdated: Bool) -> Input? {
+        guard let workout = find(id, in: context), workout.type.isGPS,
+              let gps = detail(for: workout, in: context) else { return nil }
+        if style == nil {
+            guard gps.mapSnapshotData == nil ||
+                (refreshOutdated && gps.mapSnapshotVersion < RouteSnapshotter.renderVersion) else { return nil }
+        }
+        return Input(detailID: gps.persistentModelID, type: workout.type, style: style ?? gps.mapStyle,
+                     originalStyle: gps.mapStyleRaw, originalImage: gps.mapSnapshotData,
+                     originalVersion: gps.mapSnapshotVersion)
+    }
+
+    /// Renderer injection exercises deletion/replacement/cancellation during the actual await.
+    static func repair(workoutID id: UUID, in context: ModelContext,
+                       styleOverride: MapStyleOption? = nil, refreshOutdated: Bool = false,
+                       renderer: Renderer = render) async {
+        guard !Task.isCancelled, !inFlight.contains(id),
+              styleOverride != nil || !failed.contains(id),
+              let input = input(id, in: context, style: styleOverride, refreshOutdated: refreshOutdated) else { return }
         inFlight.insert(id)
         defer { inFlight.remove(id) }
-        // Route derivation (fault every LocationSample + Kalman) hops OFF the main actor via a
-        // background context — this runs per visible tile, and for snapshot-less older history the
-        // first Profile-grid scroll used to pay the full walk on main per tile
-        // (perf audit 2026-08-13; the WorkoutTileMedia `routeCoordsOffMain` pattern).
-        let coords = await Self.routeCoordsOffMain(gps: gps, type: workout.type)
-        guard coords.count > 1 else { return }
-        while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
+        let container = context.container, detailID = input.detailID, type = input.type
+        let coordinates = await Task.detached(priority: .utility) {
+            let reader = ModelContext(container)
+            // model(for:) can return a fault for a nonexistent row; fetch proves it exists.
+            var q = FetchDescriptor<GPSDetail>(predicate: #Predicate { $0.persistentModelID == detailID })
+            q.fetchLimit = 1
+            guard let gps = try? reader.fetch(q).first else { return [CLLocationCoordinate2D]() }
+            return gps.routeCoordinates(type: type)
+        }.value
+        guard !Task.isCancelled, coordinates.count > 1 else { return }
+        while active >= maxConcurrent {
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+        }
+        guard !Task.isCancelled, find(id, in: context) != nil else { return }
         active += 1
-        let style = gps.mapStyle
-        // The card renders in the run's OWN style (v5) — the save screen's picker promises exactly
-        // this, and until now the promise was empty: the style was stamped onto the workout while
-        // the image was always baked on Light.
-        let data = await RouteSnapshotter.snapshot(coordinates: coords,
-                                                   size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: style.styleURI,
-                                                   insets: RouteSnapshotter.workoutTileInsets)
+        let data = await renderer(coordinates, input.style)
         active -= 1
-        // Dismissal is not a rendering failure. Let a visible tile retry this session.
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled,
+              let workout = find(id, in: context),
+              let gps = detail(for: workout, in: context),
+              gps.persistentModelID == input.detailID,
+              gps.mapStyleRaw == input.originalStyle,
+              gps.mapSnapshotData == input.originalImage,
+              gps.mapSnapshotVersion == input.originalVersion else { return }
         guard let data else { failed.insert(id); return }
         gps.mapSnapshotData = data
         gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
-        // Only ever STAMP a missing style — never restate one. Healing is about a missing image, so
-        // rewriting the style here reassigns the run's canvas as a side effect: `gps.mapStyle`
-        // resolves nil to the app-wide default, so a tile that healed before its style had been
-        // saved wrote that default back and permanently overwrote the real pick (caught seeding a
-        // varied grid — assignments survived or turned "realistic" depending on render order).
-        if gps.mapStyleRaw == nil { gps.mapStyleRaw = style.rawValue }
+        if styleOverride != nil || gps.mapStyleRaw == nil { gps.mapStyleRaw = input.style.rawValue }
         try? context.save()
     }
 
-    /// One pass over the most recent GPS workouts missing their snapshot — run once per launch so
-    /// History thumbnails heal without each workout being opened. Bounded: old stragglers heal
-    /// when their tile appears.
-    static func sweep(in context: ModelContext, limit: Int = 12) async {
-        var descriptor = FetchDescriptor<Workout>(sortBy: [SortDescriptor(\.startedAt, order: .reverse)])
-        descriptor.fetchLimit = 200
-        guard let recent = try? context.fetch(descriptor) else { return }
-        // Legacy stamp: workouts saved before per-run styles have no recorded style, so their live
-        // maps (pager, detail) drifted to whatever the athlete's CURRENT app style is — mismatching
-        // their own tile. Pin them once to the present app style (the style their snapshot was
-        // rendered against); from here on, changing the Today map never re-skins old runs.
-        let appStyle = MapStyleOption.persisted.rawValue
-        var stamped = false
-        for workout in recent where workout.type.isGPS {
-            if let gps = workout.gps, gps.mapStyleRaw == nil {
-                gps.mapStyleRaw = appStyle
-                stamped = true
-            }
-        }
-        if stamped { try? context.save() }
-        let stale = recent.filter { $0.type.isGPS && $0.gps != nil && $0.gps?.mapSnapshotData == nil }
-            .prefix(limit)
-        for workout in stale {
-            await healIfNeeded(workout, context: context)
-        }
-        // Look upgrade: re-render snapshots drawn by an older renderer (legacy landscape images,
-        // the gradient-trace era, the tight-framing era) so the visible grid picks up the current
-        // aesthetic — newest first, bounded per launch, no user action.
-        let outdatedLook = recent.filter { workout in
-            guard workout.type.isGPS, let gps = workout.gps, gps.mapSnapshotData != nil else { return false }
-            return gps.mapSnapshotVersion < RouteSnapshotter.renderVersion
-        }.prefix(limit)
-        for workout in outdatedLook {
-            await rerender(workout, style: workout.gps?.mapStyle ?? .persisted, context: context)
-        }
-    }
-
-    /// The route walk faults every GPS sample and Kalman-smooths it — done on the MainActor it
-    /// janked the surface that requested the heal (tiles heal on appearance, so snapshot-less older
-    /// history paid this per tile during the first Profile scroll). Fault + smooth on a
-    /// fresh background context instead (the WorkoutTileMedia / HeatmapSource pattern: only the
-    /// container and the detail's persistent id cross the hop — SwiftData models aren't Sendable).
-    /// Transient/preview objects (no container) fall back inline.
-    private static func routeCoordsOffMain(gps: GPSDetail, type: WorkoutType) async -> [CLLocationCoordinate2D] {
-        guard let container = gps.modelContext?.container else {
-            return gps.routeCoordinates(type: type)
-        }
-        let id = gps.persistentModelID
-        return await Task.detached(priority: .utility) {
-            let context = ModelContext(container)
-            guard let detail = context.model(for: id) as? GPSDetail else { return [] }
-            return detail.routeCoordinates(type: type)
-        }.value
-    }
-
-    /// Re-render a workout's snapshot in a NEW style (save-screen style change). Replaces the old
-    /// image; on failure the previous snapshot is kept and the tile heals later.
-    static func rerender(_ workout: Workout, style: MapStyleOption, context: ModelContext) async {
-        guard let gps = workout.gps else { return }
-        let id = workout.id
-        // Same in-flight guard as `healIfNeeded`: the save screen's style change and a tile
-        // appearing can both ask for the same workout, and two engines rendering one row raced to
-        // write it.
-        guard !inFlight.contains(id) else { return }
-        inFlight.insert(id)
-        defer { inFlight.remove(id) }
-        let coords = await Self.routeCoordsOffMain(gps: gps, type: workout.type)
-        guard coords.count > 1 else { return }
-        while active >= maxConcurrent { do { try await Task.sleep(for: .milliseconds(150)) } catch { return } }
-        active += 1
-        // Re-render in the style being applied — this argument used to be accepted and then thrown
-        // away, so changing the style on the save screen updated the stamp and nothing visible.
-        let data = await RouteSnapshotter.snapshot(coordinates: coords,
-                                                   size: RouteSnapshotter.workoutTileSize,
-                                                   styleURI: style.styleURI,
-                                                   insets: RouteSnapshotter.workoutTileInsets)
-        active -= 1
-        guard !Task.isCancelled else { return }
-        guard let data else { return }
-        gps.mapSnapshotData = data
-        gps.mapSnapshotVersion = RouteSnapshotter.renderVersion
-        gps.mapStyleRaw = style.rawValue
-        try? context.save()
+    private static func render(_ coordinates: [CLLocationCoordinate2D], _ style: MapStyleOption) async -> Data? {
+        await RouteSnapshotter.snapshot(coordinates: coordinates, size: RouteSnapshotter.workoutTileSize,
+                                       styleURI: style.styleURI, insets: RouteSnapshotter.workoutTileInsets)
     }
 }

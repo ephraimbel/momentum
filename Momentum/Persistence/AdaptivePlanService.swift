@@ -30,15 +30,33 @@ enum AdaptivePlanService {
     /// One shared disclosure rule for board, session sheet, coach context and reminders.
     static func showsDetails(_ session: PlannedSession, plan: TrainingPlan?, now: Date = Date(),
                              calendar: Calendar = .current) -> Bool {
-        guard let plan, !plan.isSelfCoached else { return true }
-        if session.status == .completed || session.completedWorkout != nil { return true }
-        let cal = plan.adaptiveState?.calendar ?? calendar
-        let current = AdaptiveTrainingWeek.week(containing: now, calendar: cal)
-        if session.date >= current.end { return false }
-        if session.date < current.start { return true }
-        guard let state = plan.adaptiveState else { return true }
-        guard state.lastWeekStart >= current.start else { return false }
-        return state.reviews.last(where: { $0.id == state.lastWeekKey }).map { $0.viewedAt != nil } ?? true
+        Disclosure(plan: plan, now: now, calendar: calendar).showsDetails(session)
+    }
+
+    /// Resolve sidecars once before scanning a plan. A fetch inside each filter predicate caused
+    /// the notification watchdog in MOMENTUM-IOS-T. This value owns no SwiftData objects.
+    struct Disclosure {
+        let unrestricted: Bool
+        let current: DateInterval
+        let currentIsVisible: Bool
+
+        init(plan: TrainingPlan?, now: Date, calendar: Calendar) {
+            unrestricted = plan == nil || plan?.isSelfCoached == true
+            let state = unrestricted ? nil : plan?.adaptiveState
+            current = AdaptiveTrainingWeek.week(containing: now, calendar: state?.calendar ?? calendar)
+            if let state {
+                currentIsVisible = state.lastWeekStart >= current.start &&
+                    (state.reviews.last(where: { $0.id == state.lastWeekKey }).map { $0.viewedAt != nil } ?? true)
+            } else {
+                currentIsVisible = true
+            }
+        }
+
+        func showsDetails(_ session: PlannedSession) -> Bool {
+            if unrestricted || session.status == .completed || session.completedWorkout != nil { return true }
+            if session.date >= current.end { return false }
+            return session.date < current.start || currentIsVisible
+        }
     }
 
     static func initialize(_ plan: TrainingPlan, profileID: UUID, now: Date, in context: ModelContext,

@@ -263,6 +263,30 @@ struct PlanContinuityTests {
         #expect(try b.mainContext.fetchCount(FetchDescriptor<Workout>()) == 1)
     }
 
+    @Test func snapshotOmitsUnusedBundledExercisesButPreservesCustomAndReferencedOnes() throws {
+        let store = try container(), destination = try container(), context = store.mainContext
+        let profile = try athlete(in: context)
+        let used = Exercise(), custom = Exercise(), archived = Exercise()
+        custom.isCustom = true
+        context.insert(used); context.insert(custom); context.insert(archived)
+        for _ in 0..<500 { context.insert(Exercise()) }
+        let target = PlannedExercise(); target.exercise = used
+        profile.plan?.sessions.first?.strengthTargets = [target]
+        let archivedPlan = TrainingPlan(), archivedSession = PlannedSession(), archivedTarget = PlannedExercise()
+        archivedTarget.exercise = archived; archivedSession.strengthTargets = [archivedTarget]
+        archivedPlan.sessions = [archivedSession]; context.insert(archivedPlan)
+        let shelf = PlanShelfRecord(profileID: profile.id, status: .completed, name: "Previous",
+                                    createdAt: Date(), blueprintData: try JSONEncoder().encode(PlanBlueprint()))
+        shelf.snapshotData = try JSONEncoder().encode(CoachUndo.planState(of: archivedPlan))
+        context.insert(shelf)
+        try context.save()
+        let snapshot = try PlanCloudSnapshot.capture(profile, in: context)
+        #expect(Set(snapshot.exercises.map(\.id)) == Set([used.id, custom.id, archived.id]))
+        let restored = try snapshot.restore(in: destination.mainContext)
+        #expect(restored.plan?.sessions.first?.strengthTargets.first?.exercise?.id == used.id)
+        #expect(try destination.mainContext.fetch(FetchDescriptor<Exercise>()).contains { $0.id == custom.id })
+    }
+
     @Test func generatedHybridRacePlanRestoresSidecarsAndStabilizesAcrossDevices() throws {
         let a = try container(), b = try container()
         ExerciseLibrarySeed.seedIfNeeded(into: a.mainContext)

@@ -99,13 +99,16 @@ final class PlanFlowsUITests: XCTestCase {
         }
         app.launch()
 
-        // The 5-day seed leaves rest days that explain themselves ("Rest. Fresh for tomorrow's
-        // speed work."). The first such row is the drop target; its exact sentence follows the
-        // neighbours the generator placed, so the match is on the rest, not the reason.
-        let restRows = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Rest.'"))
+        // The first rest row is the drop target. After an adaptive easing week its neighbors
+        // can all be easy, so the legitimate copy is "Rest day" rather than a quality-run note.
+        // A week rollover now opens the adaptive review before the board. Complete that real
+        // disclosure step instead of assuming the board is already visible on every test date.
+        let explore = app.buttons["Explore this week"]
+        if explore.waitForExistence(timeout: 3) { explore.tap() }
+        let restRows = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Rest' AND label CONTAINS 'Tap to add a session'"))
         let restRow = restRows.firstMatch
         XCTAssertTrue(restRow.waitForExistence(timeout: 25),
-                      "The board should show an explained rest day.")
+                      "The board should show a rest-day drop target.")
         // The move swaps which day rests, so the rest count never changes and the first rest row
         // can even move UP (the day the run left now rests). What must change is where the lifted
         // run sits: below its old place, on the day it was dropped on.
@@ -114,7 +117,8 @@ final class PlanFlowsUITests: XCTestCase {
         // The first on-screen run row is the one to lift (the seeded week's shape has changed
         // since this test was written; a row further down can sit below the fold, and a press
         // that starts off screen drags the page instead of the session).
-        let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS ' mi'"))
+        // Week-chart buttons also include miles; only an actual run row has the RUN title.
+        let runs = app.buttons.matching(NSPredicate(format: "label CONTAINS 'RUN,' AND label CONTAINS ' mi'"))
         XCTAssertGreaterThanOrEqual(runs.count, 1, "The 5-day seed should plan runs.")
         let tuesdayRun = runs.element(boundBy: 0)
         XCTAssertTrue(tuesdayRun.exists && tuesdayRun.isHittable)

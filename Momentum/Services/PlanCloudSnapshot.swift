@@ -479,23 +479,29 @@ struct PlanCloudSnapshot: Codable {
             coach.plan?.sessions[index].strength.sort { $0.order < $1.order }
         }
         let savedPlans = PlanShelfRecord.fetch(profileID: profile.id, in: context)
-        let savedCompletions = try savedPlans.flatMap { record -> [UUID] in
-            guard let data = record.snapshotData else { return [] }
+        let savedStates = try savedPlans.compactMap { record -> CoachUndo.Snapshot.PlanState? in
+            guard let data = record.snapshotData else { return nil }
             return try JSONDecoder().decode(CoachUndo.Snapshot.PlanState.self, from: data)
-                .sessions.compactMap(\.completedWorkoutID)
         }
+        let savedCompletions = savedStates.flatMap { $0.sessions.compactMap(\.completedWorkoutID) }
         let linked = Set((coach.plan?.sessions.compactMap(\.completedWorkoutID) ?? []) + savedCompletions)
         let cutoff = now.addingTimeInterval(-90 * 86_400)
         let evidence = try context.fetch(FetchDescriptor<Workout>()).filter {
             $0.id != ActiveWorkoutMarker.pendingID && ($0.startedAt >= cutoff || linked.contains($0.id))
         }.sorted { $0.id.uuidString < $1.id.uuidString }
-        // Include catalog identities used by archived plans as well as the active plan. Their
-        // blueprints can be resumed on a device whose bundled catalog has different UUIDs.
+        let workoutValues = evidence.map(Evidence.init)
+        let evidenceIDs = Set(workoutValues.map(\.id))
+        // Carry every referenced identity plus custom exercises, not the entire bundled catalog
+        // on every save. MOMENTUM-IOS-K hung encoding unused catalog entries on the main thread.
+        let planStates = savedStates + [coach.plan].compactMap { $0 }
+        let exerciseIDs = Set(planStates.flatMap { $0.sessions.flatMap { $0.strength.compactMap(\.exerciseID) } }
+            + workoutValues.flatMap { $0.lifts.compactMap(\.exerciseID) })
         var value = Self(profile: Profile(profile), coach: coach, preferences: profile.planPreferences.map(Preferences.init),
             shelf: savedPlans.sorted { $0.id.uuidString < $1.id.uuidString }.map(Shelf.init),
             exercises: try context.fetch(FetchDescriptor<Exercise>())
+                .filter { $0.isCustom || exerciseIDs.contains($0.id) }
                 .sorted { $0.id.uuidString < $1.id.uuidString }.map(CatalogExercise.init),
-            workouts: evidence.map(Evidence.init),
+            workouts: workoutValues,
             seasons: try context.fetch(FetchDescriptor<RunningSeasonRecord>()).filter { $0.profileID == profile.id }
                 .sorted { $0.id.uuidString < $1.id.uuidString }.map(DataManager.RunningSeasonDTO.init),
             events: try context.fetch(FetchDescriptor<RunningEventRecord>()).sorted { $0.id.uuidString < $1.id.uuidString }.map(DataManager.RunningEventDTO.init),
@@ -507,7 +513,7 @@ struct PlanCloudSnapshot: Codable {
         value.adaptive = profile.plan?.adaptiveState.map(AdaptiveState.init)
         if context.container.schema.entities.contains(where: { $0.name == "WorkoutFeedbackRecord" }) {
             value.recoveryFeedback = try context.fetch(FetchDescriptor<WorkoutFeedbackRecord>())
-                .filter { row in evidence.contains { $0.id == row.id } }
+                .filter { evidenceIDs.contains($0.id) }
                 .sorted { $0.id.uuidString < $1.id.uuidString }.map(RecoveryFeedback.init)
         }
         try value.validate()
