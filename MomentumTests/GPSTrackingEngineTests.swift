@@ -1,10 +1,28 @@
 import Testing
 import Foundation
+import CoreLocation
 @testable import Momentum
 
 /// The live-run pause/resume state machine (PRD §8.3). Auto-pause is a convenience; a manual Resume
 /// must always win — including while standing still.
 struct GPSTrackingEngineTests {
+
+    /// The device's own error bar on its speed reading is honoured at the boundary (2026-09-12):
+    /// a reading it marks invalid, or whose 1σ error spans a running pace, arrives as "unknown"
+    /// so the distance rule takes the chord and the stored sample replays identically.
+    @Test func speedReadingIsUnknownWhenTheDeviceDoubtsIt() {
+        func loc(speed: Double, accuracy: Double) -> CLLocation {
+            CLLocation(coordinate: .init(latitude: 37, longitude: -122), altitude: 0,
+                       horizontalAccuracy: 5, verticalAccuracy: 5, course: 0, courseAccuracy: 0,
+                       speed: speed, speedAccuracy: accuracy, timestamp: Date())
+        }
+        #expect(LocationService.usableSpeed(loc(speed: 3.65, accuracy: 0.3)) == 3.65)
+        #expect(LocationService.usableSpeed(loc(speed: 3.65, accuracy: 2.0)) == 3.65)   // the bound itself is usable
+        #expect(LocationService.usableSpeed(loc(speed: 3.65, accuracy: 2.5)) == -1)     // error bar spans a pace
+        #expect(LocationService.usableSpeed(loc(speed: 3.65, accuracy: -1)) == -1)      // device: invalid
+        #expect(LocationService.usableSpeed(loc(speed: -1, accuracy: 0.3)) == -1)       // no reading at all
+        #expect(LocationService.usableSpeed(loc(speed: 0, accuracy: 0.2)) == 0)         // a confident stop is a reading
+    }
 
     private func fix(_ t0: Date, _ dt: Double, speed: Double, lat: Double) -> GPSProcessor.Fix {
         GPSProcessor.Fix(t: t0.addingTimeInterval(dt), lat: lat, lon: 0, accuracyM: 5, speedMS: speed, altitudeM: 0)

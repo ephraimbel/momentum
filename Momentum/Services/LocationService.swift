@@ -135,7 +135,7 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
                                 lat: loc.coordinate.latitude,
                                 lon: loc.coordinate.longitude,
                                 accuracyM: loc.horizontalAccuracy,
-                                speedMS: loc.speed,
+                                speedMS: Self.usableSpeed(loc),
                                 altitudeM: loc.altitude
                             ))
                         }
@@ -150,6 +150,18 @@ final class LocationService: NSObject, LocationServing, CLLocationManagerDelegat
             self.streamTask = task
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// The device's speed reading, or CoreLocation's "unknown" sentinel (−1) when the device
+    /// itself says the reading is not to be trusted. `speedAccuracy` is the 1σ error of `speed`
+    /// in m/s (negative = invalid); outdoors with a clear sky it sits well under 1 m/s, and a
+    /// reading whose own error bar spans a running pace is not a measurement of anything. Sanitized
+    /// HERE, at the boundary, so the stored sample carries the same value the live engine saw and
+    /// the finished-run replay stays equal to live by construction (2026-09-12).
+    static let usableSpeedAccuracyMS = 2.0
+    nonisolated static func usableSpeed(_ loc: CLLocation) -> Double {
+        guard loc.speed >= 0, loc.speedAccuracy >= 0, loc.speedAccuracy <= usableSpeedAccuracyMS else { return -1 }
+        return loc.speed
     }
 
     func stop() {
