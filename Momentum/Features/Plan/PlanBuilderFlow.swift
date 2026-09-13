@@ -11,6 +11,15 @@ enum PlanBuilderOutcome: Equatable {
 /// as a draft. Every step opens on what the athlete already told us. The preview is the real
 /// generator run on the blueprint, debounced and cancelled on change, and nothing here touches the
 /// current plan until Start now is confirmed.
+///
+/// Interview grammar (2026-09-12): this is the SAME product as the onboarding interview, so it is
+/// assembled from the same kit — one bold question per screen with a subtitle
+/// (`OnboardingHeading`), the artwork that answers the question (`OnboardingScene`, driven here by
+/// the blueprint), `ChoiceCard` picks, the continuous progress line with its lavender cap, a
+/// floating glass back chevron, a pinned `OnboardingCTA` that turns ink the moment the step is
+/// answerable, a per-element entrance cascade, directional step travel, and a build beat that hands
+/// over to a reveal-shaped last page. Nothing about the lifecycle changed: the debounced real
+/// generator still owns the preview, and drafts/schedules/starts commit exactly as before.
 struct PlanBuilderFlow: View {
     let profile: UserProfile
     /// Editing an existing draft or upcoming plan; nil is a fresh plan.
@@ -23,6 +32,7 @@ struct PlanBuilderFlow: View {
 
     @Environment(\.modelContext) private var context
     @Environment(Services.self) private var services
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ReducedMotionPreference private var reduceMotion
 
     /// The four doors the engine can honestly tell apart: a dated race, a distance to improve at
@@ -59,19 +69,22 @@ struct PlanBuilderFlow: View {
 
     enum Step: Int, CaseIterable {
         case goal, target, fitness, week, training, preview
-        var title: String {
+        /// The chapter word over the progress line, the interview's own orientation cue.
+        var chapter: String {
             switch self {
-            case .goal: "What is this plan for?"
-            case .target: "The target"
-            case .fitness: "Where you are"
-            case .week: "Your week"
-            case .training: "How to train"
-            case .preview: "Your plan"
+            case .goal: "THE PLAN"
+            case .target: "THE TARGET"
+            case .fitness: "WHERE YOU ARE"
+            case .week: "YOUR WEEK"
+            case .training: "HOW TO TRAIN"
+            case .preview: "YOUR PLAN"
             }
         }
     }
 
     @State private var step: Step = .goal
+    /// Which way the page travels: forward from the right, back from the left.
+    @State private var goingBack = false
     @State private var path: Path?
     @State private var blueprint: PlanBlueprint
     @State private var hasGoalTime: Bool
@@ -79,6 +92,7 @@ struct PlanBuilderFlow: View {
     @State private var goalMinutes: Int
     @State private var raceDay: Date
     @State private var showRacePicker = false
+    @State private var showGoalTime = false
     /// The coach's read of the athlete's logged running; the blueprint's declared numbers are the
     /// fallback the engine uses when there is no history.
     @State private var evidence: PlanFitnessSnapshot?
@@ -90,6 +104,12 @@ struct PlanBuilderFlow: View {
     @State private var overlap: PendingOverlap?
     @State private var failure: String?
     @State private var confirmingDiscard = false
+    /// The build beat's ring and its one checked line, paced by `schedulePreview` — the same
+    /// shape the interview's building beat has, so the wait reads as the plan being written.
+    @State private var buildRing = 0.0
+    @State private var buildCompleted = 0
+    /// The preview page's seal, bounced once after the page lands.
+    @State private var sealed = false
     /// The record a fresh plan's first Schedule created, so a failed attempt retries on it.
     @State private var created: PlanShelfRecord?
     /// Podium (or any floor) emptied the chosen days: the note says so once.
@@ -141,99 +161,81 @@ struct PlanBuilderFlow: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                stepStrip
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                        Text(step.title)
-                            .font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader)
-                        // Keyed on the step and crossfaded: swapping the subtree under a spring
-                        // animated the layout of a whole step (a graphical date picker and two
-                        // wheels on the race step), which is the one kind of animation the house
-                        // rule forbids.
-                        stepContent
-                            .id(step)
-                            .transition(.opacity)
-                    }
-                    .padding(Theme.Space.lg)
-                }
-                .scrollDismissesKeyboard(.interactively)
-            }
-            .background(Theme.background)
-            .safeAreaInset(edge: .bottom) { footer }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Text(draft == nil ? "new plan" : "edit plan")
-                        .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
-                        .accessibilityAddTraits(.isHeader)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        // Nothing chosen yet, or a draft opened and left as it was: just leave.
-                        // Anything else is an edit worth a word before it is thrown away.
-                        if hasUnsavedEdits { confirmingDiscard = true }
-                        else { previewTask?.cancel(); onFinish(.cancelled) }
-                    }
-                }
-            }
-            .sheet(isPresented: $showRacePicker) {
-                RacePickerSheet { race, pickedDistance, date in
-                    withAnimation(reduceMotion ? nil : Motion.standard) {
-                        blueprint.name = race.name
-                        blueprint.raceDistanceM = pickedDistance.meters
-                        raceDay = date
-                        if hasGoalTime { seedGoalTime() }
-                        syncTarget()
-                    }
-                }
-            }
-            .sheet(isPresented: $scheduling) {
-                PlanScheduleSheet(initial: draft?.scheduledStart,
-                                  currentEnd: PlanLifecycleService.currentSpan(for: profile)?.end,
-                                  latest: blueprint.isRace ? blueprint.raceDate : nil) { day in
-                    schedule(on: day)
-                }
-            }
-            .sheet(item: $overlap) { pending in
-                PlanOverlapSheet(planName: blueprint.displayName,
-                                 currentName: currentPlanName,
-                                 overlap: pending.overlap,
-                                 startDay: pending.startDay,
-                                 onReplace: {
-                                     if pending.startsNow { activate() } else { commitSchedule(on: pending.startDay) }
-                                 },
-                                 onStartAfter: { commitSchedule(on: pending.overlap.nextFreeStart) })
-            }
-            .alert("That didn’t work", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
-                Button("OK", role: .cancel) { failure = nil }
-            } message: { Text(failure ?? "Please try again.") }
-            .task(id: blueprint.fitnessDeclaredAt) { await loadEvidence() }
-            .onAppear {
-                #if DEBUG
-                // --plan-builder-preview: a 10K in ten weeks, straight to the preview step.
-                if ProcessInfo.processInfo.arguments.contains("--plan-builder-preview"), draft == nil {
-                    choose(.race)
-                    blueprint.name = "Faster 10K"
-                    blueprint.raceDistanceM = RaceDistance.tenK.meters
-                    raceDay = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date()) ?? Date()
-                    hasGoalTime = true
-                    goalHours = 0; goalMinutes = 48
-                    syncTarget()
-                    step = .preview
-                }
-                #endif
-            }
-            // A beat after the step transition, so the generator never runs under the animation.
-            .onChange(of: step) { _, new in
-                if new == .preview { PerfMark.start("builder-preview"); schedulePreview(delay: 0.3) }
-            }
-            .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
-            .onDisappear { previewTask?.cancel() }
+        VStack(spacing: 0) {
+            masthead
+            stepPage
+                .id(step)
+                .transition(stepTransition)
         }
+        // One implicit scope for the step change, the way the interview travels. The footer is a
+        // safe-area inset applied BELOW this modifier, so its swap never animates layout.
+        .animation(reduceMotion ? Motion.crossfade : OnboardingStyle.pageTransition, value: step)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.background)
+        .safeAreaInset(edge: .bottom) { footer }
+        .sheet(isPresented: $showRacePicker) {
+            RacePickerSheet { race, pickedDistance, date in
+                blueprint.name = race.name
+                blueprint.raceDistanceM = pickedDistance.meters
+                raceDay = date
+                if hasGoalTime { seedGoalTime() }
+                syncTarget()
+            }
+        }
+        .sheet(isPresented: $showGoalTime) { goalTimeSheet }
+        .sheet(isPresented: $scheduling) {
+            PlanScheduleSheet(initial: draft?.scheduledStart,
+                              currentEnd: PlanLifecycleService.currentSpan(for: profile)?.end,
+                              latest: blueprint.isRace ? blueprint.raceDate : nil) { day in
+                schedule(on: day)
+            }
+        }
+        .sheet(item: $overlap) { pending in
+            PlanOverlapSheet(planName: blueprint.displayName,
+                             currentName: currentPlanName,
+                             overlap: pending.overlap,
+                             startDay: pending.startDay,
+                             onReplace: {
+                                 if pending.startsNow { activate() } else { commitSchedule(on: pending.startDay) }
+                             },
+                             onStartAfter: { commitSchedule(on: pending.overlap.nextFreeStart) })
+        }
+        .alert("That didn’t work", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+            Button("OK", role: .cancel) { failure = nil }
+        } message: { Text(failure ?? "Please try again.") }
+        .task(id: blueprint.fitnessDeclaredAt) { await loadEvidence() }
+        .onAppear {
+            #if DEBUG
+            // --plan-builder-preview: a 10K in ten weeks, straight to the preview step.
+            if ProcessInfo.processInfo.arguments.contains("--plan-builder-preview"), draft == nil {
+                choose(.race)
+                blueprint.name = "Faster 10K"
+                blueprint.raceDistanceM = RaceDistance.tenK.meters
+                raceDay = Calendar.current.date(byAdding: .weekOfYear, value: 10, to: Date()) ?? Date()
+                hasGoalTime = true
+                goalHours = 0; goalMinutes = 48
+                syncTarget()
+                step = .preview
+            }
+            // --plan-builder-step <0…5>: open the race door on a given step, for screenshots.
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "--plan-builder-step"), i + 1 < args.count,
+               let raw = Int(args[i + 1]), let target = Step(rawValue: raw), draft == nil {
+                choose(.race)
+                blueprint.name = "Berlin Marathon"
+                blueprint.raceDistanceM = RaceDistance.marathon.meters
+                raceDay = Calendar.current.date(byAdding: .weekOfYear, value: 16, to: Date()) ?? Date()
+                syncTarget()
+                step = target
+            }
+            #endif
+        }
+        // A beat after the step transition, so the generator never runs under the animation.
+        .onChange(of: step) { _, new in
+            if new == .preview { PerfMark.start("builder-preview"); schedulePreview(delay: 0.3) }
+        }
+        .onChange(of: blueprint) { _, _ in if step == .preview { schedulePreview(delay: 0.35) } }
+        .onDisappear { previewTask?.cancel() }
         .nestedPaywallHost()
         .onAppear { PerfMark.end("builder-open") }
         .presentationDetents([.large])
@@ -251,18 +253,113 @@ struct PlanBuilderFlow: View {
         .trackScreen(.planBuilder)
     }
 
-    private var stepStrip: some View {
-        HStack(spacing: 4) {
-            ForEach(Step.allCases, id: \.rawValue) { s in
-                Capsule()
-                    .fill(s.rawValue <= step.rawValue ? Theme.ink : Theme.hairline)
-                    .frame(height: 3)
+    // MARK: - Masthead (back · title · leave) + progress
+
+    private var masthead: some View {
+        VStack(spacing: Theme.Space.sm) {
+            ZStack {
+                Text(draft == nil ? "new plan" : "edit plan")
+                    .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                    .accessibilityLabel(draft == nil ? "New plan" : "Edit plan")
+                    .accessibilityAddTraits(.isHeader)
+                HStack(spacing: Theme.Space.xs) {
+                    GlassCircleButton(systemName: "chevron.left", label: "Back") { back() }
+                        .opacity(step == .goal ? 0 : 1)
+                        .disabled(step == .goal)
+                        .accessibilityHidden(step == .goal)
+                    Spacer(minLength: 0)
+                    // Labelled "Cancel": the word for leaving a plan that has not been written.
+                    Button { leave() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Theme.surface))
+                            // The disc reads at 36; the target stays at the 44pt floor.
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cancel")
+                }
             }
+            HStack(spacing: Theme.Space.sm) {
+                Text(step.chapter)
+                    .font(.rounded(10, weight: .semibold)).tracking(1.4)
+                    .foregroundStyle(Theme.purple)
+                    .contentTransition(.opacity)
+                    .animation(Motion.crossfade, value: step)
+                Spacer(minLength: 0)
+            }
+            progressLine
         }
         .padding(.horizontal, Theme.Space.lg)
-        .padding(.top, Theme.Space.sm)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+        .padding(.top, Theme.Space.md)
+        .padding(.bottom, Theme.Space.xs)
+    }
+
+    /// One continuous line with a lavender cap, the interview's progress language. Lavender because
+    /// progress is "happening now", which is the only thing the brand colour ever means.
+    private var progressLine: some View {
+        let fraction = Double(step.rawValue + 1) / Double(Step.allCases.count)
+        return Capsule().fill(Theme.hairline)
+            .overlay(alignment: .leading) {
+                Capsule().fill(Theme.purple)
+                    .scaleEffect(x: fraction, y: 1, anchor: .leading)
+                    .animation(reduceMotion ? nil : OnboardingStyle.progress, value: fraction)
+            }
+            .frame(height: 3)
+            .overlay {
+                GeometryReader { geometry in
+                    Circle().fill(Theme.purple)
+                        .overlay(Circle().strokeBorder(Theme.background, lineWidth: 1.5))
+                        .frame(width: 9, height: 9)
+                        .offset(x: max(0, min(geometry.size.width - 7,
+                                              geometry.size.width * fraction - 3.5)), y: -2)
+                        .animation(reduceMotion ? nil : OnboardingStyle.progress, value: fraction)
+                }
+                .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Step \(step.rawValue + 1) of \(Step.allCases.count)")
+    }
+
+    private func leave() {
+        // Nothing chosen yet, or a draft opened and left as it was: just leave. Anything else is
+        // an edit worth a word before it is thrown away.
+        if hasUnsavedEdits { confirmingDiscard = true }
+        else { previewTask?.cancel(); onFinish(.cancelled) }
+    }
+
+    // MARK: - The page
+
+    /// The interview's scaffold: the artwork that answers the question, the question, the controls.
+    @ViewBuilder
+    private var stepPage: some View {
+        if step == .preview, previewing, preview == nil {
+            buildBeat
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let scene = sceneStep, sceneLeadsThePage { artwork(scene) }
+                    if step != .preview {
+                        OnboardingHeading(title: question, subtitle: questionSubtitle)
+                            .padding(.top, 8)
+                            .padding(.horizontal, Theme.Space.xs)
+                            .onboardingEntrance(0.02, lift: 10)
+                    }
+                    if let scene = sceneStep, !sceneLeadsThePage { artwork(scene) }
+                    VStack(alignment: .leading, spacing: 10) { stepContent }
+                        // Room for the floating cards' drop shadows — the scroll view clips otherwise.
+                        .padding(.horizontal, 2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Theme.Space.lg)
+                .padding(.bottom, Theme.Space.md)
+            }
+            .scrollIndicators(.hidden)
+            .scrollBounceBehavior(.basedOnSize)
+            .scrollDismissesKeyboard(.interactively)
+        }
     }
 
     @ViewBuilder
@@ -277,84 +374,156 @@ struct PlanBuilderFlow: View {
         }
     }
 
-    // MARK: - Footer
+    private var stepTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        let dx: CGFloat = 20
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: goingBack ? -dx : dx)),
+            removal: .opacity.combined(with: .offset(x: goingBack ? dx : -dx)))
+    }
+
+    /// Each element arrives after the one above it. Clamped so a long step never stalls its last row.
+    private func cascade(_ index: Int) -> Double { 0.04 + Double(min(index, 4)) * 0.03 }
+
+    // MARK: - The artwork (the interview's own, driven by the blueprint)
+
+    /// Where a builder step asks an onboarding question, it carries that question's illustration:
+    /// the lap around the track for the goal, the race bib for the target, the baseline cards for
+    /// current running, the week calendar for availability. `OnboardingScene` reads an
+    /// `OnboardingViewModel`, so the blueprint is projected onto a throwaway one: the scene only
+    /// ever reads it, and every value below is an answer the athlete gave here.
+    private var sceneModel: OnboardingViewModel {
+        let vm = OnboardingViewModel()
+        vm.name = profile.displayName
+        // Until a door is picked the track is unrun: the blueprint opens on the athlete's standing
+        // profile goal, which is not an answer to THIS question and must not be drawn as one.
+        vm.goal = path == nil ? .generalFitness : blueprint.goal
+        vm.raceDistance = blueprint.raceDistanceM.map(RaceDistance.nearest(toMeters:))
+        vm.hasRace = path == .race
+        vm.raceDate = blueprint.raceDate ?? raceDay
+        let named = blueprint.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        vm.plannedRaceName = named.isEmpty ? nil : named
+        vm.weeklyRunVolumeM = blueprint.weeklyRunVolumeM
+        vm.longestRunM = blueprint.longestRunM
+        vm.daysPerWeek = blueprint.daysPerWeek
+        vm.preferredDays = Set(blueprint.preferredDays)
+        vm.equipment = blueprint.equipment
+        vm.hybridPriority = blueprint.hybridPriority ?? .balanced
+        vm.intensity = blueprint.intensity
+        vm.experience = blueprint.runningExperience
+        vm.distanceUnitChoice = distanceUnit.rawValue
+        return vm
+    }
+
+    /// The onboarding step whose artwork answers THIS question. The steps onboarding leaves bare
+    /// (its own starting-point and approach beats, where the cards are the illustration) stay bare
+    /// here too.
+    private var sceneStep: OnboardingViewModel.Step? {
+        switch step {
+        case .goal: .goal
+        case .target:
+            switch path {
+            case .race, .improve: .race
+            case .general: .goal
+            case .start, .none: nil
+            }
+        case .fitness: .runVolume
+        // The week and the approach draw nothing, exactly as in the interview: there the calendar
+        // IS the control, so an illustration of it would be a second, dead copy of the answer.
+        case .week, .training, .preview: nil
+        }
+    }
+
+    /// The bib hangs ABOVE the question, the way it does in the interview; everything else sits
+    /// under it.
+    private var sceneLeadsThePage: Bool { sceneStep == .race }
+
+    private func artwork(_ scene: OnboardingViewModel.Step) -> some View {
+        OnboardingScene(vm: sceneModel, step: scene)
+            .frame(height: typeSize.isAccessibilitySize ? 100 : (scene == .race ? 148 : 136))
+            // A fresh scene per answer on the goal step, so the lap runs again from the start line.
+            .id(step == .goal || step == .target ? "\(scene)-\(path?.rawValue ?? "none")" : "\(scene)")
+    }
+
+    // MARK: - The question
+
+    private var question: String {
+        switch step {
+        case .goal: "What is this plan for?"
+        case .target:
+            switch path {
+            case .race: "What's your next finish line?"
+            case .improve: "Which distance are you chasing?"
+            case .start: "Where are you starting from?"
+            case .general, .none: "What shape should it take?"
+            }
+        case .fitness: "Where is your running right now?"
+        case .week: "Let's shape your training week."
+        case .training: "How hard should this push?"
+        case .preview: "Your plan"
+        }
+    }
+
+    private var questionSubtitle: String? {
+        switch step {
+        case .goal: "Each door builds a different plan. Strength for runners can be added to any of them."
+        case .target:
+            switch path {
+            case .race: "Choose the race and the day. A target time is optional."
+            case .improve: "Long runs and quality work are shaped for it, and every block ends with a checkpoint."
+            case .start: "Easy running first. Nothing to prove."
+            case .general, .none: "Rolling blocks either way. Point them at a race whenever you like."
+            }
+        case .fitness: "This sets your starting point. The runs you log from here refine it."
+        case .week: "The coach has a pick for this goal. Change it only if your week needs something different."
+        case .training: "Your answers set the starting point. The coach owns the progression."
+        case .preview: nil
+        }
+    }
+
+    // MARK: - Footer (the pinned CTA)
 
     private var footer: some View {
-        VStack(spacing: Theme.Space.sm) {
+        VStack(spacing: Theme.Space.xs) {
             if step == .preview {
-                previewActions
-            } else {
+                OnboardingCTA(title: "Start now", isEnabled: preview != nil) { startNow() }
+                    .accessibilityIdentifier("builder-start")
                 HStack(spacing: Theme.Space.sm) {
-                    if step != .goal {
-                        Button { back() } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                                .frame(width: 52, height: 52)
-                                .background(Circle().stroke(Theme.ink, lineWidth: 1.5))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Back")
-                    }
-                    Button { advance() } label: {
-                        Text(step == .training ? "See the plan" : "Continue")
-                            .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
-                            .frame(maxWidth: .infinity).frame(minHeight: 52)
-                            .raised(Capsule(), tone: .ink)
-                    }
-                    .buttonStyle(RaisedPressStyle())
-                    .disabled(!canAdvance)
-                    .opacity(canAdvance ? 1 : 0.45)
-                    .accessibilityIdentifier("builder-continue")
+                    quietAction("Schedule", identifier: "builder-schedule") { scheduling = true }
+                    quietAction(draft == nil ? "Save as draft" : (draft?.status == .upcoming ? "Save changes" : "Save draft"),
+                                identifier: "builder-draft") { saveDraft() }
                 }
+            } else {
+                OnboardingCTA(title: step == .training ? "See the plan" : "Continue", isEnabled: canAdvance) { advance() }
+                    .accessibilityIdentifier("builder-continue")
             }
         }
         .padding(.horizontal, Theme.Space.lg)
         .padding(.top, Theme.Space.sm)
         .padding(.bottom, Theme.Space.sm)
-        .background(Theme.background.opacity(0.96))
+        // A soft rise into the page so scrolled content dissolves under the button, never an edge.
+        .background(
+            LinearGradient(colors: [Theme.background.opacity(0), Theme.background, Theme.background],
+                           startPoint: .top, endPoint: .bottom)
+                .padding(.top, -Theme.Space.lg)
+                .ignoresSafeArea())
     }
 
-    private var previewActions: some View {
-        VStack(spacing: Theme.Space.sm) {
-            HStack(spacing: Theme.Space.sm) {
-                Button { back() } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 52, height: 52)
-                        .background(Circle().stroke(Theme.ink, lineWidth: 1.5))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                Button { startNow() } label: {
-                    Text("Start now")
-                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.background)
-                        .frame(maxWidth: .infinity).frame(minHeight: 52)
-                        .raised(Capsule(), tone: .ink)
-                }
-                .buttonStyle(RaisedPressStyle())
-                .disabled(preview == nil)
-                .opacity(preview == nil ? 0.45 : 1)
-                .accessibilityIdentifier("builder-start")
-            }
-            HStack(spacing: Theme.Space.sm) {
-                Button { scheduling = true } label: {
-                    Text("Schedule")
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity).frame(minHeight: 44)
-                        .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("builder-schedule")
-                Button { saveDraft() } label: {
-                    Text(draft == nil ? "Save as draft" : (draft?.status == .upcoming ? "Save changes" : "Save draft"))
-                        .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(maxWidth: .infinity).frame(minHeight: 44)
-                        .background(Capsule().stroke(Theme.ink, lineWidth: 1.25))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("builder-draft")
-            }
+    /// The two real alternatives to starting now. Quieter than the CTA, still unmistakably buttons.
+    private func quietAction(_ title: String, identifier: String, _ action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            Text(title)
+                .font(.rounded(Theme.FontSize.caption, weight: .bold)).foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity).frame(minHeight: 46)
+                .raised(Capsule())
+                .contentShape(Capsule())
         }
+        .buttonStyle(RaisedPressStyle(scale: 0.98))
+        .accessibilityIdentifier(identifier)
     }
 
     private var canAdvance: Bool {
@@ -384,30 +553,26 @@ struct PlanBuilderFlow: View {
 
     private func advance() {
         guard canAdvance, let next = Step(rawValue: step.rawValue + 1) else { return }
-        Haptics.light()
-        withAnimation(reduceMotion ? nil : Motion.crossfade) { step = next }
+        goingBack = false
+        step = next
     }
 
     private func back() {
         guard let previous = Step(rawValue: step.rawValue - 1) else { return }
-        Haptics.light()
-        withAnimation(reduceMotion ? nil : Motion.crossfade) { step = previous }
+        goingBack = true
+        step = previous
     }
 
     // MARK: - Step 1: goal
 
     private var goalStep: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.sm) {
-            Text("Each door builds a different plan. Strength for runners can be added to any of them.")
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            ForEach(Path.allCases) { door in
-                SelectionCard(title: door.title, subtitle: door.subtitle, systemImage: door.systemImage,
-                              isSelected: path == door) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { choose(door) }
-                }
-                .accessibilityIdentifier("builder-path-\(door.rawValue)")
+        ForEach(Array(Path.allCases.enumerated()), id: \.element) { index, door in
+            ChoiceCard(title: door.title, subtitle: door.subtitle, systemImage: door.systemImage,
+                       isSelected: path == door) {
+                choose(door)
             }
+            .accessibilityIdentifier("builder-path-\(door.rawValue)")
+            .onboardingEntrance(cascade(index))
         }
     }
 
@@ -449,138 +614,235 @@ struct PlanBuilderFlow: View {
     }
 
     private var raceTarget: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            section("YOUR RACE") {
-                VStack(spacing: Theme.Space.sm) {
-                    Button { showRacePicker = true } label: {
-                        HStack(spacing: Theme.Space.md) {
-                            Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(blueprint.name.isEmpty ? "Find your race" : blueprint.name)
-                                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                                Text("Boston, Chicago, Hong Kong. The big ones, with dates.")
-                                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                            }
-                            Spacer(minLength: 0)
-                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
-                        }
-                        .padding(Theme.Space.md)
-                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    distanceCards
-                }
-            }
-            section("RACE DAY") {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    DatePicker("Race day", selection: $raceDay, in: Date()..., displayedComponents: .date)
-                        .datePickerStyle(.graphical)
-                        .padding(Theme.Space.sm)
-                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                        .onChange(of: raceDay) { _, _ in syncTarget() }
-                    if !raceDayIsValid {
-                        Text("Pick a day after today.")
-                            .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    }
-                }
-            }
-            goalTimeSection
-            if let f = feasibility { feasibilityCard(f) }
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            raceSearchRow.onboardingEntrance(cascade(0))
+            section("RACE DISTANCE") { distanceChips }
+                .onboardingEntrance(cascade(1))
+            raceDayCard.onboardingEntrance(cascade(2))
+            targetTimeRow.onboardingEntrance(cascade(3))
+            if let f = feasibility { feasibilityCard(f).onboardingEntrance(cascade(4)) }
         }
     }
 
-    private var improveTarget: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            section("THE DISTANCE") {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    Text("Long runs and quality work are shaped for it. Every block ends with a checkpoint so your paces move with you.")
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    distanceCards
+    private var raceSearchRow: some View {
+        Button { Haptics.light(); showRacePicker = true } label: {
+            HStack(spacing: Theme.Space.md) {
+                Image(systemName: "magnifyingglass").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(blueprint.name.isEmpty ? "Find your race" : blueprint.name)
+                        .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
+                    Text(blueprint.name.isEmpty
+                         ? "Boston, Chicago, Hong Kong. The big ones, with dates."
+                         : "Locked in. Distance and day are set below.")
+                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                 }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold)).foregroundStyle(Theme.inkTertiary)
             }
-            goalTimeSection
+            .padding(Theme.Space.md)
+            .onboardingCard()
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.99))
+    }
+
+    private var raceDayCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            DatePicker(selection: $raceDay, in: Date()..., displayedComponents: .date) {
+                Text("Race day").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+            .datePickerStyle(.compact)
+            .onChange(of: raceDay) { _, _ in syncTarget() }
+            if raceDayIsValid {
+                Text("The block builds, peaks and tapers to this day.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            } else {
+                Text("Pick a day after today.")
+                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.ink)
+            }
+        }
+        .padding(Theme.Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onboardingCard()
+    }
+
+    private var improveTarget: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            section("THE DISTANCE") { distanceChips }
+                .onboardingEntrance(cascade(0))
+            targetTimeRow.onboardingEntrance(cascade(1))
         }
     }
 
     private var startTarget: some View {
-        section("WHERE YOU ARE STARTING") {
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                SelectionCard(title: "New to running", subtitle: "Three easy days a week. Time on feet before anything else.",
-                              systemImage: "figure.walk", isSelected: blueprint.runningExperience == .new) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = .new; blueprint.daysPerWeek = min(blueprint.daysPerWeek, 3) }
-                }
-                SelectionCard(title: "Coming back", subtitle: "You have run before. A gentle ramp back to a regular week.",
-                              systemImage: "arrow.uturn.backward", isSelected: blueprint.runningExperience != .new) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = .some }
-                }
-                Text("If you are returning from an injury, the plan trains around it and never rushes the way back. Anything that persists or worries you is a question for a professional.")
-                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            ChoiceCard(title: "New to running", subtitle: "Three easy days a week. Time on feet before anything else.",
+                       systemImage: "figure.walk", isSelected: blueprint.runningExperience == .new) {
+                blueprint.runningExperience = .new
+                blueprint.daysPerWeek = min(blueprint.daysPerWeek, 3)
             }
+            .onboardingEntrance(cascade(0))
+            ChoiceCard(title: "Coming back", subtitle: "You have run before. A gentle ramp back to a regular week.",
+                       systemImage: "arrow.uturn.backward", isSelected: blueprint.runningExperience != .new) {
+                blueprint.runningExperience = .some
+            }
+            .onboardingEntrance(cascade(1))
+            Text("If you are returning from an injury, the plan trains around it and never rushes the way back. Anything that persists or worries you is a question for a professional.")
+                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(cascade(2))
         }
     }
 
     private var generalTarget: some View {
-        section("THE SHAPE OF IT") {
-            VStack(spacing: Theme.Space.sm) {
-                SelectionCard(title: Goal.generalFitness.planLabel, subtitle: Goal.generalFitness.planSubtitle,
-                              systemImage: Goal.generalFitness.planSystemImage, isSelected: blueprint.goal == .generalFitness) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.goal = .generalFitness }
-                }
-                SelectionCard(title: Goal.endurance.planLabel, subtitle: Goal.endurance.planSubtitle,
-                              systemImage: Goal.endurance.planSystemImage, isSelected: blueprint.goal == .endurance) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.goal = .endurance }
-                }
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            ChoiceCard(title: Goal.generalFitness.planLabel, subtitle: Goal.generalFitness.planSubtitle,
+                       systemImage: Goal.generalFitness.planSystemImage, isSelected: blueprint.goal == .generalFitness) {
+                blueprint.goal = .generalFitness
+            }
+            .onboardingEntrance(cascade(0))
+            ChoiceCard(title: Goal.endurance.planLabel, subtitle: Goal.endurance.planSubtitle,
+                       systemImage: Goal.endurance.planSystemImage, isSelected: blueprint.goal == .endurance) {
+                blueprint.goal = .endurance
+            }
+            .onboardingEntrance(cascade(1))
+        }
+    }
+
+    /// The five distances as one compact row, wrapping rather than clipping at large type (the
+    /// app is vertical only, so nothing here ever scrolls sideways).
+    private var distanceChips: some View {
+        let values = RaceDistance.allCases
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                ForEach(values) { distanceChip($0).fixedSize(horizontal: true, vertical: false) }
+            }
+            FlowLayout(spacing: 6) {
+                ForEach(values) { distanceChip($0).fixedSize(horizontal: true, vertical: false) }
             }
         }
     }
 
-    private var distanceCards: some View {
-        ForEach(RaceDistance.allCases) { d in
-            SelectionCard(title: d.label, isSelected: blueprint.raceDistanceM == d.meters) {
-                withAnimation(reduceMotion ? nil : Motion.standard) {
-                    blueprint.raceDistanceM = d.meters
-                    if hasGoalTime { seedGoalTime() }
-                    syncTarget()
+    private func distanceChip(_ distance: RaceDistance) -> some View {
+        let on = blueprint.raceDistanceM == distance.meters
+        return Button {
+            Haptics.selection()
+            blueprint.raceDistanceM = distance.meters
+            if hasGoalTime { seedGoalTime() }
+            syncTarget()
+        } label: {
+            Text(shortLabel(distance))
+                .font(.rounded(13, weight: .semibold))
+                .foregroundStyle(on ? Theme.background : Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity).frame(minHeight: 46)
+                .background {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
+                    if !on { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.hairline) }
                 }
-            }
-            .accessibilityIdentifier("builder-distance-\(d.rawValue)")
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.98))
+        .accessibilityLabel(distance.label)
+        .accessibilityAddTraits(on ? .isSelected : [])
+        .accessibilityIdentifier("builder-distance-\(distance.rawValue)")
+    }
+
+    private func shortLabel(_ distance: RaceDistance) -> String {
+        switch distance {
+        case .fiveK: "5K"
+        case .tenK: "10K"
+        case .half: "Half"
+        case .marathon: "Marathon"
+        case .fiftyK: "50K"
         }
     }
 
-    private var goalTimeSection: some View {
-        section(path == .improve ? "A TIME TO CHASE · OPTIONAL" : "TARGET FINISH · OPTIONAL") {
-            VStack(spacing: Theme.Space.sm) {
-                Toggle(isOn: $hasGoalTime.animation(reduceMotion ? nil : Motion.standard)) {
-                    Text(path == .improve ? "I have a time in mind" : "Target finish time")
-                        .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
-                }
-                .padding(Theme.Space.md)
-                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                .onChange(of: hasGoalTime) { _, on in
-                    // Seed only a blank wheel: a time the athlete already set survives a toggle.
-                    if on, goalHours == 0, goalMinutes == 0 { seedGoalTime() }
-                    syncTarget()
-                }
-                if hasGoalTime {
-                    HStack(spacing: 0) {
-                        Picker("Hours", selection: $goalHours) {
-                            ForEach(0..<10, id: \.self) { Text("\($0) hr").tag($0) }
-                        }
-                        .pickerStyle(.wheel)
-                        Picker("Minutes", selection: $goalMinutes) {
-                            ForEach(0..<60, id: \.self) { Text(String(format: "%02d min", $0)).tag($0) }
-                        }
-                        .pickerStyle(.wheel)
+    /// Optional precision lives in its own panel, the way the interview keeps a target time out of
+    /// the question's way.
+    private var targetTimeRow: some View {
+        detailRow(path == .improve ? "A time to chase" : "Target finish time",
+                  value: hasGoalTime && (goalHours > 0 || goalMinutes > 0)
+                      ? PlanFeasibility.hms(Double(goalHours * 3600 + goalMinutes * 60))
+                      : "Optional",
+                  systemImage: "timer") { showGoalTime = true }
+    }
+
+    private func detailRow(_ title: String, value: String, systemImage: String,
+                           action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage).font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary).frame(width: 28)
+                Text(title).font(.rounded(15, weight: .medium)).foregroundStyle(Theme.ink)
+                Spacer(minLength: 4)
+                Text(value).font(.rounded(12, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(Theme.inkSecondary).lineLimit(1)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.inkTertiary)
+            }
+            .padding(.horizontal, 16).frame(minHeight: 52)
+            .onboardingCard()
+        }
+        .buttonStyle(RaisedPressStyle(scale: 0.99))
+    }
+
+    /// The target-time panel. Its own sheet rather than the onboarding one, which is pinned to the
+    /// light interview; in the app this has to follow the athlete's appearance setting.
+    private var goalTimeSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                    OnboardingHeading(title: "Your target time",
+                                      subtitle: "We assess it against your starting point and say so honestly.",
+                                      size: 26)
+                    Toggle(isOn: $hasGoalTime) {
+                        Text(path == .improve ? "I have a time in mind" : "Set a target finish time")
+                            .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                     }
-                    .frame(height: 110)
-                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
-                    .onChange(of: goalHours) { _, _ in syncTarget() }
-                    .onChange(of: goalMinutes) { _, _ in syncTarget() }
+                    .padding(Theme.Space.md)
+                    .onboardingCard()
+                    .onChange(of: hasGoalTime) { _, on in
+                        // Seed only a blank wheel: a time the athlete already set survives a toggle.
+                        if on, goalHours == 0, goalMinutes == 0 { seedGoalTime() }
+                        syncTarget()
+                    }
+                    if hasGoalTime {
+                        HStack(spacing: 0) {
+                            Picker("Hours", selection: $goalHours) {
+                                ForEach(0..<10, id: \.self) { Text("\($0) hr").tag($0) }
+                            }
+                            .pickerStyle(.wheel)
+                            Picker("Minutes", selection: $goalMinutes) {
+                                ForEach(0..<60, id: \.self) { Text(String(format: "%02d min", $0)).tag($0) }
+                            }
+                            .pickerStyle(.wheel)
+                        }
+                        .frame(height: 130)
+                        .onboardingCard()
+                        .onChange(of: goalHours) { _, _ in syncTarget() }
+                        .onChange(of: goalMinutes) { _, _ in syncTarget() }
+                    } else {
+                        Text("No target is fine. The plan still builds to the distance.")
+                            .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    }
+                }
+                .padding(Theme.Space.lg)
+            }
+            .background(Theme.background)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showGoalTime = false }.fontWeight(.semibold)
                 }
             }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 
     /// The wheels and the calendar write the blueprint; the blueprint is the one source the
@@ -648,14 +910,14 @@ struct PlanBuilderFlow: View {
             Spacer(minLength: 0)
         }
         .padding(Theme.Space.md)
-        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .onboardingCard()
         .accessibilityElement(children: .combine)
     }
 
     // MARK: - Step 3: fitness
 
     private var fitnessStep: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
             section("RUNNING EXPERIENCE") {
                 VStack(spacing: Theme.Space.sm) {
                     experienceCard(.new, "New to running", "Under a year, or a long way from regular running")
@@ -663,6 +925,7 @@ struct PlanBuilderFlow: View {
                     experienceCard(.experienced, "Experienced", "Years of consistent training and racing")
                 }
             }
+            .onboardingEntrance(cascade(0))
             section("A TYPICAL WEEK RIGHT NOW") {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
                     if let evidence, evidence.usesLoggedRuns {
@@ -676,7 +939,7 @@ struct PlanBuilderFlow: View {
                             }
                         }
                         .padding(Theme.Space.md)
-                        .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                        .onboardingCard()
                         Text("From your recent Momentum runs. Update the answers below if your current running has changed.")
                             .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -703,12 +966,13 @@ struct PlanBuilderFlow: View {
                     }.accessibilityIdentifier("builder-longest-running")
                 }
             }
+            .onboardingEntrance(cascade(1))
         }
     }
 
     private func experienceCard(_ level: ExperienceLevel, _ title: String, _ subtitle: String) -> some View {
-        SelectionCard(title: title, subtitle: subtitle, isSelected: blueprint.runningExperience == level) {
-            withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.runningExperience = level }
+        ChoiceCard(title: title, subtitle: subtitle, isSelected: blueprint.runningExperience == level) {
+            blueprint.runningExperience = level
         }
     }
 
@@ -739,8 +1003,9 @@ struct PlanBuilderFlow: View {
                     .foregroundStyle(current == nil ? Theme.background : Theme.ink)
                     .padding(.horizontal, 14).frame(minHeight: 44)
                     .background {
-                        if current == nil { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
+                        if current == nil { Capsule().fill(Theme.ink) } else { Capsule().strokeBorder(Theme.hairline) }
                     }
+                    .contentShape(Capsule())
             }.buttonStyle(.plain).accessibilityAddTraits(current == nil ? .isSelected : [])
             ForEach(values, id: \.self) { v in
                 let on = current.map { abs($0 - v) < 1 } ?? false
@@ -750,7 +1015,7 @@ struct PlanBuilderFlow: View {
                         .foregroundStyle(on ? Theme.background : Theme.ink)
                         .padding(.horizontal, 14).frame(minHeight: 44)
                         .background {
-                            if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
+                            if on { Capsule().fill(Theme.ink) } else { Capsule().strokeBorder(Theme.hairline) }
                         }
                         .contentShape(Capsule())
                 }
@@ -793,98 +1058,97 @@ struct PlanBuilderFlow: View {
                                         experience: blueprint.runningExperience, lifting: blueprint.lifts)
     }
 
+    /// The interview's week question: the count as the hero figure that reacts to the tap, the
+    /// calendar that IS the preference control, and the session length under them.
     private var weekStep: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            section("DAYS A WEEK") {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    segmented([2, 3, 4, 5, 6], current: blueprint.daysPerWeek, label: { "\($0)" },
-                              spoken: { "\($0) days a week" }) { blueprint.daysPerWeek = $0 }
-                    Text(blueprint.daysPerWeek == recommendedDays
-                         ? "The coach's pick for this goal."
-                         : "The coach's pick for this goal is \(recommendedDays). Your call.")
-                        .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            VStack(alignment: .leading, spacing: Theme.Space.lg) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(blueprint.daysPerWeek)")
+                        .font(.display(42, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.ink)
+                        .contentTransition(reduceMotion ? .opacity : .numericText())
+                        // The count rolls AND lifts: the number is the answer, so the number reacts.
+                        .onboardingAcknowledge(trigger: blueprint.daysPerWeek, scale: 1.1)
+                    Text("training days / week").font(.rounded(14)).foregroundStyle(Theme.inkSecondary)
+                    Spacer(minLength: 0)
                 }
+                segmented([2, 3, 4, 5, 6], current: blueprint.daysPerWeek, label: { "\($0)" },
+                          spoken: { "\($0) training days" }) { blueprint.daysPerWeek = $0 }
+                Text(blueprint.daysPerWeek == recommendedDays
+                     ? "The coach's pick for this goal."
+                     : "The coach's pick for this goal is \(recommendedDays). Your call.")
+                    .font(.rounded(13)).foregroundStyle(Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                Text("PREFERRED DAYS · OPTIONAL")
+                    .font(.rounded(Theme.FontSize.label, weight: .bold)).tracking(1.4).foregroundStyle(Theme.inkTertiary)
+                // The same negative inset the interview gives it, so the seven days hold one row
+                // inside the card before the picker's own ViewThatFits breaks them in two.
+                OnboardingWeekPicker(selectedDays: preferredDaysBinding) {}
+                    .padding(.horizontal, -12)
+                Text(tooFewDaysChosen
+                     ? "Pick at least \(blueprint.daysPerWeek) days, or leave them all off and the coach spreads the week."
+                     : (blueprint.preferredDays.isEmpty
+                        ? "Leave them all off and the coach spreads the week. The long run lands on Sunday when it is in."
+                        : "The long run lands on Sunday when it is chosen, else Saturday, else the chosen day with the most rest after it. Hard days never sit beside it."))
+                    .font(.rounded(13, weight: tooFewDaysChosen ? .semibold : .regular))
+                    .foregroundStyle(tooFewDaysChosen ? Theme.ink : Theme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            section("WHICH DAYS") {
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface.opacity(0.55), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Theme.hairline) }
+            .onboardingEntrance(cascade(0), lift: 8)
+            section("TIME PER SESSION") {
                 VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    weekdayChips
-                    Text(tooFewDaysChosen
-                         ? "Pick at least \(blueprint.daysPerWeek) days, or leave them all off and the coach spreads the week."
-                         : (blueprint.preferredDays.isEmpty
-                            ? "Leave them all off and the coach spreads the week. The long run lands on Sunday when it is in."
-                            : "The long run lands on Sunday when it is chosen, else Saturday, else the chosen day with the most rest after it. Hard days never sit beside it."))
-                        .font(.rounded(Theme.FontSize.label, weight: .medium))
-                        .foregroundStyle(tooFewDaysChosen ? Theme.ink : Theme.inkTertiary)
+                    segmented([30, 45, 60, 75, 90], current: blueprint.sessionMinutes, label: { "\($0)m" },
+                              spoken: { "\($0) minutes" }) { blueprint.sessionMinutes = $0 }
+                    Text("Your usual sessions. Long runs are planned around your goal and your current fitness.")
+                        .font(.rounded(13)).foregroundStyle(Theme.inkSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            section("TIME PER SESSION") {
-                segmented([30, 45, 60, 75, 90], current: blueprint.sessionMinutes, label: { "\($0)m" },
-                          spoken: { "\($0) minutes" }) { blueprint.sessionMinutes = $0 }
-            }
+            .onboardingEntrance(cascade(1))
         }
     }
 
-    private var weekdayChips: some View {
-        let symbols = Calendar.current.shortWeekdaySymbols
-        let order = [2, 3, 4, 5, 6, 7, 1]
-        return HStack(spacing: 6) {
-            ForEach(order, id: \.self) { weekday in
-                let on = blueprint.preferredDays.contains(weekday)
-                Button {
-                    Haptics.selection()
-                    withAnimation(reduceMotion ? nil : Motion.selection) {
-                        if on { blueprint.preferredDays.removeAll { $0 == weekday } }
-                        else { blueprint.preferredDays.append(weekday) }
-                    }
-                } label: {
-                    Text(String(symbols[weekday - 1].prefix(2)).uppercased())
-                        .font(.rounded(Theme.FontSize.label, weight: .bold))
-                        .foregroundStyle(on ? Theme.background : Theme.ink)
-                        .frame(maxWidth: .infinity).frame(minHeight: 44)
-                        .background {
-                            if on { Capsule().fill(Theme.ink) } else { Capsule().stroke(Theme.hairline) }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(symbols[weekday - 1])
-                .accessibilityAddTraits(on ? .isSelected : [])
-            }
-        }
+    /// The interview's week picker keeps a `Set`; the blueprint stores a sorted array.
+    private var preferredDaysBinding: Binding<Set<Int>> {
+        Binding(get: { Set(blueprint.preferredDays) },
+                set: { blueprint.preferredDays = $0.sorted() })
     }
 
     // MARK: - Step 5: training
 
     private var trainingStep: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            section("HOW HARD TO PUSH") {
-                VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                    ForEach(PlanIntensity.allCases) { level in
-                        SelectionCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
-                                      subtitle: level.subtitle, isSelected: blueprint.intensity == level,
-                                      iridescent: level == .podium) {
-                            blueprint.intensity = level
-                            if blueprint.daysPerWeek < level.floorDays {
-                                blueprint.daysPerWeek = level.floorDays
-                                // Fewer chosen days than the week now holds would be ignored by
-                                // the scheduler; clear them here and say so, never silently.
-                                if !blueprint.preferredDays.isEmpty, blueprint.preferredDays.count < level.floorDays {
-                                    blueprint.preferredDays = []
-                                    daysClearedByIntensity = true
-                                }
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                ForEach(Array(PlanIntensity.allCases.enumerated()), id: \.element) { index, level in
+                    ChoiceCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
+                               subtitle: level.subtitle, isSelected: blueprint.intensity == level,
+                               iridescent: level == .podium) {
+                        blueprint.intensity = level
+                        if blueprint.daysPerWeek < level.floorDays {
+                            blueprint.daysPerWeek = level.floorDays
+                            // Fewer chosen days than the week now holds would be ignored by
+                            // the scheduler; clear them here and say so, never silently.
+                            if !blueprint.preferredDays.isEmpty, blueprint.preferredDays.count < level.floorDays {
+                                blueprint.preferredDays = []
+                                daysClearedByIntensity = true
                             }
                         }
                     }
-                    if blueprint.intensity == .podium {
-                        Text("Podium trains \(PlanIntensity.podium.floorDays) or more days a week, so your week is set to \(blueprint.daysPerWeek).\(daysClearedByIntensity ? " Your chosen days were fewer than that, so the coach picks the days." : "") Every recovery guardrail still applies.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if let note = blueprint.intensity.riskNote {
-                        Text(note).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    .onboardingEntrance(cascade(index))
+                }
+                if blueprint.intensity == .podium {
+                    Text("Podium trains \(PlanIntensity.podium.floorDays) or more days a week, so your week is set to \(blueprint.daysPerWeek).\(daysClearedByIntensity ? " Your chosen days were fewer than that, so the coach picks the days." : "") Every recovery guardrail still applies.")
+                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = blueprint.intensity.riskNote {
+                    Text(note).font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if blueprint.isRace || path == .improve {
@@ -898,14 +1162,13 @@ struct PlanBuilderFlow: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                .onboardingEntrance(cascade(4))
             }
             section("STRENGTH FOR RUNNERS") {
                 VStack(spacing: Theme.Space.sm) {
                     Toggle(isOn: Binding(get: { blueprint.lifts }, set: { on in
-                        withAnimation(reduceMotion ? nil : Motion.standard) {
-                            blueprint.includesStrength = on
-                            if !on, blueprint.goal == .getStronger || blueprint.goal == .buildMuscle { blueprint.goal = .generalFitness }
-                        }
+                        blueprint.includesStrength = on
+                        if !on, blueprint.goal == .getStronger || blueprint.goal == .buildMuscle { blueprint.goal = .generalFitness }
                     })) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Add strength days").font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
@@ -914,22 +1177,24 @@ struct PlanBuilderFlow: View {
                         }
                     }
                     .padding(Theme.Space.md)
-                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .onboardingCard()
                     if blueprint.lifts {
                         balanceCards
                         equipmentCards
                     }
                 }
             }
+            .onboardingEntrance(cascade(4))
             section("PLAN NAME · OPTIONAL") {
                 TextField(blueprint.displayName, text: $blueprint.name)
                     .font(.rounded(Theme.FontSize.body, weight: .semibold)).foregroundStyle(Theme.ink)
                     .textInputAutocapitalization(.words)
                     .submitLabel(.done)
                     .padding(Theme.Space.md)
-                    .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                    .onboardingCard()
                     .accessibilityIdentifier("builder-name")
             }
+            .onboardingEntrance(cascade(4))
         }
     }
 
@@ -953,7 +1218,12 @@ struct PlanBuilderFlow: View {
                 ForEach(values, id: \.self) { v in
                     Text(v == 0 ? "Let the coach choose" : "\(v) \(unitLabel) a week").tag(v)
                 }
-            }.pickerStyle(.menu).accessibilityIdentifier("builder-weekly-ceiling")
+            }
+            .pickerStyle(.menu)
+            .padding(.horizontal, Theme.Space.md).frame(minHeight: 52)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onboardingCard()
+            .accessibilityIdentifier("builder-weekly-ceiling")
         }
     }
 
@@ -964,9 +1234,9 @@ struct PlanBuilderFlow: View {
             (.lifting, "More strength support", "Near-even split; the extra day stays a run", "dumbbell.fill")]
         return VStack(spacing: Theme.Space.sm) {
             ForEach(opts, id: \.0) { o in
-                SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
-                              isSelected: (blueprint.hybridPriority ?? .balanced) == o.0) {
-                    withAnimation(reduceMotion ? nil : Motion.standard) { blueprint.hybridPriority = o.0 }
+                ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                           isSelected: (blueprint.hybridPriority ?? .balanced) == o.0) {
+                    blueprint.hybridPriority = o.0
                 }
             }
         }
@@ -978,59 +1248,118 @@ struct PlanBuilderFlow: View {
             (.homeMinimal, "Home minimal", "house"), (.bodyweight, "Bodyweight", "figure.cooldown")]
         return VStack(spacing: Theme.Space.sm) {
             ForEach(opts, id: \.0) { o in
-                SelectionCard(title: o.1, systemImage: o.2, isSelected: blueprint.equipment == o.0) {
+                ChoiceCard(title: o.1, systemImage: o.2, isSelected: blueprint.equipment == o.0) {
                     blueprint.equipment = o.0
                 }
             }
         }
     }
 
-    // MARK: - Step 6: preview
+    // MARK: - Step 6: the build beat, then the plan
 
-    private var previewStep: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.lg) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(blueprint.displayName)
-                    .font(.rounded(Theme.FontSize.body, weight: .bold)).foregroundStyle(Theme.ink)
-                Text(blueprint.goalLine())
-                    .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-                if let preview {
-                    let f = Date.FormatStyle().day().month(.abbreviated)
-                    let cal = Calendar.current
-                    let when = cal.isDateInToday(preview.startDate) ? "Starting today"
-                        : cal.isDateInTomorrow(preview.startDate) ? "Starting tomorrow"
-                        : "Starting \(preview.startDate.formatted(.dateTime.weekday(.wide)))"
-                    Text("\(when): \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
-                        .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+    /// The wait, as the interview draws it: the ring filling behind the brand mark and one line
+    /// that checks off when the generator has handed back a real week. Composed here rather than
+    /// reusing the interview's own beat, which paints its full-bleed white canvas over the sheet.
+    private var buildBeat: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                ProgressRing(progress: buildRing, lineWidth: 7, isStatic: reduceMotion)
+                BrandMark(size: 46)
+                    .shadow(color: .black.opacity(0.12), radius: 8, y: 4)
+            }
+            .frame(width: 100, height: 100)
+            .background {
+                RadialGradient(colors: [Theme.iridescent[0].opacity(0.42), Theme.iridescent[1].opacity(0.12), .clear],
+                               center: .center, startRadius: 8, endRadius: 110)
+                    .frame(width: 220, height: 220)
+            }
+            .padding(.bottom, Theme.Space.xl)
+            VStack(spacing: Theme.Space.xs) {
+                Text("Building your plan")
+                    .font(.display(30, weight: .semibold)).foregroundStyle(Theme.ink)
+                Text("Shaped around your answers, not averages.")
+                    .font(.rounded(17)).foregroundStyle(Theme.inkSecondary)
+            }
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, Theme.Space.lg)
+            .padding(.bottom, Theme.Space.xl)
+            HStack(spacing: Theme.Space.sm) {
+                ZStack {
+                    if buildCompleted > 0 {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 18, weight: .semibold)).foregroundStyle(.white, Theme.purple)
+                            .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.4)))
+                    } else if !reduceMotion {
+                        ProgressView().controlSize(.small).tint(Theme.inkTertiary)
+                    } else {
+                        Image(systemName: "circle").font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.hairline)
+                    }
                 }
+                .frame(width: 20, height: 20)
+                Text("Writing your week")
+                    .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                    .foregroundStyle(buildCompleted > 0 ? Theme.ink : Theme.inkSecondary)
+                Spacer(minLength: 0)
             }
-            if previewing && preview == nil {
-                HStack(spacing: Theme.Space.sm) {
-                    ProgressView().tint(Theme.ink)
-                    Text("Building your week")
-                        .font(.rounded(Theme.FontSize.caption, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                }
-                .padding(.vertical, Theme.Space.lg)
-                .frame(maxWidth: .infinity)
-            } else {
-                PlanPreviewContent(blueprint: blueprint, preview: preview, distanceUnit: distanceUnit)
-                    .opacity(previewing ? 0.6 : 1)
-                    .animation(Motion.crossfade, value: previewing)
-            }
-            if IllnessResponse.state(for: profile) != nil {
-                Text("Your recovery check-in still controls when and how you return. This is the underlying training block; starting it does not clear illness restrictions or make missed training due.")
-                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .accessibilityIdentifier("builder-recovery-context")
-            } else if profile.activeInjuryArea != nil {
-                Text("Your current injury guidance stays active. Starting this plan keeps the affected sessions protected until you complete your return check-in.")
-                    .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
-                    .accessibilityIdentifier("builder-recovery-context")
-            }
-            Text("Nothing changes until you start it. A draft never starts on its own; a scheduled plan starts on its day.")
-                .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 22).padding(.vertical, 18)
+            .frame(maxWidth: 320, alignment: .leading)
+            .raised(RoundedRectangle(cornerRadius: OnboardingStyle.cardRadius, style: .continuous))
+            .animation(reduceMotion ? nil : .spring(response: 0.42, dampingFraction: 0.62), value: buildCompleted)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Building your plan")
+    }
+
+    /// The last page reads like the plan reveal rather than a form's last field: the seal, the
+    /// plan's name in the display face, the commitment in the same cards the shelf's review sheet
+    /// draws, and the one line that says nothing has happened yet. Monochrome: the reveal earns
+    /// its one accent in the seal, and the plan is not an achievement until it is run.
+    private var previewStep: some View {
+        VStack(spacing: Theme.Space.lg) {
+            PlanPreviewHero(title: blueprint.displayName, goalLine: blueprint.goalLine(),
+                            datesLine: startingLine, ceremonial: true, sealed: sealed)
+                .padding(.top, Theme.Space.sm)
+                .onboardingEntrance(cascade(0), lift: 10)
+            PlanPreviewContent(blueprint: blueprint, preview: preview, distanceUnit: distanceUnit)
+                .opacity(previewing ? 0.6 : 1)
+                .animation(Motion.crossfade, value: previewing)
+                .onboardingEntrance(cascade(1))
+            VStack(alignment: .leading, spacing: Theme.Space.sm) {
+                if IllnessResponse.state(for: profile) != nil {
+                    Text("Your recovery check-in still controls when and how you return. This is the underlying training block; starting it does not clear illness restrictions or make missed training due.")
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                        .accessibilityIdentifier("builder-recovery-context")
+                } else if profile.activeInjuryArea != nil {
+                    Text("Your current injury guidance stays active. Starting this plan keeps the affected sessions protected until you complete your return check-in.")
+                        .font(.rounded(Theme.FontSize.label, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                        .accessibilityIdentifier("builder-recovery-context")
+                }
+                Text("Nothing changes until you start it. A draft never starts on its own; a scheduled plan starts on its day.")
+                    .font(.rounded(Theme.FontSize.label, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onboardingEntrance(cascade(2))
+        }
+        .frame(maxWidth: .infinity)
         .accessibilityIdentifier("builder-preview")
+        .task {
+            // After the page's own cascade has landed; a no-op under Reduce Motion.
+            do { try await Task.sleep(for: .seconds(0.55)) } catch { return }
+            sealed = true
+        }
+    }
+
+    /// When the plan would begin, in the words the athlete uses.
+    private var startingLine: String? {
+        guard let preview else { return nil }
+        let f = Date.FormatStyle().day().month(.abbreviated)
+        let cal = Calendar.current
+        let when = cal.isDateInToday(preview.startDate) ? "Starting today"
+            : cal.isDateInTomorrow(preview.startDate) ? "Starting tomorrow"
+            : "Starting \(preview.startDate.formatted(.dateTime.weekday(.wide)))"
+        return "\(when): \(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)"
     }
 
     /// One generation per settled change: the previous task is cancelled, and a result that comes
@@ -1042,6 +1371,11 @@ struct PlanBuilderFlow: View {
         let token = previewToken
         let snapshot = blueprint
         previewing = true
+        // The beat opens on an empty ring that fills while the generator works; the line checks
+        // off only when a real week has come back.
+        buildCompleted = 0
+        buildRing = 0
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 1.1)) { buildRing = 0.88 }
         previewTask = Task { @MainActor in
             if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
             guard !Task.isCancelled, token == previewToken else { return }
@@ -1050,6 +1384,8 @@ struct PlanBuilderFlow: View {
             guard !Task.isCancelled, token == previewToken else { return }
             PerfMark.end("builder-preview")
             withAnimation(reduceMotion ? nil : Motion.crossfade) {
+                buildRing = 1
+                buildCompleted = 1
                 preview = built
                 previewing = false
             }
@@ -1176,7 +1512,8 @@ struct PlanBuilderFlow: View {
     // MARK: - Building blocks
 
     /// Equal cells in one row while they fit; wrapped cells at larger type or with more values,
-    /// so "120 mi" never clips (the owner's wrap-never-scroll rule).
+    /// so "120 mi" never clips (the owner's wrap-never-scroll rule). Cells stay at the 44pt floor:
+    /// the interview's own segmented capsule is chrome-sized, and these are the answer.
     private func segmented(_ values: [Int], current: Int, label: @escaping (Int) -> String,
                            spoken: @escaping (Int) -> String, _ set: @escaping (Int) -> Void) -> some View {
         ViewThatFits(in: .horizontal) {
@@ -1205,7 +1542,7 @@ struct PlanBuilderFlow: View {
                 .foregroundStyle(on ? Theme.background : Theme.ink)
                 .background {
                     RoundedRectangle(cornerRadius: Theme.Radius.card).fill(on ? AnyShapeStyle(Theme.ink) : AnyShapeStyle(Theme.surface))
-                    if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
+                    if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).strokeBorder(Theme.hairline) }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card))
         }

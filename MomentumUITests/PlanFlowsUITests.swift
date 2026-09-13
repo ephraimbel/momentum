@@ -21,7 +21,9 @@ final class PlanFlowsUITests: XCTestCase {
         app.launch()
 
         // The creation frame: its own title and a blank name, but no silently inherited objective.
-        XCTAssertTrue(app.navigationBars["New plan"].waitForExistence(timeout: 15),
+        // The sheet wears the house masthead now (2026-09-12), so the title is its own header
+        // rather than a nav bar; the contract — a framed, named creation surface — is unchanged.
+        XCTAssertTrue(app.staticTexts["New plan"].waitForExistence(timeout: 15),
                       "Start-a-new-plan should open its own framed sheet.")
         let create = app.buttons["Create plan"]
         XCTAssertTrue(create.exists, "The new-plan flow must always offer Create plan.")
@@ -68,7 +70,8 @@ final class PlanFlowsUITests: XCTestCase {
         }
         app.launch()
 
-        XCTAssertTrue(app.navigationBars["Plan settings"].waitForExistence(timeout: 15),
+        // Same masthead as the creation frame (2026-09-12): a header, not a nav bar.
+        XCTAssertTrue(app.staticTexts["Plan settings"].waitForExistence(timeout: 15),
                       "Adjusting should open the existing-plan form.")
         let nameField = app.textFields["e.g. Austin Marathon"]
         let goalHeader = app.staticTexts["YOUR GOAL"]

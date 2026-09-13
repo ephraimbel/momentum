@@ -246,7 +246,10 @@ struct YourPlansView: View {
             blueprint: blueprint,
             preview: PlanPreview.build(snapshot: CoachUndo.planState(of: plan), blueprint: blueprint,
                                        distanceUnit: distanceUnit, anchor: PlanLifecycleService.span(of: plan).start))
-        openCurrentReview()
+        // Raise the sheet AFTER the snapshot exists, or its content closure finds no review and
+        // presents an empty sheet. (This line called itself until 2026-09-12: tapping the current
+        // plan card recursed until the stack overflowed.)
+        reviewing = ReviewTarget(kind: .current)
     }
 
     private func currentCard(_ plan: TrainingPlan) -> some View {

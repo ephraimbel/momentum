@@ -40,10 +40,39 @@ struct PlanReviewView<Actions: View>: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        PlanPreviewHero(title: title, status: status, goalLine: blueprint.goalLine(), datesLine: datesLine)
+    }
+
+    private var datesLine: String? {
+        guard let preview else { return nil }
+        let f = Date.FormatStyle().day().month(.abbreviated).year()
+        return "\(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)"
+    }
+}
+
+/// The plan's own masthead, shared by the builder's last step and the shelf's review sheet so a
+/// plan introduces itself the same way wherever it is read (2026-09-12). `ceremonial` is the
+/// builder's reveal-shaped version: centered, under a sealed "ready" capsule — the one place this
+/// page carries an accent, and the only one, since a plan is not an achievement until it is run.
+struct PlanPreviewHero: View {
+    let title: String
+    var status: PlanShelfStatus? = nil
+    let goalLine: String
+    var datesLine: String? = nil
+    var ceremonial = false
+    /// Bounce the seal once, when the caller says the page has landed.
+    var sealed = false
+
+    var body: some View {
+        VStack(alignment: ceremonial ? .center : .leading, spacing: ceremonial ? 10 : 4) {
+            if ceremonial { seal }
             HStack(spacing: Theme.Space.sm) {
                 Text(title)
-                    .font(.display(Theme.FontSize.headline, weight: .heavy)).foregroundStyle(Theme.ink)
+                    .font(.display(ceremonial ? 32 : Theme.FontSize.headline, weight: ceremonial ? .semibold : .heavy))
+                    .tracking(ceremonial ? -0.8 : 0)
+                    .foregroundStyle(Theme.ink)
+                    .multilineTextAlignment(ceremonial ? .center : .leading)
+                    .lineLimit(3).minimumScaleFactor(0.7)
                     .fixedSize(horizontal: false, vertical: true)
                 if let status {
                     Text(status.label)
@@ -52,18 +81,41 @@ struct PlanReviewView<Actions: View>: View {
                         .background(Capsule().stroke(Theme.hairline))
                 }
             }
-            Text(blueprint.goalLine())
-                .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkSecondary)
-            if let preview {
-                let f = Date.FormatStyle().day().month(.abbreviated).year()
-                Text("\(preview.startDate.formatted(f)) to \(preview.endDate.formatted(f)) · \(preview.durationLine)")
+            Text(goalLine)
+                .font(.rounded(ceremonial ? 15 : Theme.FontSize.caption, weight: .medium))
+                .foregroundStyle(Theme.inkSecondary)
+                .multilineTextAlignment(ceremonial ? .center : .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            if let datesLine {
+                Text(datesLine)
                     .font(.rounded(Theme.FontSize.caption, weight: .medium)).monospacedDigit()
                     .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(ceremonial ? .center : .leading)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .frame(maxWidth: .infinity, alignment: ceremonial ? .center : .leading)
         .accessibilityElement(children: .combine)
     }
 
+    private var seal: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.purple)
+                .symbolEffect(.bounce.up, options: .nonRepeating, value: sealed)
+            Text("YOUR PLAN IS READY")
+                .font(.rounded(11, weight: .bold)).tracking(1.6).foregroundStyle(Theme.inkSecondary)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .raised(Capsule())
+        .overlay {
+            Capsule().strokeBorder(
+                LinearGradient(colors: [Theme.iridescent[1], Theme.purple.opacity(0.72), Theme.iridescent[2]],
+                               startPoint: .leading, endPoint: .trailing),
+                lineWidth: 1)
+                .opacity(0.72)
+        }
+    }
 }
 
 /// The preview's cards on their own, so the shelf's review sheet and the builder's last step draw

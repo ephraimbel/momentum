@@ -18,6 +18,7 @@ struct PlanSettingsSheet: View {
 
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
+    @ReducedMotionPreference private var reduceMotion
 
     @State private var name: String
     /// A new plan has no silently inherited objective: the athlete actively chooses what this block
@@ -204,21 +205,24 @@ struct PlanSettingsSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 0) {
+            masthead
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.xl) {
-                    nameSection
-                    goalSection
-                    if racing { raceSection }
-                    if racing { tuneUpSection }
-                    startingPointSection
-                    if hybrid { balanceSection }
-                    intensitySection
-                    if racing { ceilingSection }
-                    daysSection
-                    sessionSection
-                    if lifting { splitSection }
-                    if lifting { equipmentSection }
+                    // Cascaded in the interview's rhythm: the form assembles rather than appearing
+                    // all at once, and the order below is the order the athlete reads.
+                    nameSection.onboardingEntrance(cascade(0))
+                    goalSection.onboardingEntrance(cascade(1))
+                    if racing { raceSection.onboardingEntrance(cascade(2)) }
+                    if racing { tuneUpSection.onboardingEntrance(cascade(3)) }
+                    startingPointSection.onboardingEntrance(cascade(3))
+                    if hybrid { balanceSection.onboardingEntrance(cascade(4)) }
+                    intensitySection.onboardingEntrance(cascade(4))
+                    if racing { ceilingSection.onboardingEntrance(cascade(4)) }
+                    daysSection.onboardingEntrance(cascade(4))
+                    sessionSection.onboardingEntrance(cascade(4))
+                    if lifting { splitSection.onboardingEntrance(cascade(4)) }
+                    if lifting { equipmentSection.onboardingEntrance(cascade(4)) }
                     Text(footerNote)
                         .font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -226,17 +230,23 @@ struct PlanSettingsSheet: View {
                 .padding(Theme.Space.lg)
                 .padding(.bottom, Theme.Space.xxl)
             }
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
             .background(Theme.background)
-            .navigationTitle(mode == .create ? "New plan" : "Plan settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(confirmTitle) { apply() }
-                        .fontWeight(.semibold)
-                        .disabled(!canCommit)
-                        .accessibilityValue(commitAccessibilityValue)
-                }
+            // The commit is a pinned capsule, the way every decision in the flow is taken — never a
+            // small word in a nav bar. It carries the same title and the same spoken reason it is
+            // not yet armed ("Choose a goal"), so the contract the tests pin is unchanged.
+            .safeAreaInset(edge: .bottom) {
+                OnboardingCTA(title: confirmTitle, isEnabled: canCommit) { apply() }
+                    .accessibilityValue(commitAccessibilityValue)
+                    .padding(.horizontal, Theme.Space.lg)
+                    .padding(.top, Theme.Space.sm)
+                    .padding(.bottom, Theme.Space.sm)
+                    .background(
+                        LinearGradient(colors: [Theme.background.opacity(0), Theme.background, Theme.background],
+                                       startPoint: .top, endPoint: .bottom)
+                            .padding(.top, -Theme.Space.lg)
+                            .ignoresSafeArea())
             }
             // Hosted at stack level so the catalog can open from ANY state — picking a race is
             // allowed to be the thing that switches the plan's focus to racing.
@@ -295,9 +305,41 @@ struct PlanSettingsSheet: View {
                 if hasGoalTime, mode == .create || profile.goalFinishTimeS == nil { seedGoalTime() }
             }
         }
+        .background(Theme.background)
         .presentationBackground(Theme.background)
         .trackScreen(.planSettings)
     }
+
+    /// The house sheet masthead: the lowercase title the builder and the interview's own sheets
+    /// wear, and one glass disc for leaving. Spoken as "New plan"/"Plan settings" so the framed
+    /// creation surface is still identifiable to VoiceOver and to the walkers.
+    private var masthead: some View {
+        ZStack {
+            Text(mode == .create ? "new plan" : "plan settings")
+                .font(.display(20, weight: .bold)).foregroundStyle(Theme.ink)
+                .accessibilityLabel(mode == .create ? "New plan" : "Plan settings")
+                .accessibilityAddTraits(.isHeader)
+            HStack {
+                Spacer(minLength: 0)
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.inkSecondary)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Theme.surface))
+                        .frame(width: 44, height: 44)   // the disc reads at 36; the target stays 44
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel")
+            }
+        }
+        .padding(.horizontal, Theme.Space.lg)
+        .padding(.top, Theme.Space.md)
+        .padding(.bottom, Theme.Space.sm)
+    }
+
+    /// The interview's staggered entrance delay for the i-th block.
+    private func cascade(_ i: Int) -> Double { 0.04 + Double(min(i, 4)) * 0.03 }
 
     // MARK: Sections
 
@@ -311,7 +353,7 @@ struct PlanSettingsSheet: View {
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)
                 .padding(Theme.Space.md)
-                .raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+                .onboardingCard()
         }
     }
 
@@ -331,9 +373,9 @@ struct PlanSettingsSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, Theme.Space.xs)
                 ForEach(goals, id: \.self) { item in
-                    SelectionCard(title: item.planLabel, subtitle: item.planSubtitle,
+                    ChoiceCard(title: item.planLabel, subtitle: item.planSubtitle,
                                   systemImage: item.planSystemImage, isSelected: goal == item) {
-                        withAnimation(Motion.standard) { goal = item }
+                        goal = item
                     }
                 }
             }
@@ -431,7 +473,7 @@ struct PlanSettingsSheet: View {
                 .buttonStyle(.plain)
 
                 ForEach(RaceDistance.allCases) { d in
-                    SelectionCard(title: d.label, isSelected: raceDistance == d) {
+                    ChoiceCard(title: d.label, isSelected: raceDistance == d) {
                         withAnimation(Motion.standard) { raceDistance = d }
                     }
                 }
@@ -637,7 +679,7 @@ struct PlanSettingsSheet: View {
         return section("STRENGTH SPLIT") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(opts, id: \.0) { o in
-                    SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                    ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3,
                                   isSelected: strengthSplit == o.0) {
                         withAnimation(Motion.standard) { strengthSplit = o.0 }
                     }
@@ -662,7 +704,7 @@ struct PlanSettingsSheet: View {
         return section("RUN & LIFT BALANCE") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(opts, id: \.0) { o in
-                    SelectionCard(title: o.1, subtitle: o.2, systemImage: o.3,
+                    ChoiceCard(title: o.1, subtitle: o.2, systemImage: o.3,
                                   isSelected: hybridPriority == o.0) {
                         withAnimation(Motion.standard) { hybridPriority = o.0 }
                     }
@@ -682,7 +724,7 @@ struct PlanSettingsSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, Theme.Space.xs)
                 ForEach(PlanIntensity.allCases) { level in
-                    SelectionCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
+                    ChoiceCard(title: level == recommendedIntensity ? "\(level.label)  ·  Recommended" : level.label,
                                   subtitle: level.subtitle,
                                   isSelected: intensity == level,
                                   iridescent: level == .podium) {
@@ -757,7 +799,19 @@ struct PlanSettingsSheet: View {
 
     private var daysSection: some View {
         section("DAYS / WEEK") {
-            segmented([2, 3, 4, 5, 6], current: days, label: { "\($0)" }) { days = $0 }
+            VStack(alignment: .leading, spacing: Theme.Space.md) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(days)").font(.display(34, weight: .semibold)).monospacedDigit()
+                        .foregroundStyle(Theme.ink)
+                        .contentTransition(reduceMotion ? .opacity : .numericText())
+                        // The number is the answer, so the number is what reacts (the interview's rule).
+                        .onboardingAcknowledge(trigger: days, scale: 1.1)
+                    Text("training days / week").font(.rounded(14)).foregroundStyle(Theme.inkSecondary)
+                    Spacer(minLength: 0)
+                }
+                .animation(reduceMotion ? nil : Motion.content, value: days)
+                segmented([2, 3, 4, 5, 6], current: days, label: { "\($0)" }) { days = $0 }
+            }
         }
     }
 
@@ -783,7 +837,7 @@ struct PlanSettingsSheet: View {
         return section("EQUIPMENT") {
             VStack(spacing: Theme.Space.sm) {
                 ForEach(opts, id: \.0) { o in
-                    SelectionCard(title: o.1, systemImage: o.2, isSelected: equipment == o.0) { equipment = o.0 }
+                    ChoiceCard(title: o.1, systemImage: o.2, isSelected: equipment == o.0) { equipment = o.0 }
                 }
             }
         }
@@ -843,7 +897,7 @@ struct PlanSettingsSheet: View {
 
     private var cardBackground: some View {
         ZStack {
-            Color.clear.raised(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            Color.clear.onboardingCard()
         }
     }
 
@@ -861,7 +915,8 @@ struct PlanSettingsSheet: View {
                             if !on { RoundedRectangle(cornerRadius: Theme.Radius.card).stroke(Theme.hairline) }
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(RaisedPressStyle(scale: 0.97))
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
         }
     }
