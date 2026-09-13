@@ -42,7 +42,13 @@ struct PostCommentsView: View {
     private var visible: [Comment] {
         if memo.id != item.id {
             memo.id = item.id
+            #if DEBUG
+            memo.comments = CommunityPerf.time("comments.seed") {
+                item.isCommunity ? CommunityComments.seed(for: item) : []
+            }
+            #else
             memo.comments = item.isCommunity ? CommunityComments.seed(for: item) : []
+            #endif
         }
         return (memo.comments + comments.comments(for: item.id))
             .filter(moderation.isVisible)
@@ -50,6 +56,9 @@ struct PostCommentsView: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("commentsSheet")
+        #endif
         NavigationStack {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in

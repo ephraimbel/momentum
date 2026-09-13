@@ -41,8 +41,11 @@ struct AvatarView: View {
     }()
 
     var body: some View {
-        if let imageName, let ui = UIImage(named: imageName) {
+        if let imageName, let ui = CommunityFaceCache.cached(imageName) ?? UIImage(named: imageName) {
+            // A face already decoded off-main draws for free; a cold one still shows at once
+            // (`UIImage(named:)` decodes on this draw) and is prepared for every later draw.
             photoAvatar(ui)
+                .onAppear { CommunityFaceCache.prefetch([imageName]) }
         } else if let photo, let ui = Self.decodedImage(photo) {
             photoAvatar(ui)
         } else if let preset {
@@ -111,3 +114,43 @@ struct MonogramAvatar: View {
 
 }
 
+
+
+/// The bundled community faces, DECODED, for the session (2026-09-12).
+///
+/// `UIImage(named:)` caches the image object, not its pixels: a 512×512 JPEG face is decoded on
+/// the main thread the first time it is drawn, ~2–5 ms each. The wall wears a 20pt face chip on
+/// every tile, so each new row scrolled in was decoding several faces inside the scroll frame,
+/// and an athlete profile grid decoded twenty-odd at once on push. Faces are prepared off-main
+/// (`preparingForDisplay`) ahead of the tiles that need them — the wall's reveal window, the
+/// pager's neighbours, a comment thread — and read back synchronously here.
+@MainActor
+enum CommunityFaceCache {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 160                       // a long wall scroll's worth of distinct faces
+        c.totalCostLimit = 48 * 1_048_576        // ~1 MB per decoded face
+        return c
+    }()
+    private static var inFlight: Set<String> = []
+
+    /// The decoded face if it is in hand — no `await`, no decode.
+    static func cached(_ name: String) -> UIImage? { cache.object(forKey: name as NSString) }
+
+    /// Decode these faces off the main thread so their first draw costs nothing. A hit or an
+    /// in-flight request is free; unknown names are dropped quietly.
+    static func prefetch<S: Sequence>(_ names: S) where S.Element == String {
+        for name in names where cache.object(forKey: name as NSString) == nil && !inFlight.contains(name) {
+            inFlight.insert(name)
+            Task.detached(priority: .utility) {
+                let prepared = UIImage(named: name)?.preparingForDisplay()
+                await MainActor.run {
+                    inFlight.remove(name)
+                    guard let prepared else { return }
+                    let cost = Int(prepared.size.width * prepared.scale * prepared.size.height * prepared.scale * 4)
+                    cache.setObject(prepared, forKey: name as NSString, cost: cost)
+                }
+            }
+        }
+    }
+}

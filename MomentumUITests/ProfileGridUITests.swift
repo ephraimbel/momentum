@@ -71,10 +71,24 @@ final class ProfileGridUITests: XCTestCase {
         dump(app, "verify_pager_next2")
         // Re-resolve Close AFTER the swipes: the pager renders a Close per page, so `firstMatch`
         // can bind one that has scrolled off the top (seen at y = -804, "not hittable"). Tap
-        // whichever one is actually on screen.
-        let onScreenClose = app.buttons.matching(NSPredicate(format: "label == %@", "Close"))
-            .allElementsBoundByIndex.first(where: \.isHittable) ?? close
-        onScreenClose.tap()
+        // whichever one is actually on screen — once the deck has SETTLED: a synthetic flick
+        // projects several pages with `.paging`, so right after `swipeUp()` returns the deck is
+        // still decelerating, a mid-transit Close reads as hittable for an instant, and the
+        // index-bound element it hands back points at a different page by the time the tap
+        // resolves (seen at y = 944, 2026-09-12). Settled = the on-screen Close is parked at the
+        // page's top-left for two consecutive polls.
+        let closes = app.buttons.matching(NSPredicate(format: "label == %@", "Close"))
+        var onScreenClose: XCUIElement?
+        var parkedFrame: CGRect?
+        let settle = Date().addingTimeInterval(8)
+        while onScreenClose == nil, Date() < settle {
+            usleep(300_000)
+            guard let candidate = closes.allElementsBoundByIndex.first(where: \.isHittable),
+                  candidate.frame.minY < 150 else { parkedFrame = nil; continue }
+            if parkedFrame == candidate.frame { onScreenClose = candidate } else { parkedFrame = candidate.frame }
+        }
+        XCTAssertNotNil(onScreenClose, "No Close button settled on screen after paging.")
+        (onScreenClose ?? close).tap()
         XCTAssertTrue(gridTab.waitForExistence(timeout: 5), "Didn't return to the grid after closing.")
     }
 

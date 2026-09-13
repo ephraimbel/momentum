@@ -25,29 +25,50 @@ struct ImmersiveWorkoutPager: View {
     var byline: WorkoutByline? = nil
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var replaySelection: WorkoutReplaySelection?
     /// A cover swap is browsing state, not an edit to the athlete's saved cover preference. Keep
     /// it at the pager root so a vertical swipe that recycles a lazy page does not forget which
     /// side the viewer brought forward. The saved `coverIsPhoto` remains the initial value.
     @State private var photoHeroOverrides: [UUID: Bool] = [:]
     @State private var photoPageByWorkout: [UUID: Int] = [:]
-    /// Only the snapped page owns a live Mapbox canvas. LazyVStack keeps neighbors alive; letting
-    /// every route page run a map wastes GPU memory and can unload the app after rapid relaunches.
+    /// The page at the scroll position — follows the finger at once (it flips to the incoming
+    /// page the moment the gesture ends, before the snap animation has finished).
     @State private var visibleWorkoutID: UUID?
+    /// Only ONE page owns a live Mapbox canvas. LazyVStack keeps neighbors alive; letting every
+    /// route page run a map wastes GPU memory and can unload the app after rapid relaunches.
+    ///
+    /// **Advanced only once the paging scroll has SETTLED** (2026-09-12). `scrollPosition` flips
+    /// mid-deceleration, and handing the live map over on that flip meant a Mapbox view was being
+    /// created — and the previous one torn down — on the main thread in the exact frames the snap
+    /// animation was running: the hitch on every swipe. Until the scroll rests the incoming page
+    /// shows its painted route card and the outgoing page keeps its map; the swap lands on a
+    /// still screen and fades in over the card.
+    @State private var liveWorkoutID: UUID?
+    /// The page the scroll last came to rest on; `liveWorkoutID` follows it after `PagerLiveMap.dwell`.
+    @State private var settledWorkoutID: UUID?
+    @State private var liveArmTask: Task<Void, Never>?
+    @State private var scrollPhase: ScrollPhase = .idle
+    @State private var prefetchTask: Task<Void, Never>?
 
     var body: some View {
         GeometryReader { geo in
             // geo.size excludes the safe area; add the insets back so a page == the full-screen viewport.
             let fullHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+            let pageSize = CGSize(width: geo.size.width, height: fullHeight)
+            let settledID = settledWorkoutID ?? startID
+            let settledIndex = workouts.firstIndex(where: { $0.id == settledID }) ?? 0
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
-                        ForEach(workouts) { workout in
+                        ForEach(Array(workouts.enumerated()), id: \.element.id) { index, workout in
                             ImmersiveWorkoutPage(
                                 workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit,
                                 byline: byline, isFirst: workout.id == startID,
-                                isActive: (visibleWorkoutID ?? startID) == workout.id,
+                                isActive: liveWorkoutID == workout.id,
+                                isNear: abs(index - settledIndex) == 1,
                                 topInset: geo.safeAreaInsets.top, bottomInset: geo.safeAreaInsets.bottom,
+                                pageSize: pageSize,
                                 photoHeroRequested: photoHeroBinding(for: workout),
                                 photoPage: photoPageBinding(for: workout.id),
                                 onClose: { dismiss() },
@@ -73,6 +94,33 @@ struct ImmersiveWorkoutPager: View {
                     visibleWorkoutID = startID
                     var tx = Transaction(); tx.disablesAnimations = true
                     withTransaction(tx) { proxy.scrollTo(startID, anchor: .top) }
+                    settle(on: startID, pageSize: pageSize)
+                }
+                .onDisappear {
+                    liveArmTask?.cancel()
+                    liveArmTask = nil
+                    prefetchTask?.cancel()
+                    prefetchTask = nil
+                }
+                .onChange(of: visibleWorkoutID) { _, id in
+                    guard let id else { return }
+                    // The deck is heading for another page: drop the live canvas NOW, while the
+                    // outgoing page slides away over its identical static frame, so the snap
+                    // animates on a main thread that isn't also running a map.
+                    if let liveWorkoutID, liveWorkoutID != id {
+                        liveArmTask?.cancel()
+                        self.liveWorkoutID = nil
+                    }
+                    // A position change that arrives with the scroll already at rest (a
+                    // programmatic jump, or the phase settling before the id update) must not
+                    // wait for a phase change that will never come.
+                    guard scrollPhase == .idle else { return }
+                    settle(on: id, pageSize: pageSize)
+                }
+                .onScrollPhaseChange { _, phase in
+                    scrollPhase = phase
+                    guard phase == .idle, let id = visibleWorkoutID else { return }
+                    settle(on: id, pageSize: pageSize)
                 }
             }
         }
@@ -85,6 +133,66 @@ struct ImmersiveWorkoutPager: View {
         // This pager is itself a full-screen cover. A locked replay tap needs a presentation host
         // in this live context or the paywall would wait behind the pager until it closes.
         .nestedPaywallHost()
+    }
+
+    /// The paging scroll has come to rest on `id`: warm its neighbours now, and hand it the live
+    /// map once it has been rested on for `PagerLiveMap.dwell` — a page flicked past never mounts
+    /// one, and the first open mounts it after the zoom transition rather than during it.
+    /// Idempotent: a settle on the page already settled does nothing.
+    private func settle(on id: UUID, pageSize: CGSize) {
+        if settledWorkoutID != id {
+            settledWorkoutID = id
+            prefetch(around: id, pageSize: pageSize)
+        }
+        guard liveWorkoutID != id else { return }
+        liveArmTask?.cancel()
+        liveArmTask = Task { @MainActor in
+            try? await Task.sleep(for: PagerLiveMap.dwell)
+            guard !Task.isCancelled, settledWorkoutID == id else { return }
+            liveWorkoutID = id
+        }
+    }
+
+    /// Warm the page in hand and one neighbour each way, in that order: the live page's route
+    /// first (so its map mounts the instant the page settles), then each neighbour's decoded
+    /// card, photos, route, and a full-bleed render at this pager's exact page size — the key its
+    /// page reads — so the swipe lands on a finished map and the live canvas that follows is a
+    /// crossfade of like for like. Held and cancelled: a new settle supersedes an old prefetch.
+    private func prefetch(around id: UUID, pageSize: CGSize) {
+        prefetchTask?.cancel()
+        guard let center = workouts.firstIndex(where: { $0.id == id }) else { return }
+        let neighbors = [center - 1, center + 1].filter(workouts.indices.contains)
+        let scheme = colorScheme
+        prefetchTask = Task { @MainActor in
+            let live = workouts[center]
+            if live.type.isGPS, live.gps != nil {
+                _ = await RouteCoordinateCache.coordinates(for: live)
+            }
+            for index in neighbors {
+                guard !Task.isCancelled else { return }
+                let workout = workouts[index]
+                // Photo blobs are external storage; only touch them for a workout that has some
+                // (the relationship rows are cheap to ask, the bytes are not).
+                if !workout.photos.isEmpty {
+                    for data in workout.orderedPhotosData.prefix(2) {
+                        ImageDownsampler.prefetch(data, maxPixel: 1400)
+                    }
+                }
+                guard workout.type.isGPS, let gps = workout.gps else { continue }
+                WorkoutRouteCard.prefetch(for: workout)
+                let coords = await RouteCoordinateCache.coordinates(for: workout)
+                guard !Task.isCancelled, coords.count > 1 else { continue }
+                #if DEBUG
+                // XCUITest realizes every lazy page at once; a queue of Mapbox renders starves
+                // the run (the community wall's guard).
+                if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { continue }
+                #endif
+                _ = await FeedRouteSnapshots.image(
+                    post: workout.id, coordinates: coords, style: gps.mapStyle, scheme: scheme,
+                    size: pageSize, endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed,
+                    insets: RouteStandIn.pageInsets, clipEnds: false)
+            }
+        }
     }
 
     private func photoHeroBinding(for workout: Workout) -> Binding<Bool> {
@@ -150,9 +258,14 @@ private struct ImmersiveWorkoutPage: View {
     var distanceUnit: DistanceUnit
     var byline: WorkoutByline?
     var isFirst: Bool
+    /// The page the pager has settled on — owns the single live Mapbox canvas.
     var isActive: Bool
+    /// Within one page of the live one — worth painting the full-bleed route ahead of the swipe.
+    var isNear: Bool
     var topInset: CGFloat
     var bottomInset: CGFloat
+    /// The pager's page frame — the route media's render/cache size.
+    var pageSize: CGSize
     @Binding var photoHeroRequested: Bool
     @Binding var photoPage: Int
     var onClose: () -> Void
@@ -163,6 +276,9 @@ private struct ImmersiveWorkoutPage: View {
     @State private var showHint = false
     /// The full editor, the same one the history detail opens.
     @State private var editing = false
+    /// The share composer (the same `ShareCardView` the history detail's `ShareButton` presents;
+    /// the control itself is map-safe here, see `topBar`).
+    @State private var sharing = false
     /// Camera line to the route map (routes only): shows the re-center control once the athlete
     /// pinch-explores away from the fitted overview, and answers its tap.
     @State private var mapCamera = RouteMapCameraHandle()
@@ -182,11 +298,17 @@ private struct ImmersiveWorkoutPage: View {
     /// `.tile` in the thumbnail, `.immersive` full screen. The immersive style is composed for a
     /// full page — inside a 62pt card it rendered as an empty wash. `.tile` is the style the grid
     /// already uses at this size, so the thumbnail is literally the tile the athlete knows.
+    ///
+    /// The hero is ALWAYS `.immersive`, live or not (2026-09-12). It used to flip to `.tile` for
+    /// every page but the active one, so a neighbour drew a 480px grid thumbnail blown up to full
+    /// screen, and becoming active re-resolved the media from scratch — a route walk, then a live
+    /// map behind an opaque grey loader — on every single swipe. Now only `isLive` moves.
     private func ownVisual(interactive: Bool) -> some View {
         let live = interactive && isActive
-        return WorkoutTileMedia(workout: workout, style: live ? .immersive : .tile,
+        return WorkoutTileMedia(workout: workout, style: interactive ? .immersive : .tile,
                          respectsPhotoCover: false,
                          distanceUnit: distanceUnit,
+                         isLive: live, isNear: isNear, pageSize: pageSize,
                          mapCameraHandle: live ? mapCamera : nil)
     }
 
@@ -226,6 +348,9 @@ private struct ImmersiveWorkoutPage: View {
         }
         .contentShape(Rectangle())
         .sheet(isPresented: $editing) { editSheet }
+        .sheet(isPresented: $sharing) {
+            ShareCardView(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
+        }
         .onChange(of: workout.coverIsPhoto) { _, newValue in
             guard !photos.isEmpty else { photoHeroRequested = false; return }
             swapHero(toPhotos: newValue, haptic: false)
@@ -282,55 +407,52 @@ private struct ImmersiveWorkoutPage: View {
         }
     }
 
+    /// Every control here floats over a LIVE Mapbox canvas, so none of them is a plain `Button`
+    /// (2026-09-12): a SwiftUI Button layered over `Map` intermittently loses its tap to the map's
+    /// UIKit recognizers — the tap lands and nothing happens. `mapSafeTap` (Today's chrome, the
+    /// live run's controls, the community pager's rail) claims the touch first.
     private var topBar: some View {
         HStack(alignment: .top) {
-            Button(action: onClose) {
-                Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                    .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-            }
-            .accessibilityLabel("Close")
+            Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                .mapSafeTap("Close", action: onClose)
             Spacer()
             VStack(spacing: Theme.Space.sm) {
-                ShareButton(workout: workout, weightUnit: weightUnit, distanceUnit: distanceUnit)
+                Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.ink)
                     .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                    .mapSafeTap("Share") { sharing = true }
                 // Route controls belong to the route canvas. When photos are the hero, the route
                 // is one tap away in the alternate rectangle and these controls stay out of the
                 // photograph's chrome.
                 if !photosAreHero, workout.type.isGPS, (workout.gps?.distanceM ?? 0) > 0 {
                     let locked = !paywall.isEntitled(to: .routeReplay)
-                    Button {
-                        if locked { paywall.present(for: .routeReplay) }
-                        else { onOpenReplay(); Haptics.light() }
-                    } label: {
-                        Image(systemName: locked ? "lock.fill" : "play.fill")
-                            .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface))
-                            .overlay(Circle().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
-                    }
-                    .accessibilityIdentifier("routeReplayButton")
-                    .accessibilityLabel(locked ? "Replay route, Pro" : "Replay route")
-                    .accessibilityHint(locked ? "Opens the Pro offer" : "Animates this recorded route")
+                    Image(systemName: locked ? "lock.fill" : "play.fill")
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36).background(Circle().fill(Theme.surface))
+                        .overlay(Circle().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
+                        .mapSafeTap(locked ? "Replay route, Pro" : "Replay route") {
+                            if locked { paywall.present(for: .routeReplay) }
+                            else { onOpenReplay(); Haptics.light() }
+                        }
+                        .accessibilityIdentifier("routeReplayButton")
+                        .accessibilityHint(locked ? "Opens the Pro offer" : "Animates this recorded route")
                 }
                 // Edit lives here because this pager is the athlete's OWN media — its single call
                 // site is their profile grid (other people's posts open in `CommunityPager`), so
                 // there is no "is this mine" question to ask. This is where people actually look
                 // back at what they posted, so it is where "change the name / add the photo /
                 // narrow the audience" has to be reachable.
-                Button { editing = true } label: {
-                    Image(systemName: "pencil").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                        .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-                }
-                .accessibilityLabel("Edit activity")
+                Image(systemName: "pencil").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                    .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                    .mapSafeTap("Edit activity") { editing = true }
                 // Appears only once the athlete pinch-explores the route map; one tap re-frames
                 // the whole route. Joins the trailing control column so the map stays uncluttered.
                 if !photosAreHero, mapCamera.isExplored {
-                    Button { mapCamera.recenter() } label: {
-                        Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-                    }
-                    .accessibilityLabel("Re-center route")
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    Image(systemName: "viewfinder").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                        .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                        .mapSafeTap("Re-center route") { mapCamera.recenter() }
+                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 }
             }
             .animation(.easeOut(duration: 0.25), value: mapCamera.isExplored)

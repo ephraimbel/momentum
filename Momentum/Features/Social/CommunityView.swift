@@ -417,6 +417,9 @@ struct CommunityView: View {
         lastAssembledKey = key
         Self.sessionFeed = built.items
         Self.sessionLatest = built.latest
+        // The faces the first two pages of tiles will wear, decoded before the tiles draw them.
+        CommunityFaceCache.prefetch(built.items.prefix(window.count + Self.windowStep)
+                                        .compactMap(\.communityAvatarAsset))
         prepareExperienceIfNeeded()
         consumePendingSocialDestination()
     }
@@ -1134,6 +1137,9 @@ struct CommunityView: View {
     private func reveal(_ count: Int) {
         let target = min(max(count, window.count), items.count)
         guard target != window.count else { return }
+        // The window grows a page ahead of the scroll, so decoding these faces now means the
+        // rows they belong to never decode a JPEG inside a scroll frame.
+        CommunityFaceCache.prefetch(items[window.count..<target].compactMap(\.communityAvatarAsset))
         window = Array(items.prefix(target))
         #if DEBUG
         CommunityPerf.tick("window")

@@ -53,8 +53,18 @@ struct RouteMapView: View {
     /// 2026-07-24). The `.overview` viewport STATE re-fits whenever the map's real size lands —
     /// the whole route, every time, on every surface.
     @State private var viewport: Viewport
-    /// True once the basemap + route layers are in — gates the fade-in (see `.opacity` below).
-    @State private var styleReady = false
+    /// True once the route layers are in the loaded style. Half of the fade-in gate.
+    @State private var layersReady = false
+    /// True once the map has gone IDLE with that style — every tile for the viewport drawn.
+    /// The other half of the gate (2026-09-12): a style is "loaded" the moment its JSON is parsed,
+    /// long before its tiles arrive on a cold cache, and revealing on that event showed a bare
+    /// white canvas with two endpoint dots on it for a beat on every swipe of the pagers.
+    @State private var canvasReady = false
+    /// Basemap + route layers in AND drawn — gates the fade-in (see `.opacity` below).
+    private var styleReady: Bool { layersReady && canvasReady }
+    /// A reveal requested before the canvas was visible waits for it: drawing the route onto a
+    /// map nobody can see yet would finish the entrance before the fade lets it be watched.
+    @State private var pendingReveal = false
     @State private var hasRevealed = false
     @State private var revealCompletionSent = false
     @State private var revealTask: Task<Void, Never>?
@@ -105,6 +115,9 @@ struct RouteMapView: View {
             .ornamentOptions(MapChrome.minimal)
             .gestureOptions(interactive ? Self.exploreGestures : GestureOptions())
             .onStyleLoaded { _ in
+                #if DEBUG
+                CommunityPerf.mark("MAP styleLoaded")
+                #endif
                 // A second style-ready event can arrive while the first route is drawing (for
                 // example after an appearance/style reload). Settle that old generation before
                 // installing the new one so it cannot write a stale partial trim afterward.
@@ -116,26 +129,58 @@ struct RouteMapView: View {
                 let shouldAnimate = wantsReveal && !reduceMotion
                 let routeReady = addRouteLayers(
                     proxy.map, visibleProgress: shouldAnimate ? 0 : 1)
-                styleReady = routeReady
+                layersReady = routeReady
                 guard routeReady, wantsReveal else { return }
                 hasRevealed = true
                 if shouldAnimate {
-                    startReveal(on: proxy.map)
+                    // Draw once the canvas is on screen (first idle below), so the sweep is seen
+                    // from its first metre — and an already-visible canvas starts it right away.
+                    if canvasReady { startReveal(on: proxy.map) } else { pendingReveal = true }
                 } else {
                     finishReveal(on: proxy.map)
                 }
             }
-            // Held on the quiet surface until the style (and the route layers) are actually in —
-            // an empty half-loaded basemap frame is never the first thing a summary shows.
+            .onMapIdle { _ in
+                // Idle = no tiles outstanding, no transitions running: the first frame that is
+                // actually the finished map. Only the first one per style matters; later idles
+                // (after a pinch, after the reveal) change nothing.
+                guard layersReady, !canvasReady else { return }
+                #if DEBUG
+                CommunityPerf.mark("MAP idle")
+                #endif
+                canvasReady = true
+                if pendingReveal {
+                    pendingReveal = false
+                    startReveal(on: proxy.map)
+                }
+            }
+            // Held on the quiet surface until the style, the route layers AND the tiles are
+            // actually in — an empty half-loaded basemap frame is never the first thing a page
+            // shows.
             .opacity(styleReady ? 1 : 0)
             .background(loadingBackground)
             .animation(.easeOut(duration: 0.25), value: styleReady)
+            .task(id: layersReady) {
+                // Backstop: a stalled tile request (offline, a dead cell) must not hold the map
+                // behind its loader forever. Whatever has drawn by now is better than nothing.
+                guard layersReady, !canvasReady else { return }
+                try? await Task.sleep(for: .seconds(2.5))
+                guard !Task.isCancelled, layersReady, !canvasReady else { return }
+                canvasReady = true
+                if pendingReveal {
+                    pendingReveal = false
+                    startReveal(on: proxy.map)
+                }
+            }
             .allowsHitTesting(interactive)
             .onChange(of: viewport.isIdle) { _, idle in
                 // A gesture parks the viewport at .idle — that's the "explored" signal.
                 cameraHandle?.isExplored = idle
             }
             .onAppear {
+                #if DEBUG
+                CommunityPerf.mark("MAP appear pts=\(coordinates.count) style=\(style.rawValue)")
+                #endif
                 cameraHandle?.recenterAction = { [coordinates, insets] in
                     withViewportAnimation(.easeOut(duration: 0.7)) {
                         viewport = Self.fit(coordinates, insets: insets)
@@ -152,18 +197,21 @@ struct RouteMapView: View {
             .onChange(of: colorScheme) { _, _ in
                 // The adaptive style is about to rebuild. Reveal the caller's painted fallback
                 // during that window instead of leaving a now-empty Mapbox platform view opaque.
-                styleReady = false
+                layersReady = false
+                canvasReady = false
             }
             .onChange(of: style) { _, _ in
                 // Explicit in-app map-style changes take the same loading path as appearance
-                // changes. `onStyleLoaded` turns the live map back on only after both route layers
-                // are present in the new style.
-                styleReady = false
+                // changes. `onStyleLoaded` + the next idle turn the live map back on only after
+                // both route layers are present and drawn in the new style.
+                layersReady = false
+                canvasReady = false
             }
             .onDisappear {
                 // Never leave a cached/reused map with a half-drawn route if paging or a media
                 // swap interrupts the reveal. The next time this surface appears it should show
                 // the athlete's complete route, not the frame where cancellation happened.
+                pendingReveal = false
                 if hasRevealed { finishReveal(on: proxy.map) }
                 else { revealTask?.cancel(); revealTask = nil }
             }
@@ -297,6 +345,17 @@ struct RouteMapView: View {
                          geometryPadding: insets,
                          maxZoom: 17)
     }
+}
+
+/// How the two vertical pagers hand a page the LIVE map (2026-09-12). Mounting a Mapbox view is
+/// the single most expensive thing a page does — view creation, a style parse and the first frame
+/// all land on the main thread — and the static full-bleed render under it is pixel-equivalent for
+/// looking. So the live canvas (pinch-explore, the route reveal) arrives only once a page has been
+/// settled on for `dwell`: a flick-through never mounts one at all, the first open mounts it after
+/// the zoom transition has finished instead of freezing it, and the like/comment taps on a page
+/// you paused on land on a quiet main thread.
+enum PagerLiveMap {
+    static let dwell: Duration = .milliseconds(450)
 }
 
 /// One deliberate head-to-finish sweep for the immersive post opener. Smoothstep keeps both ends

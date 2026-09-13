@@ -53,12 +53,37 @@ enum RouteSnapshotter {
         static let fullBleed: CGFloat = 13
     }
 
+    /// The PERSISTED form: PNG bytes for `GPSDetail.mapSnapshotData`. The encode runs off the main
+    /// thread (2026-09-12) — it used to run inside Mapbox's completion on the main actor, ~100–300 ms
+    /// per card, and with a wall of tiles landing one after another that was a hitch every second
+    /// under every tap. In-memory readers (`FeedRouteSnapshots`) take `snapshotImage` and skip the
+    /// round trip entirely.
     static func snapshot(coordinates: [CLLocationCoordinate2D],
                          size: CGSize = CGSize(width: 640, height: 360),
                          styleURI: StyleURI = .light,
                          insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
                          routeWidth: CGFloat = 8,
-                         endpointDiameter: CGFloat? = nil) async -> Data? {
+                         endpointDiameter: CGFloat? = nil,
+                         clipEnds: Bool = true) async -> Data? {
+        guard let image = await snapshotImage(coordinates: coordinates, size: size, styleURI: styleURI,
+                                              insets: insets, routeWidth: routeWidth,
+                                              endpointDiameter: endpointDiameter,
+                                              clipEnds: clipEnds) else { return nil }
+        return await Task.detached(priority: .userInitiated) { image.pngData() }.value
+    }
+
+    /// The rendered card as a ready-to-draw bitmap (Mapbox hands back a decoded image; nothing here
+    /// re-encodes or re-decodes it).
+    /// `clipEnds: false` draws and frames the WHOLE route — for a full-bleed page render that must
+    /// match the live map pixel for pixel (the live map never clips). Cards and tiles keep the
+    /// privacy clip.
+    static func snapshotImage(coordinates: [CLLocationCoordinate2D],
+                              size: CGSize = CGSize(width: 640, height: 360),
+                              styleURI: StyleURI = .light,
+                              insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                              routeWidth: CGFloat = 8,
+                              endpointDiameter: CGFloat? = nil,
+                              clipEnds: Bool = true) async -> UIImage? {
         guard !Task.isCancelled, coordinates.count > 1 else { return nil }
 
         // Hide the first/last ~200m so the thumbnail never starts or ends at the athlete's door
@@ -68,7 +93,7 @@ enum RouteSnapshotter {
         // loops from the Directions API carry a vertex per turn) is already EXACT, and smoothing
         // averaged its corners tens of meters into the buildings — the single loudest "fake route"
         // tell. An exact polyline with round joins reads Strava-crisp.
-        let clipped = clippingEnds(coordinates)
+        let clipped = clipEnds ? clippingEnds(coordinates) : coordinates
         let drawn = meanSpanMeters(clipped) < 15 ? RouteSmoothing.smooth(clipped) : clipped
         guard drawn.count > 1 else { return nil }
 
@@ -127,6 +152,12 @@ enum RouteSnapshotter {
     /// Drop the leading and trailing `meters` of the route (measured along the path) so the snapshot
     /// omits the start/end neighborhood. Skipped for short routes, where clipping would leave nothing
     /// meaningful — a sub-~500m route in a thumbnail reveals little anyway.
+    /// The route a persisted card or wall tile was FRAMED to — `RouteFraming` needs the same
+    /// geometry to lay that image over a page exactly. Internal for that one reason.
+    static func clippedForCard(_ coords: [CLLocationCoordinate2D]) -> [CLLocationCoordinate2D] {
+        clippingEnds(coords)
+    }
+
     private static func clippingEnds(_ coords: [CLLocationCoordinate2D], meters: Double = 200) -> [CLLocationCoordinate2D] {
         guard coords.count > 3 else { return coords }
         var cum = [0.0]; cum.reserveCapacity(coords.count)
@@ -164,10 +195,10 @@ private final class RouteSnapshotRender {
     private var snapshotter: Snapshotter?
     private var tokens: [AnyCancelable] = []
     private var timeout: Task<Void, Never>?
-    private var continuation: CheckedContinuation<Data?, Never>?
+    private var continuation: CheckedContinuation<UIImage?, Never>?
 
     func image(snapshotter: Snapshotter, styleURI: StyleURI,
-               overlay: @escaping SnapshotOverlayHandler) async -> Data? {
+               overlay: @escaping SnapshotOverlayHandler) async -> UIImage? {
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 guard !Task.isCancelled else { continuation.resume(returning: nil); return }
@@ -178,7 +209,7 @@ private final class RouteSnapshotRender {
                     guard let self, let snapshotter, self.continuation != nil else { return }
                     snapshotter.start(overlayHandler: overlay) { [weak self] result in
                         guard let self, self.continuation != nil else { return }
-                        self.finish((try? result.get())?.pngData())
+                        self.finish(try? result.get())
                     }
                 }.store(in: &tokens)
                 snapshotter.onMapLoadingError.observe { [weak self] error in
@@ -196,7 +227,7 @@ private final class RouteSnapshotRender {
         }
     }
 
-    private func finish(_ data: Data?) {
+    private func finish(_ image: UIImage?) {
         guard let continuation else { return }
         self.continuation = nil
         timeout?.cancel()
@@ -205,6 +236,6 @@ private final class RouteSnapshotRender {
         let renderer = snapshotter
         snapshotter = nil
         renderer?.cancel()
-        continuation.resume(returning: data)
+        continuation.resume(returning: image)
     }
 }

@@ -83,7 +83,14 @@ struct AthleteProfileView: View {
         .navigationDestination(item: $graphFace) { face in
             AthleteFollowListView(athlete: athlete, initialFace: face)
         }
-        .onAppear { if gridPosts.isEmpty { gridPosts = CommunityDirectory.gridPosts(for: athlete) } }
+        .onAppear {
+            guard gridPosts.isEmpty else { return }
+            #if DEBUG
+            gridPosts = CommunityPerf.time("athlete.gridPosts") { CommunityDirectory.gridPosts(for: athlete) }
+            #else
+            gridPosts = CommunityDirectory.gridPosts(for: athlete)
+            #endif
+        }
         // A real athlete's actual audience — one fetch per appearance, cancelled with the view.
         .task {
             if !athlete.isSample {
@@ -300,10 +307,19 @@ struct AthleteProfileView: View {
     private var derived: DerivedStats {
         let key = "\(athlete.handle)-\(StreakCalculator.localDay(Date()))"
         if derivedMemo.key == key, let cached = derivedMemo.value { return cached }
+        #if DEBUG
+        let value = CommunityPerf.time("athlete.derived") {
+            let awards = athlete.communityAwards
+            return DerivedStats(lifetime: athlete.lifetime,
+                                awardCells: awards.cells,
+                                awardsEarned: awards.earnedCount)
+        }
+        #else
         let awards = athlete.communityAwards
         let value = DerivedStats(lifetime: athlete.lifetime,
                                  awardCells: awards.cells,
                                  awardsEarned: awards.earnedCount)
+        #endif
         derivedMemo.key = key
         derivedMemo.value = value
         return value

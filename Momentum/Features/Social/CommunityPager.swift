@@ -72,6 +72,23 @@ struct CommunityPager: View {
     /// targets. Keep the last real id separately so that gap never reactivates the original post's
     /// Mapbox view underneath the swipe.
     @State private var activePostID: UUID?
+    /// The page that owns the ONE live Mapbox canvas. Unlike `activePostID` (controls, VoiceOver,
+    /// which follow the scroll position at once so the incoming page's byline is there as it
+    /// arrives), this advances **only once the paging scroll has SETTLED** (2026-09-12).
+    /// `scrollPosition` flips mid-deceleration, and flipping the live map with it meant a Mapbox
+    /// view was being created (and the previous one torn down) on the main thread in the exact
+    /// frames the snap animation was running — the hitch on every swipe. Until the scroll rests,
+    /// the incoming page shows its painted route and the outgoing page keeps its map; the swap
+    /// lands on a still screen.
+    @State private var livePostID: UUID?
+    /// The page the scroll last came to rest on; `livePostID` follows it after `PagerLiveMap.dwell`.
+    @State private var settledPostID: UUID?
+    @State private var liveArmTask: Task<Void, Never>?
+    @State private var scrollPhase: ScrollPhase = .idle
+    /// The page frame, measured once: the render this pager prefetches for a neighbour and the
+    /// render that neighbour's page requests must share one cache key. A fixed 430×930 guess here
+    /// matched no current device, so every prefetch was a miss and every arrival rendered fresh.
+    @State private var pageSize: CGSize = .zero
     @State private var verticalPrefetchTask: Task<Void, Never>?
     /// Activated and completed are separate so the initial false→true activation can remount a
     /// not-yet-ready Mapbox view, while true→completed does not remount the finished map. This also
@@ -82,16 +99,20 @@ struct CommunityPager: View {
         NavigationStack {
             GeometryReader { geo in
                 let fullHeight = geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom
+                let settledIndex = items.firstIndex(where: { $0.id == (settledPostID ?? startID) }) ?? 0
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
                         LazyVStack(spacing: 0) {
-                            ForEach(items) { item in
+                            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                                 CommunityPostPage(
                                     item: item,
                                     isFirst: item.id == startID,
                                     isActive: (activePostID ?? startID) == item.id,
+                                    isLive: livePostID == item.id,
+                                    isNear: abs(index - settledIndex) == 1,
                                     canOpenAuthor: item.authorHandle != nil && item.authorHandle != ownHandle,
                                     topInset: geo.safeAreaInsets.top, bottomInset: geo.safeAreaInsets.bottom,
+                                    pageSize: CGSize(width: geo.size.width, height: fullHeight),
                                     photoHeroRequested: photoHeroBinding(for: item),
                                     photoPage: photoPageBinding(for: item.id),
                                     revealRoute: routeReveals.shouldAnimate(item.id),
@@ -120,26 +141,35 @@ struct CommunityPager: View {
                     .scrollIndicators(.hidden)
                     .ignoresSafeArea()
                     .onAppear {
+                        pageSize = CGSize(width: geo.size.width, height: fullHeight)
                         // The tapped post could vanish between tap and present (a refresh
                         // re-minting pulse posts) — close rather than open on the wrong one.
                         guard items.contains(where: { $0.id == startID }) else { dismiss(); return }
-                        claimRouteReveal(for: startID)
                         activePostID = startID
                         visiblePostID = startID
                         var tx = Transaction(); tx.disablesAnimations = true
                         withTransaction(tx) { proxy.scrollTo(startID, anchor: .top) }
+                        settle(on: startID, size: CGSize(width: geo.size.width, height: fullHeight))
                     }
-                    .onChange(of: visiblePostID, initial: true) { _, id in
+                    .onChange(of: visiblePostID) { _, id in
                         guard let id else { return }
-                        if let activePostID, activePostID != id {
-                            // One quiet confirmation when vertical paging actually settles. The
-                            // scroll gesture itself stays silent, so a long browse never buzzes
-                            // continuously under the athlete's finger.
-                            Haptics.selection()
-                        }
                         activePostID = id
-                        claimRouteReveal(for: id)
-                        prefetch(around: id)
+                        // The deck is heading for another page: drop the live canvas NOW, while
+                        // the outgoing page is sliding away over its identical static frame, so
+                        // the snap animates on a main thread that isn't also running a map.
+                        if let livePostID, livePostID != id {
+                            liveArmTask?.cancel()
+                            self.livePostID = nil
+                        }
+                        // A position change that arrives with the scroll already at rest (a
+                        // programmatic jump, or the phase settling before the id update) must not
+                        // wait for a phase change that will never come.
+                        if scrollPhase == .idle { settle(on: id) }
+                    }
+                    .onScrollPhaseChange { _, phase in
+                        scrollPhase = phase
+                        guard phase == .idle, let id = visiblePostID else { return }
+                        settle(on: id)
                     }
                 }
             }
@@ -156,6 +186,8 @@ struct CommunityPager: View {
         // The pager is a cover, so its Pro replay control needs a paywall host above this context.
         .nestedPaywallHost()
         .onDisappear {
+            liveArmTask?.cancel()
+            liveArmTask = nil
             verticalPrefetchTask?.cancel()
             verticalPrefetchTask = nil
             replayPreparationTask?.cancel()
@@ -166,6 +198,27 @@ struct CommunityPager: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("This post doesn't include enough route data to replay.")
+        }
+    }
+
+    /// The paging scroll has come to rest on `id`: warm its neighbours now, and hand it the live
+    /// map (and the reveal) once it has been rested on for `PagerLiveMap.dwell` — a page flicked
+    /// past never mounts one. Idempotent: a settle on the page already settled does nothing.
+    private func settle(on id: UUID, size: CGSize? = nil) {
+        if settledPostID != id {
+            // One quiet confirmation when vertical paging actually settles. The scroll gesture
+            // itself stays silent, so a long browse never buzzes continuously under the finger.
+            if settledPostID != nil { Haptics.selection() }
+            settledPostID = id
+            prefetch(around: id, size: size)
+        }
+        guard livePostID != id else { return }
+        liveArmTask?.cancel()
+        liveArmTask = Task { @MainActor in
+            try? await Task.sleep(for: PagerLiveMap.dwell)
+            guard !Task.isCancelled, settledPostID == id else { return }
+            claimRouteReveal(for: id)
+            livePostID = id
         }
     }
 
@@ -205,13 +258,16 @@ struct CommunityPager: View {
     }
 
     /// Warm the current post and one vertical neighbor each way. Photos decode into the shared
-    /// cache; route neighbors render a static preview. The live Mapbox surface is still owned only
-    /// by the snapped page, so prefetch never creates a second interactive map.
-    private func prefetch(around id: UUID) {
+    /// cache; route neighbors render a static preview AT THE PAGE'S OWN SIZE — the key their page
+    /// reads — so the swipe lands on a finished full-bleed map and the live canvas that follows is
+    /// a crossfade of like for like. The live Mapbox surface is still owned only by the snapped
+    /// page, so prefetch never creates a second interactive map.
+    private func prefetch(around id: UUID, size explicitSize: CGSize? = nil) {
         verticalPrefetchTask?.cancel()
         guard let center = items.firstIndex(where: { $0.id == id }) else { return }
         let neighbors = [center, center - 1, center + 1].filter(items.indices.contains)
         let scheme = colorScheme
+        let size = explicitSize ?? pageSize
         verticalPrefetchTask = Task { @MainActor in
             for index in neighbors {
                 guard !Task.isCancelled else { return }
@@ -220,11 +276,16 @@ struct CommunityPager: View {
                     ImageDownsampler.prefetch(data, maxPixel: 48)
                     ImageDownsampler.prefetch(data, maxPixel: 1400)
                 }
-                if index != center, let coords = item.routeCoordinates, coords.count > 1 {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { continue }
+                #endif
+                if index != center, size != .zero,
+                   let coords = item.routeCoordinates, coords.count > 1 {
                     _ = await FeedRouteSnapshots.image(
                         post: item.id, coordinates: coords, style: item.mapStyle, scheme: scheme,
-                        size: CGSize(width: 430, height: 930),
-                        endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
+                        size: size,
+                        endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed,
+                        insets: RouteStandIn.pageInsets, clipEnds: false)
                 }
             }
         }
@@ -343,6 +404,14 @@ struct PagedPhoto: View {
     @State private var image: UIImage?
     @State private var preview: UIImage?
 
+    /// Seeded from the decode cache: a page the athlete swipes back to (its `@State` discarded by
+    /// the lazy stack) draws the photo on frame one instead of grey → fade, and the neighbour the
+    /// pager prefetched arrives already decoded.
+    init(data: Data) {
+        self.data = data
+        _image = State(initialValue: ImageDownsampler.cached(data, maxPixel: 1400))
+    }
+
     var body: some View {
         // `Color.clear` takes EXACTLY the proposed page size; the photo renders as its overlay.
         // Without this containment the `scaledToFill` blur layer reported the image's own width
@@ -376,6 +445,13 @@ struct PagedPhoto: View {
             // setting) — `UIImage(data:)` in a MainActor task parsed and first-draw-decoded the
             // full-resolution bitmap on the very swipe that landed on this page.
             .task(id: MediaFingerprint.value(data)) {
+                // Already decoded (seeded above, or a same-view photo swap that hits the cache):
+                // nothing to clear, nothing to fade.
+                if let hit = ImageDownsampler.cached(data, maxPixel: 1400) {
+                    image = hit
+                    preview = nil
+                    return
+                }
                 preview = nil
                 image = nil
                 preview = await ImageDownsampler.thumbnail(data, maxPixel: 48)
@@ -390,10 +466,18 @@ struct PagedPhoto: View {
 private struct CommunityPostPage: View {
     let item: FeedItem
     var isFirst: Bool
+    /// The page at the scroll position: owns the controls and the accessibility tree.
     var isActive: Bool
+    /// The page the scroll has settled on: owns the single live Mapbox canvas.
+    var isLive: Bool
+    /// Exactly one page away from the settled one: worth painting the full-bleed frame ahead of
+    /// the swipe. The settled page itself gets the live canvas instead; pages further out wait.
+    var isNear: Bool
     var canOpenAuthor: Bool
     var topInset: CGFloat
     var bottomInset: CGFloat
+    /// The page frame the pager laid this page out in — the route media's render/cache size.
+    var pageSize: CGSize
     @Binding var photoHeroRequested: Bool
     @Binding var photoPage: Int
     var revealRoute: Bool
@@ -438,8 +522,9 @@ private struct CommunityPostPage: View {
         !mediaPages.isEmpty && (photoHeroRequested || !hasOwnVisual)
     }
 
-    init(item: FeedItem, isFirst: Bool, isActive: Bool, canOpenAuthor: Bool, topInset: CGFloat,
-         bottomInset: CGFloat, photoHeroRequested: Binding<Bool>, photoPage: Binding<Int>,
+    init(item: FeedItem, isFirst: Bool, isActive: Bool, isLive: Bool, isNear: Bool, canOpenAuthor: Bool,
+         topInset: CGFloat, bottomInset: CGFloat, pageSize: CGSize,
+         photoHeroRequested: Binding<Bool>, photoPage: Binding<Int>,
          revealRoute: Bool, routeRevealActivated: Bool, isPreparingReplay: Bool,
          onClose: @escaping () -> Void, onOpenReplay: @escaping () -> Void,
          onOpenComments: @escaping () -> Void,
@@ -449,9 +534,12 @@ private struct CommunityPostPage: View {
         self.item = item
         self.isFirst = isFirst
         self.isActive = isActive
+        self.isLive = isLive
+        self.isNear = isNear
         self.canOpenAuthor = canOpenAuthor
         self.topInset = topInset
         self.bottomInset = bottomInset
+        self.pageSize = pageSize
         self._photoHeroRequested = photoHeroRequested
         self._photoPage = photoPage
         self.revealRoute = revealRoute
@@ -476,6 +564,9 @@ private struct CommunityPostPage: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("page")
+        #endif
         ZStack {
             // Grouped so the gesture and the burst attach to the MEDIA, whichever form it took.
             Group {
@@ -485,11 +576,13 @@ private struct CommunityPostPage: View {
                         .accessibilityIdentifier("post-photos-hero")
                 } else {
                     // Off-screen lazy neighbors use their cached preview. This page becomes
-                    // interactive as soon as vertical paging snaps; keeping a single live map
-                    // avoids GPU churn across the deck.
-                    CommunityPageMedia(item: item, interactive: isActive,
+                    // interactive once vertical paging has SETTLED on it; keeping a single live
+                    // map avoids GPU churn across the deck, and mounting it on a still screen
+                    // keeps the snap itself at full frame rate.
+                    CommunityPageMedia(item: item, interactive: isLive, isNear: isNear,
                                        mapCameraHandle: mapCamera,
                                        revealRoute: revealRoute,
+                                       pageSize: pageSize,
                                        onRouteRevealCompleted: onRouteRevealCompleted)
                         .id("community-route-\(item.id)-\(routeRevealActivated)")
                         // Keep the live Mapbox platform view in its real container. Moving it
@@ -592,49 +685,49 @@ private struct CommunityPostPage: View {
         }
     }
 
+    /// Every control on this page floats over a LIVE Mapbox canvas, so none of them is a plain
+    /// `Button` (2026-09-12). A SwiftUI Button layered over `Map` intermittently loses the gesture
+    /// race to the map's UIKit recognizers (double-tap zoom, quick zoom): the tap lands, nothing
+    /// happens — measured on the like control at a 2-for-2 miss with the map live. `mapSafeTap`
+    /// is the house answer (Today's chrome, the live run's controls): a high-priority tap claims
+    /// the touch before the map can. Press feedback and the accessibility element come with it.
     private var topBar: some View {
         HStack(alignment: .top) {
-            Button(action: onClose) {
-                Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                    .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
-            }
-            .accessibilityLabel("Close")
+            Image(systemName: "xmark").font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                .frame(width: 36, height: 36).background(Circle().fill(Theme.surface)).overlay(Circle().stroke(Theme.hairline))
+                .mapSafeTap("Close", action: onClose)
             Spacer()
             if !photosAreHero, hasReplayRoute {
                 VStack(spacing: Theme.Space.sm) {
                     let locked = !paywall.isEntitled(to: .routeReplay)
-                    Button {
+                    Group {
+                        if isPreparingReplay {
+                            ProgressView().controlSize(.small).tint(Theme.purple)
+                        } else {
+                            Image(systemName: locked ? "lock.fill" : "play.fill")
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(Theme.ink)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.surface))
+                    .overlay(Circle().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
+                    .mapSafeTap(isPreparingReplay ? "Preparing route replay"
+                                : (locked ? "Replay route, Pro" : "Replay route")) {
                         if locked { paywall.present(for: .routeReplay) }
                         else { onOpenReplay(); Haptics.light() }
-                    } label: {
-                        Group {
-                            if isPreparingReplay {
-                                ProgressView().controlSize(.small).tint(Theme.purple)
-                            } else {
-                                Image(systemName: locked ? "lock.fill" : "play.fill")
-                                    .font(.system(size: 14, weight: .bold))
-                            }
-                        }
-                            .foregroundStyle(Theme.ink)
-                            .frame(width: 36, height: 36)
-                            .background(Circle().fill(Theme.surface))
-                            .overlay(Circle().stroke(locked ? Theme.proLavender.opacity(0.55) : Theme.hairline))
                     }
                     .disabled(isPreparingReplay)
                     .accessibilityIdentifier("routeReplayButton")
-                    .accessibilityLabel(isPreparingReplay ? "Preparing route replay"
-                                        : (locked ? "Replay route, Pro" : "Replay route"))
                     .accessibilityHint(locked ? "Opens the Pro offer" : "Animates this shared route")
                     if mapCamera.isExplored {
-                        Button { mapCamera.recenter() } label: {
-                            Image(systemName: "viewfinder")
-                                .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
-                                .frame(width: 36, height: 36)
-                                .background(Circle().fill(Theme.surface))
-                                .overlay(Circle().stroke(Theme.hairline))
-                        }
-                        .accessibilityLabel("Re-center route")
-                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                        Image(systemName: "viewfinder")
+                            .font(.system(size: 15, weight: .bold)).foregroundStyle(Theme.ink)
+                            .frame(width: 36, height: 36)
+                            .background(Circle().fill(Theme.surface))
+                            .overlay(Circle().stroke(Theme.hairline))
+                            .mapSafeTap("Re-center route") { mapCamera.recenter() }
+                            .transition(.opacity.combined(with: .scale(scale: 0.85)))
                     }
                 }
                 .animation(.easeOut(duration: 0.25), value: mapCamera.isExplored)
@@ -757,9 +850,8 @@ private struct CommunityPostPage: View {
     @ViewBuilder
     private var byline: some View {
         if canOpenAuthor, let handle = item.authorHandle {
-            Button { onOpenAuthor?(handle) } label: { bylineLabel }
-                .buttonStyle(.plain)
-                .accessibilityLabel("View \(item.authorName)'s profile")
+            bylineLabel
+                .mapSafeTap("View \(item.authorName)'s profile") { onOpenAuthor?(handle) }
         } else {
             // `.disabled(true)` applies SwiftUI's disabled opacity to the whole label. That made
             // one's own byline—and every byline in a visited athlete's pager—look washed out over
@@ -843,32 +935,26 @@ private struct CommunityPostPage: View {
 
     private var respectControl: some View {
         let reacted = reactions.hasReacted(item.id)
-        return Button {
-            reactions.toggle(item.id); Haptics.light()
-        } label: {
-            railControl(count: "\(reactions.count(for: item))") {
-                Image(systemName: reacted ? "heart.fill" : "heart")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(reacted ? Theme.like : Theme.ink)
-                    .scaleEffect(reacted && !reduceMotion ? 1.12 : 1)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.5), value: reacted)
-            }
+        return railControl(count: "\(reactions.count(for: item))") {
+            Image(systemName: reacted ? "heart.fill" : "heart")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(reacted ? Theme.like : Theme.ink)
+                .scaleEffect(reacted && !reduceMotion ? 1.12 : 1)
+                .animation(.spring(response: 0.3, dampingFraction: 0.5), value: reacted)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(reacted ? "Liked" : "Like")
+        .mapSafeTap(reacted ? "Liked" : "Like") {
+            reactions.toggle(item.id); Haptics.light()
+        }
         .accessibilityValue("\(reactions.count(for: item))")
     }
 
     private var commentControl: some View {
         let count = commentCount   // once — the label + a11y value read it separately
-        return Button(action: onOpenComments) {
-            railControl(count: count > 0 ? "\(count)" : nil) {
-                Image(systemName: "bubble.left")
-                    .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
-            }
+        return railControl(count: count > 0 ? "\(count)" : nil) {
+            Image(systemName: "bubble.left")
+                .font(.system(size: 16, weight: .bold)).foregroundStyle(Theme.ink)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Comments")
+        .mapSafeTap("Comments", action: onOpenComments)
         .accessibilityValue("\(count)")
         .accessibilityIdentifier("active-post-comments")
     }
@@ -878,18 +964,17 @@ private struct CommunityPostPage: View {
     /// it keeps the post, rendered by its sport in the library. Saved state reads on appear and
     /// flips locally; the wall's "Saved" link and the list update through their own queries.
     private var saveControl: some View {
-        Button {
-            toggleSaved()
-        } label: {
-            railControl(count: nil) {
-                Image(systemName: routeSaved ? "bookmark.fill" : "bookmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Theme.ink)
-                    .scaleEffect(routeSaved && !reduceMotion ? 1.08 : 1)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.5), value: routeSaved)
-            }
+        railControl(count: nil) {
+            Image(systemName: routeSaved ? "bookmark.fill" : "bookmark")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.ink)
+                .scaleEffect(routeSaved && !reduceMotion ? 1.08 : 1)
+                .animation(.spring(response: 0.3, dampingFraction: 0.5), value: routeSaved)
         }
-        .buttonStyle(.plain)
+        .mapSafeTap(routeSaved ? "Saved. Tap to remove."
+                    : (item.hasRenderableRoute ? "Save this route" : "Save this post")) {
+            toggleSaved()
+        }
         .onAppear {
             let id = item.id
             var q = FetchDescriptor<SavedRoute>(predicate: #Predicate { $0.postID == id })
@@ -899,8 +984,6 @@ private struct CommunityPostPage: View {
         .alert("Couldn't update your saved posts", isPresented: $routeSaveFailed) {
             Button("OK", role: .cancel) { }
         } message: { Text("Please try again. Your previous saved state is unchanged.") }
-        .accessibilityLabel(routeSaved ? "Saved. Tap to remove."
-                            : (item.hasRenderableRoute ? "Save this route" : "Save this post"))
     }
 
     private func toggleSaved() {
@@ -953,10 +1036,19 @@ private struct CommunityPostPage: View {
             // construction rather than by luck wants ONE call. Left alone deliberately: the
             // item-taking overload is a sibling's in-flight API and calling it from here would make
             // this file un-buildable against HEAD.
+            #if DEBUG
+            seedCountMemo.count = CommunityPerf.time("commentCount.seed") {
+                CommunityComments.seed(
+                    for: item.id, postDate: item.date, reactions: item.baseReactions,
+                    type: item.type, authorHandle: item.authorHandle)
+                    .filter(moderation.isVisible).count
+            }
+            #else
             seedCountMemo.count = CommunityComments.seed(
                 for: item.id, postDate: item.date, reactions: item.baseReactions,
                 type: item.type, authorHandle: item.authorHandle)
                 .filter(moderation.isVisible).count
+            #endif
         }
         return seedCountMemo.count + own.count
     }
@@ -1000,19 +1092,27 @@ private struct CommunityPostPage: View {
 private struct CommunityPageMedia: View {
     let item: FeedItem
     var interactive: Bool = false
+    /// One page from the settled one — the only non-live pages that render a full-bleed frame.
+    var isNear: Bool = true
     var mapCameraHandle: RouteMapCameraHandle? = nil
     var revealRoute: Bool = false
+    /// The pager's page frame. Used as the render/cache size in preference to this view's own
+    /// GeometryReader so the key here and the key the pager prefetches agree by construction.
+    var pageSize: CGSize = .zero
     var onRouteRevealCompleted: () -> Void = {}
     /// Mapped once at view creation — see `FeedTileMedia.coords` (the same hot-getter lesson).
     private let coords: [CLLocationCoordinate2D]?
 
-    init(item: FeedItem, interactive: Bool = false,
+    init(item: FeedItem, interactive: Bool = false, isNear: Bool = true,
          mapCameraHandle: RouteMapCameraHandle? = nil, revealRoute: Bool = false,
+         pageSize: CGSize = .zero,
          onRouteRevealCompleted: @escaping () -> Void = {}) {
         self.item = item
         self.interactive = interactive
+        self.isNear = isNear
         self.mapCameraHandle = mapCameraHandle
         self.revealRoute = revealRoute
+        self.pageSize = pageSize
         self.onRouteRevealCompleted = onRouteRevealCompleted
         self.coords = item.routeCoordinates
     }
@@ -1022,21 +1122,25 @@ private struct CommunityPageMedia: View {
     @State private var snapshotIdentity: String?
 
     var body: some View {
+        #if DEBUG
+        let _ = CommunityPerf.tick("pageMedia")
+        #endif
         GeometryReader { geo in
             // Already rendered? Draw it on frame one. The pager's `LazyVStack` throws a page's
             // `@State` away as it leaves, so swiping back up used to show the grey silhouette
             // again and crossfade a map that had been in hand the whole time (2026-08-29).
-            let size = geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size
-            let identity = "\(item.id)-\(item.renderSignature)-\(colorScheme)-\(size)-\(interactive)"
+            let size = pageSize != .zero ? pageSize
+                : (geo.size == .zero ? CGSize(width: 430, height: 930) : geo.size)
+            let identity = "\(item.id)-\(item.renderSignature)-\(colorScheme)-\(size)-\(interactive)-\(isNear)"
             let cached = FeedRouteSnapshots.cachedImage(
                 post: item.id, style: item.mapStyle, scheme: colorScheme,
                 size: size,
-                endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
+                endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed,
+                insets: RouteStandIn.pageInsets, clipEnds: false)
             let fullMap = (snapshotIdentity == identity ? snapshot : nil) ?? cached
             // The same map the athlete just tapped stays visible until the detailed view is ready.
             let tile = FeedRouteSnapshots.cachedImage(post: item.id, style: item.mapStyle,
                 scheme: colorScheme, size: FeedTileMedia.tileSize, routeWidth: FeedTileMedia.tileRouteWidth)
-            let map = fullMap ?? tile
             Group {
                 if let muscles = item.muscles, muscles.values.contains(where: { $0 > 0 }) {
                     ZStack {
@@ -1049,7 +1153,7 @@ private struct CommunityPageMedia: View {
                         // This synchronous route is the guarantee: every post has meaningful
                         // pixels on frame one, even with no cached snapshot, no network, or a slow
                         // Mapbox style. A cached render upgrades it when one is already available.
-                        routeFallback(map: map, coords: coords, size: geo.size)
+                        routeFallback(full: fullMap, tile: tile, coords: coords, size: size)
 
                         if interactive {
                             // The live surface fades over the already-painted route only after its
@@ -1080,38 +1184,59 @@ private struct CommunityPageMedia: View {
                 }
             }
             .animation(.easeOut(duration: 0.2), value: fullMap != nil)
+            .animation(.easeOut(duration: 0.2), value: tile != nil)
             .task(id: identity) {
                 snapshot = nil
                 snapshotIdentity = identity
-                guard !interactive, let coords, coords.count > 1, cached == nil else { return }
+                guard !interactive, isNear, let coords, coords.count > 1, cached == nil else { return }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--ui-test-social") { return }
                 #endif
-                // The page being looked at retries for as long as it's on screen — the reading
-                // view's rule; a transient tile hiccup must not strand a full-bleed silhouette.
-                while !Task.isCancelled, snapshot == nil {
+                // A non-interactive page is a NEIGHBOUR — the page being looked at owns the live
+                // map and never comes through here. So this render is not urgent (the live canvas
+                // takes the engine first; this used to jump the queue and compete with it on every
+                // swipe, for the page the athlete had just LEFT) and it is bounded: an off-screen
+                // page must never hold a render slot forever. It joins the pager's prefetch of the
+                // same key when both ask.
+                var attempt = 0
+                while !Task.isCancelled, snapshot == nil, attempt < 3 {
                     let rendered = await FeedRouteSnapshots.image(
                         post: item.id, coordinates: coords, style: item.mapStyle, scheme: colorScheme,
-                        size: size,
-                        urgent: true, endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed)
+                        size: size, endpointDiameter: RouteSnapshotter.EndpointMark.fullBleed,
+                        insets: RouteStandIn.pageInsets, clipEnds: false)
                     guard !Task.isCancelled else { return }
                     snapshot = rendered
-                    if snapshot == nil { try? await Task.sleep(for: .seconds(2)) }
+                    attempt += 1
+                    if snapshot == nil { try? await Task.sleep(for: .seconds(min(Double(attempt) * 2, 6))) }
                 }
             }
         }
         .ignoresSafeArea()
     }
 
+    /// The painted route under the live map, best available first: the page's own full-bleed
+    /// render (framed exactly like the live map — insets 28, whole route — so the canvas fading
+    /// in over it moves nothing), else the wall tile the athlete tapped, scaled and placed by
+    /// `RouteStandIn` so ITS route also sits where the map will draw it (a `scaledToFill` tile
+    /// showed the route zoomed in, then "fixed" itself — owner report 2026-09-13), else the
+    /// silhouette.
     @ViewBuilder
-    private func routeFallback(map: UIImage?, coords: [CLLocationCoordinate2D],
+    private func routeFallback(full: UIImage?, tile: UIImage?, coords: [CLLocationCoordinate2D],
                                size: CGSize) -> some View {
         ZStack {
             Theme.background
-            if let map {
-                Image(uiImage: map).resizable().scaledToFill()
+            if let full {
+                Image(uiImage: full).resizable().scaledToFill()
                     .frame(width: size.width, height: size.height)
                     .clipped()
+                    .transition(.opacity)
+            } else if let tile {
+                RouteStandIn(image: tile,
+                             imageSize: FeedTileMedia.tileSize,
+                             imageInsets: UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                             sourceCoordinates: RouteSnapshotter.clippedForCard(coords),
+                             canvas: size,
+                             targetCoordinates: coords)
                     .transition(.opacity)
             } else {
                 RouteSilhouette(coords: coords, maxPoints: 800)

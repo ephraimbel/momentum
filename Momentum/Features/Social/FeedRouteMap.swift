@@ -67,7 +67,8 @@ enum FeedRouteSnapshots {
                       style: MapStyleOption, scheme: ColorScheme, size: CGSize,
                       urgent: Bool = false, routeWidth: CGFloat = 3,
                       endpointDiameter: CGFloat? = nil,
-                      insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26)) async -> UIImage? {
+                      insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                      clipEnds: Bool = true) async -> UIImage? {
         // nil = no start/finish marks, which is what a GRID tile wants (owner call 2026-07-30);
         // full views opt in. It's part of the cache key for the same reason `routeWidth` is: the
         // wall and the pager render the same post differently and must not share an image.
@@ -81,7 +82,8 @@ enum FeedRouteSnapshots {
         // a dark-mode community wall was a mosaic of glaring white maps (the same bug the History
         // map card had, 2026-08-28). `uriStyle(for:)` is the accessor that actually pairs.
         let key = cacheKey(post: post, style: style, scheme: scheme, size: size,
-                           routeWidth: routeWidth, endpointDiameter: endpointDiameter, insets: insets)
+                           routeWidth: routeWidth, endpointDiameter: endpointDiameter, insets: insets,
+                           clipEnds: clipEnds)
         let resolved = style.uriStyle(for: scheme)
         #if DEBUG
         if cache[key] != nil { hits += 1 } else { misses += 1 }
@@ -114,21 +116,33 @@ enum FeedRouteSnapshots {
                     inFlight.remove(key); urgentKeys.remove(key); return
                 }
                 active += 1
-                let data: Data?
                 #if DEBUG
-                if let renderForTesting { data = await renderForTesting(coordinates) }
-                else { data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
-                    styleURI: resolved.styleURI, insets: insets, routeWidth: routeWidth,
-                    endpointDiameter: endpointDiameter) }
+                CommunityPerf.mark("SNAP start \(Int(size.width))x\(Int(size.height))")
+                #endif
+                // The decoded bitmap straight from the renderer (2026-09-12). This used to take
+                // PNG bytes and `UIImage(data:)` them back: an encode on the main actor inside
+                // Mapbox's completion and a decode on first draw — ~170 ms of main thread per
+                // tile landing, i.e. a hitch under every tap for as long as a wall was filling.
+                let image: UIImage?
+                #if DEBUG
+                if let renderForTesting {
+                    image = await renderForTesting(coordinates).flatMap(UIImage.init(data:))
+                } else {
+                    image = await RouteSnapshotter.snapshotImage(
+                        coordinates: coordinates, size: size, styleURI: resolved.styleURI,
+                        insets: insets, routeWidth: routeWidth, endpointDiameter: endpointDiameter,
+                        clipEnds: clipEnds)
+                }
                 #else
-                data = await RouteSnapshotter.snapshot(coordinates: coordinates, size: size,
-                                                           styleURI: resolved.styleURI,
-                                                           insets: insets,
-                                                           routeWidth: routeWidth,
-                                                           endpointDiameter: endpointDiameter)
+                image = await RouteSnapshotter.snapshotImage(
+                    coordinates: coordinates, size: size, styleURI: resolved.styleURI,
+                    insets: insets, routeWidth: routeWidth, endpointDiameter: endpointDiameter,
+                    clipEnds: clipEnds)
                 #endif
                 active -= 1
-                let image = data.flatMap(UIImage.init(data:))
+                #if DEBUG
+                CommunityPerf.mark("SNAP done \(Int(size.width))x\(Int(size.height)) ok=\(image != nil)")
+                #endif
                 if let image {
                     store(image, key: key)
                     consecutiveFailures = 0
@@ -168,9 +182,11 @@ enum FeedRouteSnapshots {
     /// first `body` pass and draw the finished map on frame one.
     static func cachedImage(post: UUID, style: MapStyleOption, scheme: ColorScheme, size: CGSize,
                             routeWidth: CGFloat = 3, endpointDiameter: CGFloat? = nil,
-                            insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26)) -> UIImage? {
+                            insets: UIEdgeInsets = UIEdgeInsets(top: 26, left: 26, bottom: 26, right: 26),
+                            clipEnds: Bool = true) -> UIImage? {
         touch(cacheKey(post: post, style: style, scheme: scheme, size: size,
-                       routeWidth: routeWidth, endpointDiameter: endpointDiameter, insets: insets))
+                       routeWidth: routeWidth, endpointDiameter: endpointDiameter, insets: insets,
+                       clipEnds: clipEnds))
     }
 
     /// The one place the key is built, so `image` and `cachedImage` can never drift apart —
@@ -184,9 +200,9 @@ enum FeedRouteSnapshots {
     /// night the way every other map in the app does.
     private static func cacheKey(post: UUID, style: MapStyleOption, scheme: ColorScheme,
                                  size: CGSize, routeWidth: CGFloat, endpointDiameter: CGFloat?,
-                                 insets: UIEdgeInsets) -> String {
+                                 insets: UIEdgeInsets, clipEnds: Bool = true) -> String {
         let resolved = style.uriStyle(for: scheme)
-        return "\(post.uuidString)|\(resolved.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))|e\(endpointDiameter.map { Int($0) } ?? 0)|s\(Int(size.width))x\(Int(size.height))|i\(Int(insets.top))-\(Int(insets.left))-\(Int(insets.bottom))-\(Int(insets.right))"
+        return "\(post.uuidString)|\(resolved.rawValue)|\(scheme == .dark ? "d" : "l")|w\(Int(routeWidth * 10))|e\(endpointDiameter.map { Int($0) } ?? 0)|s\(Int(size.width))x\(Int(size.height))|i\(Int(insets.top))-\(Int(insets.left))-\(Int(insets.bottom))-\(Int(insets.right))\(clipEnds ? "" : "|full")"
     }
 
     /// A read that also records recency — the LRU half of the cache.

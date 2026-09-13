@@ -46,6 +46,9 @@ final class ReactionStore {
     func hasReacted(_ id: UUID) -> Bool { reacted.contains(id.uuidString) }
 
     func toggle(_ id: UUID) {
+        #if DEBUG
+        CommunityPerf.mark("TAP reaction.toggle \(id.uuidString.prefix(8))")
+        #endif
         intentRevision &+= 1
         let key = id.uuidString
         if reacted.contains(key) { reacted.remove(key) } else { reacted.insert(key) }

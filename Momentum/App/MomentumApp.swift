@@ -32,6 +32,9 @@ struct MomentumApp: App {
         // explicit `--enable-sentry` launch argument is also required, keeping tests and visual
         // iteration out of the free quota. This starts first so launch crashes are observable.
         SentryMonitor.configure()
+        #if DEBUG
+        MainThreadWatchdog.startIfRequested()   // --community-perf: log main-thread stalls
+        #endif
         // One `PaywallController` backs both `services.paywall` (service-layer checks) and the
         // environment (reactive view gating), so entitlement never diverges (PRD §10).
         let controller = PaywallController()

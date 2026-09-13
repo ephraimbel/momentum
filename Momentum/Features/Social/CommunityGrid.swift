@@ -335,6 +335,15 @@ struct FeedTileMedia: View {
         self.respectsPhotoCover = respectsPhotoCover
         self.showsMapStatus = showsMapStatus
         self.onInkContext = onInkContext
+        // A photo tile scrolled back into view draws its decoded cover on frame one (the route
+        // tiles already do this through `FeedRouteSnapshots.cachedImage`); without the seed every
+        // recycle showed a grey pane for a beat and faded the same picture back in. Probed only
+        // when the photo would actually lead — `init` runs on every parent body pass.
+        if let data = item.photoData,
+           (respectsPhotoCover && item.coverIsPhoto)
+            || (item.muscles?.values.contains(where: { $0 > 0 }) != true && !item.hasRenderableRoute) {
+            _photo = State(initialValue: ImageDownsampler.cached(data, maxPixel: 480))
+        }
         #if DEBUG
         if Thread.isMainThread {
             MainActor.assumeIsolated {

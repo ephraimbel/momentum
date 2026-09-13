@@ -30,31 +30,19 @@ struct PostMediaThumb<Content: View>: View {
     var body: some View {
         // The swap owner emits one selection haptic. Firing a second generic haptic here made a
         // single tap feel like a double registration on real hardware.
-        Button(action: onTap) {
-            content()
-                .frame(width: width, height: width * 4 / 3)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(.white.opacity(0.55), lineWidth: 1))
-                .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
-        }
-        // A real ButtonStyle provides touch-down feedback without adding a competing gesture.
-        // The old zero-distance DragGesture could win recognition and swallow the button action.
-        .buttonStyle(PostMediaThumbPressStyle())
-        .accessibilityLabel(label)
-        .accessibilityHint("Switches with the cover")
-    }
-}
-
-private struct PostMediaThumbPressStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .opacity(configuration.isPressed ? 0.88 : 1)
-            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.76),
-                       value: configuration.isPressed)
+        //
+        // `mapSafeTap`, not a `Button` (2026-09-12): when the route is the hero this card sits
+        // over a LIVE Mapbox canvas, and a plain Button there intermittently loses its tap to the
+        // map's UIKit recognizers (the same miss measured on the like control). The house
+        // map-safe tap claims the touch first and carries its own press feedback — the earlier
+        // "Button + zero-distance drag" combination that could swallow the action is not this.
+        content()
+            .frame(width: width, height: width * 4 / 3)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(.white.opacity(0.55), lineWidth: 1))
+            .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+            .mapSafeTap(label, action: onTap)
+            .accessibilityHint("Switches with the cover")
     }
 }

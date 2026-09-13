@@ -219,13 +219,19 @@ enum ImageDownsampler {
     /// grey until it finished. That grey flash on a swipe you have already made is the single
     /// least "seamless" thing in the post viewer (owner ask 2026-08-29). `NSCache` is
     /// thread-safe and evicts itself under pressure, so this can never become a leak; the cost
-    /// limit is bytes, so ~11 full-page photos live here at most.
+    /// limit is bytes.
+    ///
+    /// 96 entries / 96 MB (was 24 / 64 MB, 2026-09-12): a 3-across grid keeps ~15 tiles on screen
+    /// and recycles them constantly, and the profile pager now decodes the persisted route card at
+    /// full size (~9 MB each) for the page in hand and its two neighbours. Twenty-four slots meant
+    /// every scroll-back past two rows re-decoded from PNG — the grey flash the grid showed on
+    /// every return.
     // NSCache synchronizes its own reads/writes; the annotation documents that guarantee for the
     // Swift concurrency checker while decode tasks intentionally access it off the main actor.
     nonisolated(unsafe) private static let cache: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
-        c.countLimit = 24
-        c.totalCostLimit = 64 * 1024 * 1024
+        c.countLimit = 96
+        c.totalCostLimit = 96 * 1024 * 1024
         return c
     }()
 
@@ -238,6 +244,14 @@ enum ImageDownsampler {
         h.combine(data.suffix(64))
         h.combine(maxPixel)
         return String(h.finalize()) as NSString
+    }
+
+    /// The decoded image **if it is already in hand** — no `await`, no hop. A view seeds its
+    /// `@State` from this in `init`, so a lazily recycled cell or page draws the finished picture
+    /// on its very first frame instead of a grey beat followed by a fade (the `FeedRouteSnapshots
+    /// .cachedImage` rule, applied to photos and route cards).
+    static func cached(_ data: Data, maxPixel: CGFloat) -> UIImage? {
+        cache.object(forKey: key(data, maxPixel))
     }
 
     /// Warm a photo the athlete is ABOUT to see — the neighbouring page in the media pager — so
