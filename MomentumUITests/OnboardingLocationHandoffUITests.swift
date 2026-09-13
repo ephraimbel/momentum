@@ -28,15 +28,15 @@ final class OnboardingLocationHandoffUITests: XCTestCase {
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
         crossHealthBeat(app)
 
-        // Then location: its Continue is what raises the system alert.
+        // Then location: the page raises the system alert ITSELF on arrival (owner call
+        // 2026-09-13), so the grant is asked for every time without a tap; Continue stays as
+        // the fallback for a device that already answered.
         XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 15))
-        XCTAssertFalse(springboard.alerts.firstMatch.exists, "No location alert before the athlete taps")
         let before = XCTAttachment(screenshot: app.screenshot())
         before.name = "location-beat"; before.lifetime = .keepAlways
         add(before)
-        app.buttons["Continue"].firstMatch.tap()
         let allow = springboard.buttons["Allow While Using App"]
-        XCTAssertTrue(allow.waitForExistence(timeout: 10), "The location beat must request the grant")
+        XCTAssertTrue(allow.waitForExistence(timeout: 10), "The location beat must request the grant on arrival")
         allow.tap()
 
         // Into the app with the grant made: Today, and Start asks for nothing more.
