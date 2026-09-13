@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The step before Apple's Manage Subscriptions page (2026-09-07). Cancelling itself happens in
-/// Apple's UI and cannot be intercepted; what the app can do is put the smaller commitment in
-/// front of someone on their way there. Shown only to an athlete whose live subscription is the
-/// yearly: switching to the monthly is a crossgrade inside the group (both are level 2), so it
-/// takes effect at the next renewal and nothing is charged today. The offer is one screen with a
+/// The step before Apple's Manage Subscriptions page (2026-09-07; weekly since 2026-09-13).
+/// Cancelling itself happens in Apple's UI and cannot be intercepted; what the app can do is put
+/// the smaller commitment in front of someone on their way there. Shown only to an athlete whose
+/// live subscription is the yearly: switching to the weekly is a crossgrade inside the group (both
+/// are level 2), so it takes effect at the next renewal and nothing is charged today. The offer is one screen with a
 /// plain way past it, never a wall, and the Manage link is always right there.
 struct SubscriptionSwitchSheet: View {
     @Environment(PaywallController.self) private var paywall
@@ -20,7 +20,7 @@ struct SubscriptionSwitchSheet: View {
             Text("Before you go")
                 .font(.display(24, weight: .semibold))
                 .foregroundStyle(Theme.ink)
-            Text("Prefer not to commit to a year? Switch to monthly at \(paywall.offering.monthly.priceText) a month from your next renewal. Nothing is charged today, and you can cancel anytime.")
+            Text("Prefer not to commit to a year? Switch to weekly at \(paywall.offering.weekly.priceText) a week from your next renewal. Nothing is charged today, and you can cancel anytime.")
                 .font(.rounded(15, weight: .medium))
                 .foregroundStyle(Theme.inkSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -31,9 +31,9 @@ struct SubscriptionSwitchSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Button {
-                switchToMonthly()
+                switchToWeekly()
             } label: {
-                Text(working ? "One moment…" : "Switch to monthly · \(paywall.offering.monthly.priceText)/month")
+                Text(working ? "One moment…" : "Switch to weekly · \(paywall.offering.weekly.priceText)/week")
                     .font(.rounded(15, weight: .semibold))
                     .foregroundStyle(Theme.background)
                     .padding(.vertical, 14)
@@ -42,7 +42,7 @@ struct SubscriptionSwitchSheet: View {
             }
             .buttonStyle(RaisedPressStyle(scale: 0.97))
             .disabled(working)
-            .accessibilityIdentifier("subscription.switchToMonthly")
+            .accessibilityIdentifier("subscription.switchToWeekly")
             Button("Manage in the App Store") {
                 dismiss()
                 openURL(manageURL)
@@ -64,11 +64,11 @@ struct SubscriptionSwitchSheet: View {
         .presentationDragIndicator(.visible)
     }
 
-    private func switchToMonthly() {
+    private func switchToWeekly() {
         guard !working else { return }
         working = true
         Task {
-            let outcome = await paywall.purchase(paywall.offering.monthly)
+            let outcome = await paywall.purchase(paywall.offering.weekly)
             working = false
             switch outcome {
             case .purchased: dismiss()

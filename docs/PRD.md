@@ -760,7 +760,7 @@ Freemium subscription. Free fuels adoption + reviews + (future) virality; the AI
 **Free:** track all disciplines (run/ride/walk/strength), basic post-workout summaries, manual strength logging + full exercise library, limited history, a single plan glimpse, basic share card.
 **Pro:** the adaptive **AI coach** + full multi-discipline plans + programs + adaptation; **AI reads**; **advanced analytics** (working-sets-per-muscle, e1RM trends, training load, pace/speed trends); full history; all templates; all share templates; cadence metronome / voice coach; (v1) Watch premium.
 
-**Pricing (monthly/annual pair set 2026-09-07, replacing the weekly/annual pair of 2026-08-28; annual trial restored 2026-09-01; yearly settled at $79.99 on 2026-09-05):** **$14.99/mo** with no trial and **$79.99/yr** with a 3-day free trial, shown as $6.67 a month, badge SAVE 55%. Existing weekly and $9.99-monthly subscribers keep their prices.
+**Pricing (weekly/annual pair set 2026-09-13, replacing the monthly/annual pair of 2026-09-07):** **$5.99/wk** with no trial and **$29.99/yr** with a 7-day free trial, shown as **$0.58 a week**, badge SAVE 90%. Existing monthly subscribers keep their price and entitlement.
 **RevenueCat:** entitlement `pro`; offering `default`; sold products `momentum_pro_weekly`, `momentum_pro_annual` (`momentum_pro_monthly` is legacy/unsold). **Superwall placements:** `onboarding_complete` (after reveal), `ai_read`, `full_plan`, `analytics_locked`, `history_locked`. Single `Feature` enum is the source of truth for gating.
 
 ---

@@ -9,11 +9,11 @@ import SuperwallKit
 /// A subscription product to offer (PRD §10). Price strings come from the store (RevenueCat) once
 /// wired; until then these are the PRD's planned prices so the paywall is fully testable offline.
 struct PaywallProduct: Identifiable, Sendable, Equatable {
-    enum Period: Sendable, Equatable { case monthly, annual }
+    enum Period: Sendable, Equatable { case weekly, annual }
     let id: String              // RevenueCat / StoreKit product identifier
     let period: Period
-    let priceText: String       // localized total, e.g. "$9.99"
-    let perMonthText: String?   // annual only, e.g. "$2.50 / mo" — the yearly's headline number
+    let priceText: String       // localized total, e.g. "$5.99"
+    let perWeekText: String?    // annual only, e.g. "$0.58 / wk" — the yearly's headline number
     let trialDays: Int          // 0 = none
 
     var isAnnual: Bool { period == .annual }
@@ -27,40 +27,67 @@ enum PurchaseOutcome: Equatable, Sendable {
     case failed(String)
 }
 
-/// The `default` RevenueCat offering: monthly + annual (PRD §10; pricing switched 2026-09-07).
+/// The `default` RevenueCat offering: weekly + annual (PRD §10; pricing switched 2026-09-13).
 struct PaywallOffering: Sendable, Equatable {
-    let monthly: PaywallProduct
+    let weekly: PaywallProduct
     let annual: PaywallProduct
     /// Numeric prices behind the display strings — planned by default, replaced with the store's
     /// real values by `loadOffering()` so the savings badge always reflects what's actually charged.
-    var monthlyPriceValue: Double = monthlyPrice
+    var weeklyPriceValue: Double = weeklyPrice
     var annualPriceValue: Double = annualPrice
 
-    /// Owner pricing, September 11: $9.99 monthly without a trial; $29.99 yearly with a
-    /// seven-day introductory trial for eligible athletes. These are preview/default values.
-    /// Production pricing, trial duration, and eligibility always come from StoreKit through
-    /// RevenueCat; never advertise this offer before the store confirms it.
-    /// Monthly equivalents and savings derive from the same numeric prices.
-    static let monthlyPrice = 9.99
+    /// Shipped pricing (owner call 2026-09-13 — the weekly returns as the entry plan and the
+    /// yearly is sold at its own per-week number): **weekly $5.99 with no trial** and the yearly
+    /// at **$29.99 with a 7-day trial**, shown as **$0.58 a week** with "$29.99 billed yearly" on
+    /// the card. $5.99 × 52 = $311.48 against $29.99 is 90.4% under the weekly run-rate, and the
+    /// badge rounds to the nearest five — **SAVE 90%** — the same rule every earlier pair wore.
+    /// $5.99 over $3.99 (owner call, same day): the weekly's job is to anchor the yearly and to
+    /// catch impulse buyers, and a 10× gap does the first better while netting 50% more from the
+    /// second; anyone who balks at $5.99 takes the $29.99 year, which is the plan we want people
+    /// on. Note the run-rate: $5.99 a week is $26 a month, so the weekly is an anchor and an
+    /// entry, never the plan to keep someone on.
+    ///
+    /// The three numbers have to agree, and only two of them are free: pick the yearly and the
+    /// per-week line falls out of it, along with the badge.
+    ///
+    /// **The floor this sits on.** A heavy daily user costs ~$1.25/mo to serve ($15/yr). Under
+    /// the Small Business rate ASC pays ~85% ($5.09 on $5.99, $25.49 on $29.99), so a weekly
+    /// subscriber clears ~$21/mo and a yearly clears ~$10/yr against ~$15 of cost for a heavy
+    /// user — the yearly is the acquisition price, the weekly and the long tail of light users
+    /// carry the margin. If the weekly is ever cut again, the yearly must NOT follow the
+    /// percentage down (see docs/MONETIZATION-SETUP.md: 90% off a cheap weekly is below cost).
+    ///
+    /// Monthly is gone from the offering again. Existing monthly subscribers keep their price and
+    /// their entitlement — removing a product from an offering never cancels or re-prices a live
+    /// sub — so `Period` keeps only the two plans we now SELL. Store: the weekly has been $5.99
+    /// since 2026-08-29 (a same-day $3.99 schedule was deleted before it took effect); the
+    /// yearly's $29.99 and 7-day trial have been live since 2026-09-13.
+    ///
+    /// These two numbers are the **single source**: both `priceText`s, the annual's per-week line
+    /// and `annualSavingsPercent` all derive from them, so the badge can never fall out of step
+    /// with a price change. Live store prices (`loadOffering`) replace the strings once the
+    /// offering lands — the weekly product lives in the SAME subscription group as the annual at
+    /// the same level, so a switch is a crossgrade at the next renewal, never a prorated refund.
+    static let weeklyPrice = 5.99
     static let annualPrice = 29.99
 
     static let standard = PaywallOffering(
-        monthly: .init(id: "momentum_pro_monthly", period: .monthly,
-                       priceText: money(monthlyPrice), perMonthText: nil, trialDays: 0),
+        weekly: .init(id: "momentum_pro_weekly", period: .weekly,
+                      priceText: money(weeklyPrice), perWeekText: nil, trialDays: 0),
         annual: .init(id: "momentum_pro_annual", period: .annual,
                       priceText: money(annualPrice),
-                      perMonthText: "\(money(annualPrice / 12)) / mo", trialDays: 7))
+                      perWeekText: "\(money(annualPrice / 52)) / wk", trialDays: 7))
 
-    /// Savings versus twelve monthly payments, rounded to the nearest 5% for the existing badge.
-    /// Live store prices replace the preview values; $29.99 versus $119.88 rounds to 75%.
+    /// Savings versus fifty-two weekly payments, rounded to the nearest 5% for the badge.
+    /// Live store prices replace the preview values; $29.99 versus $311.48 rounds to 90%.
     var annualSavingsPercent: Int {
-        let monthlyYear = 12 * monthlyPriceValue
-        guard monthlyYear > 0 else { return 0 }
-        let raw = (monthlyYear - annualPriceValue) / monthlyYear * 100
-        return Int((raw / 5).rounded()) * 5   // nearest 5% → a round badge, not "38.85%"
+        let weeklyYear = 52 * weeklyPriceValue
+        guard weeklyYear > 0 else { return 0 }
+        let raw = (weeklyYear - annualPriceValue) / weeklyYear * 100
+        return Int((raw / 5).rounded()) * 5   // nearest 5% → a round badge, not "90.37%"
     }
 
-    /// Plain "$9.99" formatting for the offline seam (the live store supplies localized strings).
+    /// Plain "$5.99" formatting for the offline seam (the live store supplies localized strings).
     static func money(_ v: Double) -> String { "$" + String(format: "%.2f", v) }
 }
 
@@ -440,14 +467,15 @@ final class PaywallController: PaywallServing {
     private func loadOffering() async {
         guard let current = try? await Purchases.shared.offerings().current,
               let a = current.annual?.storeProduct else { return }
-        // The monthly comes from the offering's `$rc_monthly` package when the dashboard has it;
-        // until then it is fetched by product id, so the switch never waits on a dashboard edit
-        // (the product is approved in App Store Connect and the entitlement is mapped there).
-        let m: StoreProduct
-        if let fromOffering = current.monthly?.storeProduct {
-            m = fromOffering
-        } else if let byID = await Purchases.shared.products([PaywallOffering.standard.monthly.id]).first {
-            m = byID
+        // The weekly comes from the offering's `$rc_weekly` package (the default offering still
+        // lists it); if a dashboard edit ever drops it, it is fetched by product id, so the sale
+        // never waits on RevenueCat (the product is approved in App Store Connect and the
+        // entitlement is mapped there).
+        let w: StoreProduct
+        if let fromOffering = current.weekly?.storeProduct {
+            w = fromOffering
+        } else if let byID = await Purchases.shared.products([PaywallOffering.standard.weekly.id]).first {
+            w = byID
         } else {
             return
         }
@@ -467,24 +495,24 @@ final class PaywallController: PaywallServing {
             @unknown default: return p.value
             }
         }
-        // Annual per-MONTH in the product's own locale/currency (falls back to the plain formatter).
-        let perMonth: String = {
-            let monthly = a.price / 12
-            if let s = a.priceFormatter?.string(from: monthly as NSDecimalNumber) { return "\(s) / mo" }
-            return "\(PaywallOffering.money(NSDecimalNumber(decimal: monthly).doubleValue)) / mo"
+        // Annual per-WEEK in the product's own locale/currency (falls back to the plain formatter).
+        let perWeek: String = {
+            let weekly = a.price / 52
+            if let s = a.priceFormatter?.string(from: weekly as NSDecimalNumber) { return "\(s) / wk" }
+            return "\(PaywallOffering.money(NSDecimalNumber(decimal: weekly).doubleValue)) / wk"
         }()
         offering = PaywallOffering(
-            monthly: .init(id: m.productIdentifier, period: .monthly,
-                           priceText: m.localizedPriceString, perMonthText: nil, trialDays: trialDays(of: m)),
+            weekly: .init(id: w.productIdentifier, period: .weekly,
+                          priceText: w.localizedPriceString, perWeekText: nil, trialDays: trialDays(of: w)),
             annual: .init(id: a.productIdentifier, period: .annual,
-                          priceText: a.localizedPriceString, perMonthText: perMonth, trialDays: trialDays(of: a)),
-            monthlyPriceValue: NSDecimalNumber(decimal: m.price).doubleValue,
+                          priceText: a.localizedPriceString, perWeekText: perWeek, trialDays: trialDays(of: a)),
+            weeklyPriceValue: NSDecimalNumber(decimal: w.price).doubleValue,
             annualPriceValue: NSDecimalNumber(decimal: a.price).doubleValue)
         pricingIsLive = true   // only now are the numbers on screen the store's
     }
 
-    /// The store product behind a plan when the offering has no package for it (the monthly
-    /// before the dashboard lists it): fetched by id, so the purchase still goes through StoreKit
+    /// The store product behind a plan when the offering has no package for it (the weekly if a
+    /// dashboard edit ever drops it): fetched by id, so the purchase still goes through StoreKit
     /// and RevenueCat's ledger exactly as a package purchase would.
     private func storeProduct(for product: PaywallProduct) async -> StoreProduct? {
         await Purchases.shared.products([product.id]).first

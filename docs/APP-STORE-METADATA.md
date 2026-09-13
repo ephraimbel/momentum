@@ -130,10 +130,10 @@ Declare accurately (you collect these):
 - HealthKit data is **never** used for advertising and must not leave the device except to the user's own account.
 
 ## Pricing (subscriptions — App Store Connect → Subscriptions)
-Two auto-renewing subscriptions in one group (must match `PaywallOffering.standard` in the app):
-- **momentum Pro — Monthly** (`momentum_pro_monthly`): **$14.99/mo**, no trial. The entry plan (owner call 2026-09-07, replacing the weekly; price scheduled in ASC from 2026-09-09 with existing subscribers preserved at $9.99). Group level 2, same as the annual, so a switch is a crossgrade at the next renewal.
-- **momentum Pro — Weekly** (`momentum_pro_weekly`): **$5.99/wk**, no trial. Retired from the offering 2026-09-07 (kept on sale for existing subscribers). Was the entry plan (owner call 2026-08-28, replacing the $9.99 monthly, which was retired from the offering — existing monthly subscribers keep their price and entitlement).
-- **momentum Pro — Annual** (`momentum_pro_annual`): **$79.99/yr** with a **3-day introductory free trial** for eligible new subscribers — sold at its own per-week number, **$1.54/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48). Eligible customers see the stronger "7 DAYS FREE" badge; ineligible customers see the rounded "SAVE 75%" value message. (Trial restored 2026-09-01 for the onboarding hard-wall test.)
+Two sold auto-renewing subscriptions in one group (must match `PaywallOffering.standard` in the app):
+- **momentum Pro — Weekly** (`momentum_pro_weekly`): **$5.99/wk**, no trial. The entry plan again (owner call 2026-09-13; a same-day $3.99 schedule was deleted before it took effect). Group level 2, same as the annual, so a switch is a crossgrade at the next renewal.
+- **momentum Pro — Annual** (`momentum_pro_annual`): **$29.99/yr** with a **7-day introductory free trial** for eligible new subscribers (both live since 2026-09-13) — sold at its own per-week number, **$0.58/week**, which is **90.4% under the weekly run-rate** ($5.99 × 52 = $311.48). Eligible customers see the "7 DAYS FREE" badge; ineligible customers see the rounded "SAVE 90%" value message.
+- **momentum Pro — Monthly** (`momentum_pro_monthly`): $9.99/mo, no trial. Retired from the offering 2026-09-13 (kept on sale for existing subscribers; level 2).
 - Both products must live in the **same subscription group**, or upgrade/downgrade between them breaks.
 
 The App Store renders these prices natively from the product — the listing **description does not hardcode them**. Full activation runbook: `docs/MONETIZATION-SETUP.md`.

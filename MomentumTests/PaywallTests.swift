@@ -39,7 +39,7 @@ struct PaywallTests {
 
         // A different store product is a distinct purchase signal; RevenueCat still owns the
         // transaction ledger and decides whether that transition is actually possible.
-        #expect(pw.claimPurchaseConversion(for: pw.offering.monthly.id))
+        #expect(pw.claimPurchaseConversion(for: pw.offering.weekly.id))
         pw.resetForTesting()
     }
 
@@ -89,38 +89,39 @@ struct PaywallTests {
 
     @Test func sevenDayTrialIsAnnualOnly() {
         let offering = PaywallOffering.standard
-        // Owner call 2026-09-11: the annual offers a seven-day trial; monthly is the
+        // Owner call 2026-09-13: the annual offers a seven-day trial; weekly is the
         // low-commitment entry plan and charges the same day, so there is no trial to cancel.
         #expect(offering.annual.trialDays == 7)
-        #expect(offering.monthly.trialDays == 0)
-        #expect(offering.annualSavingsPercent == 75)   // 75.0% ($29.99 vs 12 × $9.99), rounded to nearest 5%
+        #expect(offering.weekly.trialDays == 0)
+        #expect(offering.annualSavingsPercent == 90)   // 90.4% ($29.99 vs 52 × $5.99), rounded to nearest 5%
     }
 
-    /// Monthly-anchored pricing (owner call 2026-09-07, weekly retired): a $9.99 month is the
-    /// entry plan and the yearly sits about 75% under its run-rate, sold at its own monthly number
-    /// ($2.50/mo). The pair must stay derivable from the two constants — a hand-written badge or
-    /// per-month string is how these fall out of step with what the store charges.
-    @Test func pricingIsTheMonthlyAnchoredPair() {
+    /// Weekly-anchored pricing (owner call 2026-09-13, monthly retired again): a $5.99 week is the
+    /// entry plan and the yearly sits about 90% under its run-rate, sold at its own weekly number
+    /// ($0.58/wk). The pair must stay derivable from the two constants — a hand-written badge or
+    /// per-week string is how these fall out of step with what the store charges.
+    @Test func pricingIsTheWeeklyAnchoredPair() {
         let offering = PaywallOffering.standard
-        #expect(offering.monthly.priceText == "$9.99")
+        #expect(offering.weekly.priceText == "$5.99")
         #expect(offering.annual.priceText == "$29.99")
-        #expect(offering.monthly.period == .monthly)
+        #expect(offering.weekly.period == .weekly)
         #expect(offering.annual.period == .annual)
-        #expect(offering.monthly.id == "momentum_pro_monthly")
-        // The yearly's headline: its own per-month price, derived — never typed.
-        #expect(offering.annual.perMonthText == "$2.50 / mo")
-        // The entry plan never advertises a per-month equivalent — it IS the monthly price.
-        #expect(offering.monthly.perMonthText == nil)
+        #expect(offering.weekly.id == "momentum_pro_weekly")
+        #expect(offering.annual.id == "momentum_pro_annual")
+        // The yearly's headline: its own per-week price, derived — never typed.
+        #expect(offering.annual.perWeekText == "$0.58 / wk")
+        // The entry plan never advertises a per-week equivalent — it IS the weekly price.
+        #expect(offering.weekly.perWeekText == nil)
     }
 
     /// The badge follows the numbers, in both directions — the guard that stops a price change
-    /// from leaving a stale "SAVE 55%" on screen.
+    /// from leaving a stale "SAVE 90%" on screen.
     @Test func savingsBadgeTracksLivePrices() {
         var offering = PaywallOffering.standard
-        offering.monthlyPriceValue = 14.99
-        offering.annualPriceValue = 89.94             // exactly half the run-rate
+        offering.weeklyPriceValue = 5.99
+        offering.annualPriceValue = 155.74            // exactly half the run-rate (52 × $5.99 / 2)
         #expect(offering.annualSavingsPercent == 50)
-        offering.annualPriceValue = 179.88            // no saving at all
+        offering.annualPriceValue = 311.48            // no saving at all
         #expect(offering.annualSavingsPercent == 0)
     }
 }

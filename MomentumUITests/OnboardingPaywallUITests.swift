@@ -1,6 +1,6 @@
 import XCTest
 
-/// The onboarding paywall is hard: the last beat offers the annual trial, a monthly subscription,
+/// The onboarding paywall is hard: the last beat offers the annual trial, a weekly subscription,
 /// and Restore, with no close or swipe bypass. Verifies the gate survives a force-quit, the App
 /// Store outage escape remains available, and a trial grants-and-advances. Uses the local purchase
 /// seam (no RevenueCat in DEBUG), so the trial tap exercises the real entitlement hand-off.

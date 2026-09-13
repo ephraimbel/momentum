@@ -26,7 +26,7 @@ struct PaywallView: View {
     @State private var revealed = false
 
     private var offering: PaywallOffering { paywall.offering }
-    private var product: PaywallProduct { selected == .annual ? offering.annual : offering.monthly }
+    private var product: PaywallProduct { selected == .annual ? offering.annual : offering.weekly }
 
     var body: some View {
         GeometryReader { geo in
@@ -156,7 +156,7 @@ struct PaywallView: View {
         HStack(spacing: 12) {
             planCard(offering.annual, s: s)
                 .reveal(revealed, delay: 0.14, reduceMotion: reduceMotion)
-            planCard(offering.monthly, s: s)
+            planCard(offering.weekly, s: s)
                 .reveal(revealed, delay: 0.2, reduceMotion: reduceMotion)
         }
     }
@@ -169,13 +169,13 @@ struct PaywallView: View {
             Haptics.medium()   // a real press, not a tick
             services.analytics.log(.paywallAction(
                 action: "plan_selected", placement: feature.placement,
-                product: p.isAnnual ? "annual" : "monthly"))
+                product: p.isAnnual ? "annual" : "weekly"))
             if reduceMotion { selected = p.period }
             else { withAnimation(.spring(response: 0.36, dampingFraction: 0.72)) { selected = p.period } }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(p.isAnnual ? "Yearly" : "Monthly")
+                    Text(p.isAnnual ? "Yearly" : "Weekly")
                         .font(.rounded(17, weight: .semibold)).foregroundStyle(Theme.ink)
                     Spacer(minLength: 4)
                     ZStack {
@@ -189,13 +189,13 @@ struct PaywallView: View {
                     .frame(width: 24, height: 24)
                 }
                 if paywall.pricingIsLive {
-                    // The yearly leads with its MONTHLY number (the two plans compare on one
+                    // The yearly leads with its WEEKLY number (the two plans compare on one
                     // axis); the total it actually charges sits right under it — never only in
                     // the fine print (App Review 3.1.2: price and duration, together).
-                    Text(p.isAnnual ? "\(perMonth(p))/mo" : "\(p.priceText)/mo")
+                    Text(p.isAnnual ? "\(perWeek(p))/wk" : "\(p.priceText)/wk")
                         .font(.rounded(19 * s, weight: .medium)).monospacedDigit().foregroundStyle(Theme.ink)
                         .lineLimit(1).minimumScaleFactor(0.7)
-                    Text(p.isAnnual ? "\(p.priceText) billed yearly" : "Billed monthly")
+                    Text(p.isAnnual ? "\(p.priceText) billed yearly" : "Billed weekly")
                         .font(.rounded(12, weight: .medium)).foregroundStyle(Theme.inkSecondary)
                         .lineLimit(1).minimumScaleFactor(0.8)
                 } else {
@@ -224,14 +224,14 @@ struct PaywallView: View {
         }
         .buttonStyle(RaisedPressStyle(scale: 0.97))
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.72), value: selected)
-        .accessibilityLabel(p.isAnnual ? "Yearly plan, \(perMonth(p)) per month, \(p.priceText) billed yearly"
-                                       : "Monthly plan, \(p.priceText) per month")
+        .accessibilityLabel(p.isAnnual ? "Yearly plan, \(perWeek(p)) per week, \(p.priceText) billed yearly"
+                                       : "Weekly plan, \(p.priceText) per week")
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
-    /// "$3.33" from the store formatter's "$3.33 / mo" — never a number we haven't confirmed.
-    private func perMonth(_ p: PaywallProduct) -> String {
-        guard let text = p.perMonthText else { return "—" }
+    /// "$0.58" from the store formatter's "$0.58 / wk" — never a number we haven't confirmed.
+    private func perWeek(_ p: PaywallProduct) -> String {
+        guard let text = p.perWeekText else { return "—" }
         return String(text.split(separator: "/").first ?? Substring(text)).trimmingCharacters(in: .whitespaces)
     }
 
@@ -239,7 +239,7 @@ struct PaywallView: View {
         GlassCircleButton(systemName: "xmark", label: "Close") {
             services.analytics.log(.paywallAction(
                 action: "closed", placement: feature.placement,
-                product: product.isAnnual ? "annual" : "monthly"))
+                product: product.isAnnual ? "annual" : "weekly"))
             dismiss()
         }
             .padding(.leading, Theme.Space.md)

@@ -272,12 +272,13 @@ struct SettingsView: View {
             .padding(.vertical, 11)
             inset
             actionRow("Manage subscription", icon: "creditcard") {
-                // A yearly subscriber on their way to cancel sees the monthly first (2026-09-07);
+                // A yearly subscriber on their way to cancel sees the weekly first (2026-09-07,
+                // weekly since 2026-09-13);
                 // everyone else goes straight to Apple's page. Never a wall: the sheet carries
                 // the Manage link itself.
                 let ids = paywall.activeProductIDs
                 if paywall.isPro, ids.contains(paywall.offering.annual.id),
-                   !ids.contains(paywall.offering.monthly.id) {
+                   !ids.contains(paywall.offering.weekly.id) {
                     showSwitchSheet = true
                 } else {
                     openURL(manageURL)
