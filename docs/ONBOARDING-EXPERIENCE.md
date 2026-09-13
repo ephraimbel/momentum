@@ -73,8 +73,17 @@ composition and shrinks at accessibility sizes; the meaningful question and cont
 Type and accessibility labels. Shared typography, white paper materials, spacing, ink controls, and
 restrained lavender keep the pages consistent.
 
-Animations use a single entrance and choice responses without looping timers or artificial delays.
-Decorative scenes do not intercept touches. Reduce Motion shows settled illustrations and crossfades.
+Every scene does three things (motion pass, September 12): it assembles once, it answers each choice
+with one acknowledgement tied to the question's meaning, and its single hero object breathes. The
+goal page runs a lavender lap around its track for every goal picked and settles to a trace; the race
+bib rolls its number, prints the athlete's name, stamps the date and sways on its pins; the recent-running
+figures roll and push the arrow forward; each area to train around sends one protective ripple out
+from the figure; each body detail stamps in and the figure follows the sex answer; the hybrid page is a
+balance beam that tips toward the emphasis; the approach page's coaching loop lights week → feedback →
+review once and rests on the first week; the day count and the Continue pill lift the moment they
+change. Hover is a slow autoreversing drift on the illustration only, never on a control; there are no
+timed delays before input and no fake processing. Decorative scenes do not intercept touches. Reduce
+Motion shows settled illustrations, crossfades, and no hover or ripple.
 The existing welcome animation and earned plan-reveal materials remain intact. Compact screens retain
 scrolling and a pinned Continue button rather than shrinking readable controls to fit.
 

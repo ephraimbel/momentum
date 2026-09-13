@@ -84,6 +84,7 @@ final class GuestEntryUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
         let purchase = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my' OR label BEGINSWITH 'Unlock my plan' OR label BEGINSWITH 'Continue ·'")).firstMatch
         XCTAssertTrue(purchase.waitForExistence(timeout: 15))
         purchase.tap()
@@ -131,6 +132,7 @@ final class GuestEntryUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
         let purchase = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Start my' OR label BEGINSWITH 'Unlock my plan' OR label BEGINSWITH 'Continue ·'")).firstMatch
         XCTAssertTrue(purchase.waitForExistence(timeout: 15)); purchase.tap()
         XCTAssertTrue(app.tabBars.buttons["Plan"].waitForExistence(timeout: 20))
@@ -148,43 +150,5 @@ final class GuestEntryUITests: XCTestCase {
         shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
-    }
-
-    @discardableResult
-    private func grantHealthSheet(_ healthApp: XCUIApplication,
-                                  categoriesEnabled: inout Bool) -> Bool {
-        var interacted = false
-        if !categoriesEnabled {
-            let allCategories = healthApp.cells["UIA.Health.AuthSheet.AllCategoryButton"]
-            if allCategories.exists && allCategories.isHittable {
-                allCategories.tap()
-                categoriesEnabled = true
-                interacted = true
-            } else {
-                let allText = healthApp.staticTexts["Turn On All"]
-                if allText.exists && allText.isHittable {
-                    allText.tap()
-                    categoriesEnabled = true
-                    interacted = true
-                }
-            }
-            if !categoriesEnabled {
-                for label in ["Turn On All", "Turn On All Categories", "Enable All"] {
-                    let control = healthApp.switches[label].exists
-                        ? healthApp.switches[label] : healthApp.buttons[label]
-                    if control.exists && control.isHittable {
-                        control.tap()
-                        categoriesEnabled = true
-                        interacted = true
-                        break
-                    }
-                }
-            }
-        }
-        let allow = healthApp.buttons["Allow"]
-        guard allow.exists && allow.isHittable else { return interacted }
-        allow.tap()
-        categoriesEnabled = false
-        return true
     }
 }

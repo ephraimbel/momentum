@@ -86,6 +86,7 @@ final class OnboardingNoRatingUITests: XCTestCase {
         let review = app.buttons["onboarding.review.continue"]
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         review.tap()
+        crossPermissionBeats(app)
         XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
         assertNoRatingSurface(app, on: "entry to Today")
         XCTAssertFalse(app.staticTexts["Save your progress"].exists)

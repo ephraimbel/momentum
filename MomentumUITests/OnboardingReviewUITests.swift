@@ -1,6 +1,7 @@
 import XCTest
 
-/// The review ask owns a separate page after the plan. A rating is never required to enter.
+/// The review ask owns a separate page after the plan, and hands on to the Health and location
+/// beats. A rating is never required to enter.
 final class OnboardingReviewUITests: XCTestCase {
     func testReviewContinueWorksOnFirstTapInBothMotionModes() {
         continueAfterFailure = false
@@ -18,6 +19,8 @@ final class OnboardingReviewUITests: XCTestCase {
             image.lifetime = .keepAlways
             add(image)
             cta.tap()
+            // Review hands on to the two permission beats before the app (2026-09-12).
+            crossPermissionBeats(app)
             XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
             XCTAssertFalse(app.buttons["onboarding.review.continue"].exists)
             app.terminate()

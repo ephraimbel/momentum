@@ -169,7 +169,7 @@ struct OnboardingFlowTests {
         vm.intensity = .aggressive
 
         let steps = vm.steps
-        #expect(steps == [.name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .days, .intensity, .building, .reveal, .review])
+        #expect(steps == [.name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .days, .intensity, .building, .reveal, .review, .health, .primers])
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!
@@ -205,23 +205,27 @@ struct OnboardingFlowTests {
         #expect(easy.recommended == .gentle)
     }
 
-    @Test func reviewImmediatelyFollowsRevealWithoutAddingAQuestion() {
+    /// Owner call 2026-09-12: reveal → review → Health → location, then checkout. None of the
+    /// four adds a question, so the progress bar is full from the reveal on.
+    @Test func reviewThenPermissionBeatsFollowRevealWithoutAddingAQuestion() {
         let vm = OnboardingViewModel()
-        for retired in [OnboardingViewModel.Step.health, .notifications, .primers, .account] {
+        for retired in [OnboardingViewModel.Step.notifications, .account] {
             #expect(!vm.steps.contains(retired))
         }
-        #expect(vm.steps.suffix(3) == [.building, .reveal, .review])
+        #expect(vm.steps.suffix(5) == [.building, .reveal, .review, .health, .primers])
         vm.step = .reveal
         #expect(vm.progress == 1)
         #expect(!vm.isQuestionStep)
+        for expected in [OnboardingViewModel.Step.review, .health, .primers] {
+            vm.advance()
+            #expect(vm.step == expected)
+            #expect(vm.progress == 1)
+            #expect(!vm.isQuestionStep)
+            #expect(vm.canAdvance)
+            #expect(OnboardingViewModel.currentStep(for: expected) == expected)
+        }
         vm.advance()
-        #expect(vm.step == .review)
-        #expect(vm.progress == 1)
-        #expect(!vm.isQuestionStep)
-        #expect(vm.canAdvance)
-        #expect(OnboardingViewModel.currentStep(for: .review) == .review)
-        vm.advance()
-        #expect(vm.step == .review)
+        #expect(vm.step == .primers)   // the last beat: checkout opens from here, not another step
     }
 
     @Test func namelessAthletePersistsARealPlanWithoutInventedBodyMeasurements() throws {
@@ -272,7 +276,9 @@ struct OnboardingFlowTests {
         for step in [OnboardingViewModel.Step.experience, .runVolume, .injuries, .metrics, .days, .intensity] {
             #expect(vm.steps.contains(step))
         }
-        vm.step = .review
+        // Walk back from the LAST beat, whatever it is (the location primer since 2026-09-12),
+        // so this stays a statement about back-navigation rather than about where the flow ends.
+        vm.step = try #require(vm.steps.last)
         var backwards: [OnboardingViewModel.Step] = [vm.step]
         while vm.canGoBack {
             vm.back()

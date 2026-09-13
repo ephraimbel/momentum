@@ -312,10 +312,13 @@ final class OnboardingViewModel {
 
     private func computeSteps() -> [Step] {
         // Keep historical IDs stable. Activities and time limits are editable details on goal
-        // and schedule. Identity and body details stay required; permissions are contextual after entry.
+        // and schedule. Identity and body details stay required. The two permission beats come
+        // AFTER the review (owner call 2026-09-12): Health so the plan can read recovery from
+        // day one, then location so Today's map opens on the athlete the first time they see it.
+        // Checkout follows the location beat.
         let ordered: [Step] = [
             .name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .muscleFocus, .days,
-            .equipment, .hybridFocus, .intensity, .building, .reveal, .review,
+            .equipment, .hybridFocus, .intensity, .building, .reveal, .review, .health, .primers,
         ]
         return ordered.filter { step in
             switch step {
@@ -371,7 +374,7 @@ final class OnboardingViewModel {
         case .raceGoalTime: .race
         case .preferredDays, .session: .days
         case .strengthSplit: .equipment
-        case .why, .health, .notifications, .primers: .intensity
+        case .why, .notifications: .intensity
         case .account: .review
         default: saved
         }

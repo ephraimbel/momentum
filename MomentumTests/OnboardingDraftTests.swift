@@ -169,21 +169,21 @@ struct OnboardingDraftTests {
         #expect(fullyAnswered().draft().savedStep == "days")
     }
 
-    @Test func permissionBeatsBeforeGenerationCanResume() {
+    @Test func retiredNotificationsBeatResumesOnTheApproach() {
         // Step.allCases keeps historical raw values and does NOT match the live screen order.
-        // Notifications + primers are before Building in computeSteps and must not be rejected
-        // merely because their enum cases have larger raw values.
-        for step in [OnboardingViewModel.Step.notifications, .primers] {
-            var draft = fullyAnswered().draft()
-            draft.savedStep = String(describing: step)
-            let restored = OnboardingViewModel()
-            #expect(restored.restore(from: draft))
-            #expect(restored.step == .intensity)
-        }
+        // The retired notifications page sat before Building and must not be rejected merely
+        // because its enum case has a larger raw value.
+        var draft = fullyAnswered().draft()
+        draft.savedStep = String(describing: OnboardingViewModel.Step.notifications)
+        let restored = OnboardingViewModel()
+        #expect(restored.restore(from: draft))
+        #expect(restored.step == .intensity)
     }
 
     @Test func outputBeatsRestoreAnswersAndRebuildWithoutAProfile() {
-        for step in [OnboardingViewModel.Step.building, .reveal, .review, .account] {
+        // Health and location follow the review (2026-09-12), so a draft placed there describes
+        // a plan that already generated: rebuild, never resume onto a page that cannot save one.
+        for step in [OnboardingViewModel.Step.building, .reveal, .review, .health, .primers, .account] {
             var draft = fullyAnswered().draft()
             draft.savedStep = String(describing: step)
             let restored = OnboardingViewModel()
@@ -207,7 +207,7 @@ struct OnboardingDraftTests {
     @Test func retiredPagesResumeOnTheirCombinedPageWithoutLosingAnswers() {
         let pairs: [(OnboardingViewModel.Step, OnboardingViewModel.Step)] = [
             (.name, .name), (.identity, .name), (.units, .goal), (.disciplines, .goal), (.raceGoalTime, .race),
-            (.preferredDays, .days), (.session, .days), (.metrics, .metrics), (.strengthSplit, .equipment), (.why, .intensity), (.health, .intensity)
+            (.preferredDays, .days), (.session, .days), (.metrics, .metrics), (.strengthSplit, .equipment), (.why, .intensity)
         ]
         for (old, current) in pairs {
             var draft = fullyAnswered().draft()

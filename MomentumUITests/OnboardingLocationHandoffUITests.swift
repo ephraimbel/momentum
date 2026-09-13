@@ -1,13 +1,17 @@
 import XCTest
 
-/// Location belongs to a recording action. A fresh athlete can reach Today without granting it.
+/// Location is asked on its own beat after the review (owner call 2026-09-12), never before the
+/// plan: the athlete reaches Today with the grant already made, so the map opens on them and
+/// Start raises nothing.
 final class OnboardingLocationHandoffUITests: XCTestCase {
-    func testLocationIsRequestedAtStartInsteadOfOnboarding() {
+    func testLocationIsRequestedOnItsBeatAfterTheReview() {
         continueAfterFailure = false
         let app = XCUIApplication()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         app.resetAuthorizationStatus(for: .location)
-        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal", "--review-no-ask"]
+        app.resetAuthorizationStatus(for: .health)
+        // Entitled, so the last beat enters Today instead of checkout.
+        app.launchArguments = ["--reset-store", "--seed-demo", "--onboarding", "--onboarding-reveal", "--review-no-ask", "--debug-pro"]
         app.launch()
         let reveal = app.buttons["onboarding.reveal.continue"]
         XCTAssertTrue(reveal.waitForExistence(timeout: 20))
@@ -18,22 +22,31 @@ final class OnboardingLocationHandoffUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
-        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
-        XCTAssertFalse(app.alerts.firstMatch.exists)
+
+        // Health first, with no location alert anywhere near it.
+        XCTAssertTrue(app.staticTexts["Train around your recovery"].waitForExistence(timeout: 15))
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
-        app.terminate()
-        app.launchArguments = ["--reset-store", "--seed-empty", "--debug-pro", "--today-sport", "run"]
-        app.launch()
-        let start = app.buttons["todayDeckStart"]
-        XCTAssertTrue(start.waitForExistence(timeout: 20))
-        // Keep billing hermetic without --ui-test-route, which deliberately bypasses GPS consent.
-        XCTAssertTrue(start.waitForExistence(timeout: 5) && start.isHittable)
+        crossHealthBeat(app)
+
+        // Then location: its Continue is what raises the system alert.
+        XCTAssertTrue(app.staticTexts["Map your runs"].waitForExistence(timeout: 15))
+        XCTAssertFalse(springboard.alerts.firstMatch.exists, "No location alert before the athlete taps")
         let before = XCTAttachment(screenshot: app.screenshot())
-        before.name = "today-before-location-request"; before.lifetime = .keepAlways
+        before.name = "location-beat"; before.lifetime = .keepAlways
         add(before)
-        start.tap()
+        app.buttons["Continue"].firstMatch.tap()
         let allow = springboard.buttons["Allow While Using App"]
-        XCTAssertTrue(allow.waitForExistence(timeout: 10), "Start must request recording permission")
+        XCTAssertTrue(allow.waitForExistence(timeout: 10), "The location beat must request the grant")
         allow.tap()
+
+        // Into the app with the grant made: Today, and Start asks for nothing more.
+        XCTAssertTrue(app.tabBars.buttons["Today"].waitForExistence(timeout: 20))
+        XCTAssertFalse(springboard.alerts.firstMatch.exists)
+        let start = app.buttons["todayDeckStart"]
+        if start.waitForExistence(timeout: 10), start.isHittable {
+            start.tap()
+            XCTAssertFalse(springboard.alerts.firstMatch.waitForExistence(timeout: 3),
+                           "Start must not ask again for a grant made during setup")
+        }
     }
 }

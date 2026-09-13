@@ -152,7 +152,7 @@ extension OnboardingViewModel {
         // flow order, which retires permission and account pages without changing their IDs.
         // No profile exists when this is called. Restore answers and rebuild instead of
         // throwing away a completed interview after an interruption during the reveal.
-        let needsRebuild = [Step.building, .reveal, .review, .account].contains(placedStep)
+        let needsRebuild = [Step.building, .reveal, .review, .health, .primers, .account].contains(placedStep)
         name = d.name
         handle = d.handle
         activities = Set(d.activities.compactMap(ActivityChoice.init(rawValue:))).union([.run])

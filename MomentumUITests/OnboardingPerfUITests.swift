@@ -50,6 +50,7 @@ final class OnboardingPerfUITests: XCTestCase {
         let review = app.buttons["onboarding.review.continue"]
         XCTAssertTrue(review.waitForExistence(timeout: 10) && review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
         XCTAssertTrue(app.buttons["Restore"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["onboarding.review.continue"].isHittable, "Checkout must own interaction over the review page")
     }

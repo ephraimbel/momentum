@@ -617,6 +617,7 @@ final class NativePhoneOnboardingUITests: XCTestCase {
         XCTAssertTrue(review.isHittable)
         capture(revealApp, "large-text-review")
         review.tap()
+        crossPermissionBeats(revealApp)
         XCTAssertTrue(revealApp.buttons["Restore"].waitForExistence(timeout: 15))
         // The page remains underneath the full-screen checkout; it must not receive input.
         XCTAssertFalse(revealApp.buttons["onboarding.review.continue"].isHittable)

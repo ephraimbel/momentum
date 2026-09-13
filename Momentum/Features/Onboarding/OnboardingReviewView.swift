@@ -22,7 +22,11 @@ struct OnboardingReviewView: View {
             // The app itself is what we're asking about, so the app's own mark is the hero — lit
             // the way the permission beats light their glyph, so this page belongs to the set.
             BrandMark(size: 92)
+                // One pass of light across the glass after it lands, and then it floats: the
+                // icon is the thing being asked about, so it is the thing that is alive.
+                .onboardingSheen(delay: 0.7)
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 10)
+                .onboardingHover(amplitude: 3, tilt: 0, period: 3.6)
                 .padding(.bottom, Theme.Space.xs)
                 .onboardingEntrance(0.02, lift: 10)
 

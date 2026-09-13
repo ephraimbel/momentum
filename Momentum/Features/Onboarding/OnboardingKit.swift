@@ -75,6 +75,207 @@ extension View {
     }
 }
 
+// MARK: - Micro-motion (acknowledge · hover · sheen)
+//
+// The three small moves every onboarding page is allowed beyond its entrance (motion pass
+// 2026-09-12). Each is a transform, each is finite or slow, and each is nothing under Reduce
+// Motion. They exist so a page can react to the athlete instead of sitting still once it lands:
+//   acknowledge — one short lift when an answer changes (the illustration "heard" the tap)
+//   hover       — the page's ONE hero object breathing on the canvas, never the controls
+//   sheen       — a single pass of light across a surface after it arrives
+
+/// One acknowledgement when `trigger` changes: a lift in scale, and optionally a sideways nudge,
+/// that settles straight back. `enabled` gates it (a card should stride when it is picked, not
+/// when it is un-picked). `delay` holds the lift so it can land on a moment (the lap's finish).
+struct OnboardingAcknowledge<T: Equatable>: ViewModifier {
+    let trigger: T
+    var scale: CGFloat = 1.06
+    var dx: CGFloat = 0
+    var enabled = true
+    var delay: Double = 0
+    @ReducedMotionPreference private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.phaseAnimator([false, true], trigger: trigger) { view, up in
+            let on = up && enabled && !reduceMotion
+            view.scaleEffect(on ? scale : 1).offset(x: on ? dx : 0)
+        } animation: { up in
+            up ? .spring(response: 0.2, dampingFraction: 0.55).delay(delay)
+               : .spring(response: 0.34, dampingFraction: 0.72)
+        }
+    }
+}
+
+/// The hero object breathing: a slow vertical drift and a hair of tilt, autoreversing. One per
+/// page at most, on the illustration only. `anchor` lets a pinned object (the race bib) swing from
+/// where it hangs instead of its centre.
+struct OnboardingHover: ViewModifier {
+    var amplitude: CGFloat = 3
+    var tilt: Double = 1.2
+    var period: Double = 3.4
+    var anchor: UnitPoint = .center
+    @ReducedMotionPreference private var reduceMotion
+
+    func body(content: Content) -> some View {
+        if reduceMotion {
+            content
+        } else {
+            content.phaseAnimator([false, true]) { view, up in
+                view.offset(y: up ? -amplitude : amplitude)
+                    .rotationEffect(.degrees(up ? tilt : -tilt), anchor: anchor)
+            } animation: { _ in .easeInOut(duration: period) }
+        }
+    }
+}
+
+/// One pass of light across a surface, `delay` seconds after it appears, shaped by the surface's
+/// own alpha so it never spills past the object. Plays once; Reduce Motion draws nothing.
+struct OnboardingSheen: ViewModifier {
+    var delay: Double = 0.6
+    var duration: Double = 0.9
+    @State private var swept = false
+    @ReducedMotionPreference private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { geometry in
+                        let w = geometry.size.width
+                        LinearGradient(colors: [.clear, .white.opacity(0.95), .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: w * 0.34, height: geometry.size.height * 2.2)
+                            .rotationEffect(.degrees(24))
+                            .offset(x: swept ? w * 1.25 : -w * 0.85, y: -geometry.size.height * 0.6)
+                            .blendMode(.plusLighter)
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                }
+            }
+            .onAppear {
+                guard !swept, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: duration).delay(delay)) { swept = true }
+            }
+    }
+}
+
+/// A resting pulse behind an object: one soft halo beating lub-dub, forever, at ~50 bpm — an
+/// endurance athlete's resting heart rate, which is one of the signals the Health beat is asking
+/// to read. Light only; the object it sits behind is never deformed (Apple's icon stays Apple's
+/// icon). Reduce Motion draws one still halo.
+struct HeartbeatHalo: View {
+    var tint: Color
+    var diameter: CGFloat
+    @ReducedMotionPreference private var reduceMotion
+
+    /// The cardiac cycle as phases. `lub` is the big beat, `dub` the smaller second sound a
+    /// fraction later, and `rest` the long diastole that makes the pair read as a heartbeat
+    /// rather than a blink. The durations below sum to ~1.2 s.
+    private enum Beat: CaseIterable {
+        case rest, lub, lubFall, dub, dubFall
+        var scale: CGFloat {
+            switch self {
+            case .lub: 1.16
+            case .dub: 1.08
+            default: 0.96
+            }
+        }
+        var opacity: Double {
+            switch self {
+            case .lub: 0.85
+            case .lubFall: 0.34
+            case .dub: 0.6
+            default: 0.22
+            }
+        }
+        var duration: Double {
+            switch self {
+            case .lub: 0.13
+            case .lubFall: 0.15
+            case .dub: 0.12
+            case .dubFall: 0.22
+            case .rest: 0.58
+            }
+        }
+    }
+
+    var body: some View {
+        let halo = RadialGradient(colors: [tint.opacity(0.55), tint.opacity(0.12), .clear],
+                                  center: .center, startRadius: diameter * 0.18, endRadius: diameter * 0.55)
+            .frame(width: diameter, height: diameter)
+        if reduceMotion {
+            halo.opacity(0.3)
+        } else {
+            halo.phaseAnimator(Beat.allCases) { view, beat in
+                view.scaleEffect(beat.scale).opacity(beat.opacity)
+            } animation: { beat in .easeOut(duration: beat.duration) }
+        }
+    }
+}
+
+/// Rings going out from a point and dying — a device finding you. Finite by design: `count`
+/// pings play once on appear and then the page is still. Reduce Motion draws nothing.
+struct LocatingPing: View {
+    var tint: Color
+    var diameter: CGFloat
+    var count = 2
+    @State private var live = 0
+    @ReducedMotionPreference private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            ForEach(0..<count, id: \.self) { index in
+                Circle().strokeBorder(tint, lineWidth: 1.5)
+                    .frame(width: diameter, height: diameter)
+                    .scaleEffect(index < live ? 2.4 : 0.5)
+                    .opacity(index < live ? 0 : 0.55)
+            }
+        }
+        .allowsHitTesting(false)
+        .task {
+            guard !reduceMotion else { return }
+            for index in 0..<count {
+                do { try await Task.sleep(for: .seconds(index == 0 ? 0.25 : 0.42)) } catch { return }
+                withAnimation(.easeOut(duration: 1.5)) { live = index + 1 }
+            }
+        }
+    }
+}
+
+/// A compass needle finding north: the glyph arrives turned away and settles on an underdamped
+/// spring, so it overshoots once and rocks to rest the way a real needle does.
+struct CompassSettle: ViewModifier {
+    var from: Double = -26
+    var delay: Double = 0.15
+    @State private var settled = false
+    @ReducedMotionPreference private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .rotationEffect(.degrees(settled || reduceMotion ? 0 : from))
+            .onAppear {
+                guard !settled, !reduceMotion else { return }
+                withAnimation(.spring(response: 0.85, dampingFraction: 0.38).delay(delay)) { settled = true }
+            }
+    }
+}
+
+extension View {
+    func compassSettle(from: Double = -26, delay: Double = 0.15) -> some View {
+        modifier(CompassSettle(from: from, delay: delay))
+    }
+    func onboardingAcknowledge<T: Equatable>(trigger: T, scale: CGFloat = 1.06, dx: CGFloat = 0,
+                                             enabled: Bool = true, delay: Double = 0) -> some View {
+        modifier(OnboardingAcknowledge(trigger: trigger, scale: scale, dx: dx, enabled: enabled, delay: delay))
+    }
+    func onboardingHover(amplitude: CGFloat = 3, tilt: Double = 1.2, period: Double = 3.4,
+                         anchor: UnitPoint = .center) -> some View {
+        modifier(OnboardingHover(amplitude: amplitude, tilt: tilt, period: period, anchor: anchor))
+    }
+    func onboardingSheen(delay: Double = 0.6) -> some View { modifier(OnboardingSheen(delay: delay)) }
+}
+
 /// Optional precision lives in a focused panel, leaving the interview's main choices in view.
 struct OnboardingDetailSheet<Content: View>: View {
     let title: String
@@ -506,6 +707,18 @@ extension View {
 /// is about to see (a list of signal rows with toggles), not the real thing — pastel dots from our
 /// own aurora, no system text beyond the app's name.
 struct HealthSheetMock: View {
+    /// The mock plays the tap the athlete is about to make: "Turn On All" presses itself, then
+    /// the five signal toggles flip on in turn. Once, shortly after the page lands. Reduce
+    /// Motion renders the finished state (all on), never the empty one.
+    @State private var pressedAll = false
+    @State private var lit = 0
+    @ReducedMotionPreference private var reduceMotion
+    private var rows: [(String, Color)] {
+        [("Sleep", Color(hex: "5AC8FA")), ("Heart Rate", Color(hex: "FF2D55")),
+         ("Heart Rate Variability", Color(hex: "FF2D55")), ("Resting Heart Rate", Color(hex: "FF2D55")),
+         ("Body Mass", Color(hex: "AF52DE"))]
+    }
+
     var body: some View {
         DeviceFrame {
             ZStack(alignment: .top) {
@@ -540,31 +753,27 @@ struct HealthSheetMock: View {
                         }
                     }
                     .padding(.horizontal, 16).padding(.top, 22)
-                    // Turn On All.
+                    // Turn On All — it presses itself, the way an iOS row highlights under a finger.
                     HStack {
                         Text("Turn On All").font(.system(size: 15)).foregroundStyle(Color(hex: "007AFF"))
                         Spacer()
                     }
                     .padding(.horizontal, 16).padding(.vertical, 12)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(.white))
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(pressedAll ? Color(hex: "D1D1D6") : .white))
                     .padding(.horizontal, 16).padding(.top, 20)
                     Text("ALLOW \"MOMENTUM\" TO READ")
                         .font(.system(size: 11)).foregroundStyle(Color(hex: "6D6D72"))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 32).padding(.top, 22).padding(.bottom, 6)
                     VStack(spacing: 0) {
-                        ForEach(Array([("Sleep", Color(hex: "5AC8FA")), ("Heart Rate", Color(hex: "FF2D55")),
-                                       ("Heart Rate Variability", Color(hex: "FF2D55")), ("Resting Heart Rate", Color(hex: "FF2D55")),
-                                       ("Body Mass", Color(hex: "AF52DE"))].enumerated()), id: \.offset) { i, row in
+                        ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
                             if i > 0 { Rectangle().fill(Color.black.opacity(0.08)).frame(height: 0.5).padding(.leading, 44) }
                             HStack(spacing: 12) {
                                 Circle().fill(row.1).frame(width: 18, height: 18)
                                 Text(row.0).font(.system(size: 15)).foregroundStyle(.black)
                                 Spacer()
-                                Capsule().fill(Color(hex: "E9E9EB")).frame(width: 46, height: 28)
-                                    .overlay(alignment: .leading) {
-                                        Circle().fill(.white).padding(2).shadow(color: .black.opacity(0.15), radius: 2, y: 1)
-                                    }
+                                toggle(on: i < lit || reduceMotion)
                             }
                             .padding(.horizontal, 16).padding(.vertical, 8)
                         }
@@ -575,6 +784,28 @@ struct HealthSheetMock: View {
             }
             .environment(\.colorScheme, .light)
         }
+        .task {
+            guard !reduceMotion, lit == 0 else { return }
+            // Late enough that the device has finished arriving and the eye is on the screen.
+            do { try await Task.sleep(for: .seconds(1.1)) } catch { return }
+            withAnimation(.easeOut(duration: 0.12)) { pressedAll = true }
+            do { try await Task.sleep(for: .seconds(0.16)) } catch { return }
+            withAnimation(.easeOut(duration: 0.22)) { pressedAll = false }
+            // The rows answer the press one after another, top to bottom, like the real sheet.
+            for row in rows.indices {
+                do { try await Task.sleep(for: .seconds(row == 0 ? 0.1 : 0.11)) } catch { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.72)) { lit = row + 1 }
+            }
+        }
+    }
+
+    /// One iOS switch. Off: the grey track, knob left. On: the system green, knob right.
+    private func toggle(on: Bool) -> some View {
+        Capsule().fill(on ? Color(hex: "34C759") : Color(hex: "E9E9EB"))
+            .frame(width: 46, height: 28)
+            .overlay(alignment: on ? .trailing : .leading) {
+                Circle().fill(.white).padding(2).shadow(color: .black.opacity(0.15), radius: 2, y: 1)
+            }
     }
 }
 
@@ -626,6 +857,9 @@ struct OnboardingCTA: View {
         .disabled(!isEnabled || inFlight)
         .animation(.easeOut(duration: 0.15), value: inFlight)
         .animation(reduceMotion ? Motion.crossfade : OnboardingStyle.selection, value: isEnabled)
+        // The first valid answer turns the pill ink AND lifts it once: the eye is on the card
+        // that was just tapped, and the lift is what says "you can go on now".
+        .onboardingAcknowledge(trigger: isEnabled, scale: 1.03, enabled: isEnabled)
         .accessibilityLabel(title)
     }
 }
@@ -697,11 +931,12 @@ struct OnboardingGoalTile: View {
                         .font(.system(size: 22, weight: .light))
                         .foregroundStyle(selected ? Theme.purple : Theme.ink)
                         .scaleEffect(selected && !reduceMotion ? 1.08 : 1)
+                        .onboardingAcknowledge(trigger: selected, scale: 1.18, enabled: selected)
                     Spacer(minLength: 0)
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(selected ? Theme.purple : Theme.ink.opacity(0.15))
-                        .contentTransition(.opacity)
+                        .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                 }
                 Text(goal.planLabel).font(.rounded(14, weight: .semibold))
                     .foregroundStyle(Theme.ink).multilineTextAlignment(.leading)
@@ -741,6 +976,9 @@ struct OnboardingBackgroundChoice: View {
                 Image(systemName: symbol)
                     .font(.system(size: 24, weight: .light))
                     .foregroundStyle(isSelected ? Theme.purple : Theme.inkSecondary)
+                    // A stride, not a bounce: the figure steps forward and settles when it
+                    // becomes the answer. Un-picking a row moves nothing.
+                    .onboardingAcknowledge(trigger: isSelected, scale: 1.1, dx: 4, enabled: isSelected)
                     .frame(width: 46, height: 50)
                     .background(isSelected ? Theme.purple.opacity(0.08) : Theme.surface, in: RoundedRectangle(cornerRadius: 14))
                     .scaleEffect(isSelected && !reduceMotion ? 1.06 : 1)
@@ -751,7 +989,7 @@ struct OnboardingBackgroundChoice: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 18)).foregroundStyle(isSelected ? Theme.purple : Theme.ink.opacity(0.15))
-                    .contentTransition(.opacity)
+                    .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
             }
             .padding(16).frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
             .background(Theme.background, in: RoundedRectangle(cornerRadius: 20))
@@ -794,8 +1032,9 @@ struct OnboardingWeekPicker: View {
                         Image(systemName: selected ? "checkmark" : "minus")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(selected ? Theme.purple : Theme.ink.opacity(0.18))
-                            .contentTransition(.opacity)
+                            .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                             .scaleEffect(selected && !reduceMotion ? 1.1 : 1)
+                            .onboardingAcknowledge(trigger: selected, scale: 1.25, enabled: selected)
                             .accessibilityHidden(true)
                     }
                     .foregroundStyle(Theme.ink)
@@ -814,30 +1053,56 @@ struct OnboardingWeekPicker: View {
 }
 
 /// A truthful preview of the coaching loop. No fake processing, locked weeks, or extra step.
+///
+/// The loop DEMONSTRATES itself once on arrival: week → feedback → review light up in turn, the
+/// arrows carrying the light between them, and then it rests on "your first week", which is
+/// where the athlete is about to be. A page that explains a cycle should be seen cycling.
 struct OnboardingCoachingLoop: View {
+    @ReducedMotionPreference private var reduceMotion
+    /// The beat currently lit (0…2); 0 at rest.
+    @State private var lit = 0
+    @State private var played = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("A starting point. Then a plan that learns.")
                 .font(.rounded(15, weight: .semibold)).foregroundStyle(Theme.ink)
             HStack(alignment: .top, spacing: 10) {
                 beat("calendar", title: "Your first week", index: 0)
-                arrow
+                arrow(after: 0)
                 beat("checkmark.bubble", title: "Your feedback", index: 1)
-                arrow
+                arrow(after: 1)
                 beat("arrow.trianglehead.2.clockwise.rotate.90", title: "Next week reviewed", index: 2)
             }
         }.padding(.horizontal, 6).padding(.vertical, 8)
+        .task {
+            guard !played, !reduceMotion else { return }
+            played = true
+            // Late enough that the page's cascade has landed and the eye has reached the card.
+            do { try await Task.sleep(for: .seconds(0.9)) } catch { return }
+            for step in [1, 2, 0] {
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.7)) { lit = step }
+                do { try await Task.sleep(for: .seconds(0.55)) } catch { return }
+            }
+        }
     }
-    private var arrow: some View {
-        Image(systemName: "arrow.right").font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Theme.inkTertiary).padding(.top, 12).accessibilityHidden(true)
+    private func arrow(after index: Int) -> some View {
+        // The arrow between beat n and n+1 carries the light while beat n+1 is lit.
+        let carrying = lit == index + 1
+        return Image(systemName: "arrow.right").font(.system(size: 10, weight: .medium))
+            .foregroundStyle(carrying ? Theme.purple : Theme.inkTertiary)
+            .offset(x: carrying ? 2 : 0)
+            .padding(.top, 12).accessibilityHidden(true)
     }
     private func beat(_ icon: String, title: String, index: Int) -> some View {
-        VStack(spacing: 9) {
+        let on = lit == index
+        return VStack(spacing: 9) {
             Image(systemName: icon).font(.system(size: 19, weight: .light))
-                .foregroundStyle(index == 0 ? Theme.purple : Theme.inkSecondary)
+                .foregroundStyle(on ? Theme.purple : Theme.inkSecondary)
+                .scaleEffect(on && !reduceMotion ? 1.12 : 1)
                 .frame(height: 36).accessibilityHidden(true)
-            Text(title).font(.rounded(11, weight: .medium)).foregroundStyle(Theme.inkSecondary)
+            Text(title).font(.rounded(11, weight: .medium))
+                .foregroundStyle(on ? Theme.ink : Theme.inkSecondary)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity)
     }

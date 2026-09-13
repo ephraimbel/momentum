@@ -3,6 +3,13 @@ import SwiftUI
 /// A small piece of the athlete's plan taking shape, rather than decorative fitness charts.
 /// All values are answers or explicit coach choices. The step is captured by value so an outgoing
 /// page cannot change its artwork when the shared model advances to the next question.
+///
+/// Motion pass 2026-09-12: every scene now does three things, in this order. It ASSEMBLES
+/// (the finite staggered arrival), it ANSWERS the athlete (one acknowledgement per change, built
+/// from `onboardingAcknowledge` and native symbol replaces, each tied to what the question means:
+/// a lap for a goal, a ripple for an area to protect, a stamp for a body detail, a beam for the
+/// hybrid balance), and its ONE hero object BREATHES (`onboardingHover`) so the page is never a
+/// still. Lavender stays the "chosen, right now" colour; nothing here is iridescent.
 struct OnboardingScene: View {
     let vm: OnboardingViewModel
     let step: OnboardingViewModel.Step
@@ -10,6 +17,10 @@ struct OnboardingScene: View {
     @State private var arrived = false
 
     private var response: Animation? { reduceMotion ? nil : OnboardingStyle.progress }
+    /// Values roll between figures; Reduce Motion crossfades them.
+    private var roll: ContentTransition { reduceMotion ? .opacity : .numericText() }
+    /// One glyph replaces another the way SF Symbols do it; Reduce Motion crossfades.
+    private var swap: ContentTransition { reduceMotion ? .opacity : .symbolEffect(.replace) }
     private var name: String { vm.name.split(separator: " ").first.map(String.init) ?? "you" }
     private var initials: String { String(vm.name.split(separator: " ").prefix(2).compactMap(\.first)).uppercased() }
     private var unit: DistanceUnit { (vm.distanceUnitChoice.flatMap(DistanceUnit.init(rawValue:)) ?? .auto).resolved() }
@@ -83,6 +94,9 @@ struct OnboardingScene: View {
                                 .contentTransition(.opacity)
                         }
                     }
+                    // The monogram answers every keystroke that changes it, so typing a name
+                    // feels like printing it onto the card.
+                    .onboardingAcknowledge(trigger: initials, scale: 1.12)
                     VStack(alignment: .leading, spacing: 8) {
                         caption("YOUR TRAINING PLAN")
                         Text(initials.isEmpty ? "Made for you." : "Made for \(name).")
@@ -97,17 +111,34 @@ struct OnboardingScene: View {
                         }
                     }
                 }.padding(18)
-            }, 2, y: 18)
+            }
+            // The plan card floats a hair above the two behind it: the stack has depth, and the
+            // page has a pulse while the athlete types.
+            .onboardingHover(amplitude: 2.5, tilt: 0.8, period: 3.8), 2, y: 18)
         }.animation(response, value: vm.name)
     }
 
+    /// The goals the gallery offers, in its order; `generalFitness` is the unanswered default.
+    private static let offeredGoals: [Goal] = [.raceDistance, .endurance, .stayConsistent, .loseFat, .buildMuscle, .getStronger]
+    private var goalPicked: Bool { Self.offeredGoals.contains(vm.goal) }
+
+    /// An athletics track, and a lap run around it for every goal the athlete picks. Abstract
+    /// lanes, never a real route or a projected distance: the lap is the acknowledgement, the
+    /// marker at the finish line carries the goal's own glyph. Each pick re-runs the lap from the
+    /// start line (`.id(vm.goal)` gives the lap a fresh view, so it always draws from zero).
     private var destination: some View {
-        ZStack {
-            // Abstract athletics lanes, never represented as a real route or projected mileage.
-            ForEach(0..<4) { lane in
-                layer(Capsule().strokeBorder(Theme.ink.opacity(lane == 0 ? 0.14 : 0.06), lineWidth: 1)
-                    .frame(width: CGFloat(304 - lane * 24), height: CGFloat(128 - lane * 20)), lane,
+        let outer = CGSize(width: 300, height: 122)
+        return ZStack {
+            ForEach(0..<3) { lane in
+                layer(StadiumLap().stroke(Theme.ink.opacity(lane == 0 ? 0.16 : 0.07), lineWidth: 1)
+                    .frame(width: outer.width - CGFloat(lane) * 24, height: outer.height - CGFloat(lane) * 24), lane,
                       x: lane.isMultiple(of: 2) ? -12 : 12, y: 0)
+            }
+            // The start/finish line, crossing all three lanes at the bottom of the home straight.
+            layer(Rectangle().fill(Theme.ink.opacity(0.22)).frame(width: 1.5, height: 26).offset(y: 48), 1, y: 0)
+            if goalPicked {
+                TrackLapView(size: outer).id(vm.goal)
+                    .transition(.opacity)
             }
             VStack(spacing: 6) {
                 caption("YOUR NEXT CHAPTER")
@@ -117,12 +148,16 @@ struct OnboardingScene: View {
                     .frame(width: 176, height: 46).multilineTextAlignment(.center)
                     .contentTransition(.opacity)
             }
-            let selected = [Goal.raceDistance, .endurance, .stayConsistent, .loseFat, .buildMuscle, .getStronger].firstIndex(of: vm.goal)
-            layer(symbol(vm.goal.planSystemImage, size: 19, selected: selected != nil)
+            // The marker waits at the finish line; the glyph swaps to the goal, and the marker
+            // lifts once as the lap arrives (the lift is delayed to the lap's own finish).
+            layer(symbol(vm.goal.planSystemImage, size: 19, selected: goalPicked)
+                .contentTransition(swap)
                 .frame(width: 38, height: 38)
                 .background(Theme.background, in: Circle())
-                .overlay { Circle().strokeBorder(Theme.hairline) }
-                .offset(x: CGFloat((selected ?? 0) - 2) * 25, y: 54), 2, x: -18, y: 0)
+                .overlay { Circle().strokeBorder(goalPicked ? Theme.purple.opacity(0.5) : Theme.hairline) }
+                .onboardingAcknowledge(trigger: vm.goal, scale: 1.18, enabled: goalPicked,
+                                       delay: TrackLapView.duration - 0.1)
+                .offset(y: outer.height / 2), 2, y: 10)
         }.animation(response, value: vm.goal)
     }
 
@@ -169,11 +204,17 @@ struct OnboardingScene: View {
                 VStack(alignment: .leading, spacing: 10) {
                     caption("RECENT RUNNING")
                     Text(distance(vm.weeklyRunVolumeM)).font(.display(22, weight: .semibold)).monospacedDigit()
-                        .contentTransition(.opacity).lineLimit(1).minimumScaleFactor(0.7)
-                    Text("Typical recent week").font(.rounded(10)).foregroundStyle(Theme.inkSecondary)
+                        .contentTransition(roll).lineLimit(1).minimumScaleFactor(0.7)
+                    Text(vm.longestRunM.map { "Longest \(distance($0))" } ?? "Typical recent week")
+                        .font(.rounded(10)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
+                        .contentTransition(.opacity).lineLimit(1)
                 }.frame(width: 114, alignment: .leading)
             }, x: -16)
+            // Every change to the figure pushes the arrow toward the coach's card: the baseline
+            // feeds forward, and the page shows it feeding.
             symbol("arrow.right", size: 14)
+                .onboardingAcknowledge(trigger: vm.weeklyRunVolumeM, scale: 1, dx: 5)
+                .onboardingAcknowledge(trigger: vm.longestRunM, scale: 1, dx: 5)
             layer(ZStack {
                 paper(width: 132, height: 112)
                 VStack(alignment: .leading, spacing: 10) {
@@ -183,6 +224,7 @@ struct OnboardingScene: View {
                 }.frame(width: 108, alignment: .leading)
             }, 1, x: 16)
         }.animation(response, value: vm.weeklyRunVolumeM)
+            .animation(response, value: vm.longestRunM)
             .animation(response, value: vm.distanceUnitChoice)
     }
 
@@ -193,28 +235,52 @@ struct OnboardingScene: View {
                     let diameter = CGFloat(64 + index * 22)
                     layer(Circle().strokeBorder(Theme.ink.opacity(0.05 + Double(index) * 0.025), lineWidth: 1)
                         .frame(width: diameter, height: diameter)
+                        // The rings draw in when there is something to protect: the margin
+                        // closes around the athlete.
                         .scaleEffect(vm.injuryAreas.isEmpty ? 1 : 1 - CGFloat(index) * 0.06), index, y: 0, tilt: 0)
                 }
+                // Every area toggled sends one ring out from the figure and lets it fade: the
+                // protection being put up. Born visible, expands and dies, resets unseen.
+                Circle().strokeBorder(Theme.purple.opacity(0.85), lineWidth: 2)
+                    .frame(width: 64, height: 64)
+                    .phaseAnimator(RipplePhase.allCases, trigger: vm.injuryAreas) { ring, phase in
+                        ring.scaleEffect(reduceMotion ? 1 : phase.scale)
+                            .opacity(reduceMotion ? 0 : phase.opacity)
+                    } animation: { phase in phase == .spent ? .easeOut(duration: 0.85) : nil }
                 layer(symbol("figure.stand", size: 39), 1, y: 8)
                 Image(systemName: "shield.lefthalf.filled").font(.system(size: 18))
                     .foregroundStyle(vm.injuryAreas.isEmpty ? Theme.inkSecondary : Theme.purple)
-                    .padding(8).background(Theme.background, in: Circle()).offset(x: 35, y: 33)
+                    .padding(8).background(Theme.background, in: Circle())
+                    .onboardingAcknowledge(trigger: vm.injuryAreas, scale: 1.22)
+                    .offset(x: 35, y: 33)
             }.frame(width: 110, height: 116)
             layer(VStack(alignment: .leading, spacing: 9) {
                 caption("ROOM FOR RECOVERY")
                 Text("Built around you.").font(.display(21, weight: .medium)).lineLimit(2)
-                Text(vm.injuryAreas.isEmpty ? "Your history shapes the plan" : "\(vm.injuryAreas.count) areas noted")
+                Text(vm.injuryAreas.isEmpty ? "Your history shapes the plan"
+                     : "\(vm.injuryAreas.count) \(vm.injuryAreas.count == 1 ? "area" : "areas") noted")
                     .font(.rounded(11)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                    .contentTransition(.opacity)
+                    .contentTransition(roll)
             }.frame(width: 158, alignment: .leading), 2, x: 12)
         }.animation(response, value: vm.injuryAreas)
+    }
+
+    /// The ripple's life: rest (unseen) → born small and bright → spent large and gone → rest.
+    private enum RipplePhase: CaseIterable {
+        case rest, born, spent
+        var scale: CGFloat { self == .spent ? 2.05 : 0.9 }
+        var opacity: Double { self == .born ? 0.9 : 0 }
     }
 
     private var measurements: some View {
         HStack(spacing: 22) {
             layer(ZStack {
                 RoundedRectangle(cornerRadius: 28).fill(Theme.surface).frame(width: 82, height: 114)
-                symbol("figure.stand", size: 67)
+                // The figure follows the answer (the same neutral/female pair the anatomy beats
+                // use) and swaps the way SF Symbols swap.
+                symbol(vm.sex == .female ? "figure.stand.dress" : "figure.stand", size: 67)
+                    .contentTransition(swap)
+                    .onboardingAcknowledge(trigger: vm.sex, scale: 1.06, enabled: vm.sex != nil)
                 VStack(alignment: .trailing, spacing: 7) {
                     ForEach(0..<9) { index in
                         Capsule().fill(Theme.ink.opacity(0.15)).frame(width: index % 4 == 0 ? 11 : 5, height: 1)
@@ -234,42 +300,89 @@ struct OnboardingScene: View {
             }.frame(width: 200, alignment: .leading)
         }
     }
+    /// One detail, stamped: the chip presses down as the field is filled (a passport stamp's
+    /// landing, not a bounce) and the tick replaces the empty ring natively.
     private func measurementStamp(_ title: String, complete: Bool, index: Int) -> some View {
         layer(HStack(spacing: 6) {
             Image(systemName: complete ? "checkmark.circle.fill" : "circle")
                 .font(.system(size: 12)).foregroundStyle(complete ? Theme.purple : Theme.inkTertiary)
-                .contentTransition(.opacity)
+                .contentTransition(swap)
             Text(title).font(.rounded(11, weight: .medium))
+                .foregroundStyle(complete ? Theme.ink : Theme.inkSecondary)
         }
         .frame(width: 91, height: 32)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10))
-        .scaleEffect(complete ? 1.03 : 1)
+        .overlay { RoundedRectangle(cornerRadius: 10).strokeBorder(complete ? Theme.purple.opacity(0.35) : .clear) }
+        .onboardingAcknowledge(trigger: complete, scale: 1.14, enabled: complete)
         .animation(response, value: complete), index, x: 8, y: 0)
     }
 
+    /// The bib's big figure and its unit: the numbers runners actually say. 5K, 10K and 50K keep
+    /// their K in every locale; the half and the full become 13.1 / 26.2 (mi) or 21.1 / 42.2 (km).
+    private var bibFigure: (number: String, unit: String)? {
+        guard let d = vm.raceDistance else { return nil }
+        let metric = unit == .metric
+        switch d {
+        case .fiveK: return ("5", "K")
+        case .tenK: return ("10", "K")
+        case .half: return metric ? ("21.1", "KM") : ("13.1", "MI")
+        case .marathon: return metric ? ("42.2", "KM") : ("26.2", "MI")
+        case .fiftyK: return ("50", "K")
+        }
+    }
+
+    /// A race bib, pinned at its top corners. The distance is the bib number and rolls when the
+    /// athlete changes it; their name is printed on it; the date stamps on when they add one.
+    /// It hangs, so it sways: the one breathing object on this page.
     private var raceBib: some View {
         layer(ZStack {
             paper(width: 265, height: 118, radius: 18)
-            VStack(spacing: 9) {
-                HStack {
-                    Circle().strokeBorder(Theme.hairline).frame(width: 5, height: 5)
-                    Spacer(); caption("YOUR START LINE"); Spacer()
-                    Circle().strokeBorder(Theme.hairline).frame(width: 5, height: 5)
+            // Pin holes in all four corners.
+            VStack {
+                HStack { pinHole; Spacer(); pinHole }
+                Spacer()
+                HStack { pinHole; Spacer(); pinHole }
+            }.padding(9).frame(width: 265, height: 118)
+            VStack(spacing: 4) {
+                caption(vm.plannedRaceName?.uppercased() ?? "YOUR START LINE")
+                    .frame(width: 200).contentTransition(.opacity)
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    symbol("flag.checkered", size: 22, selected: vm.raceDistance != nil)
+                        .offset(y: -1)
+                        .onboardingAcknowledge(trigger: vm.raceDistance, scale: 1.18, enabled: vm.raceDistance != nil)
+                    if let figure = bibFigure {
+                        Text(figure.number).font(.display(34, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(Theme.ink).contentTransition(roll)
+                        Text(figure.unit).font(.display(15, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                            .contentTransition(.opacity)
+                    } else {
+                        Text("Your race").font(.display(25, weight: .semibold)).foregroundStyle(Theme.ink)
+                    }
                 }
-                HStack(spacing: 12) {
-                    symbol("flag.checkered", size: 27, selected: vm.raceDistance != nil)
-                    Text(vm.raceDistance?.label ?? "Your race")
-                        .font(.display(25, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7)
+                .frame(height: 40)
+                HStack(spacing: 6) {
+                    Text(vm.name.isEmpty ? "ATHLETE" : vm.name.split(separator: " ").first.map { String($0).uppercased() } ?? "ATHLETE")
+                        .font(.rounded(10, weight: .bold)).tracking(1.2).foregroundStyle(Theme.inkSecondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Text("·").foregroundStyle(Theme.inkTertiary)
+                    Text(vm.hasRace ? vm.raceDate.formatted(.dateTime.month(.abbreviated).day().year()) : "No date needed to begin")
+                        .font(.rounded(11, weight: vm.hasRace ? .semibold : .regular)).monospacedDigit()
+                        .foregroundStyle(vm.hasRace ? Theme.purple : Theme.inkSecondary)
                         .contentTransition(.opacity)
+                        // The date lands like a stamp when a race day is switched on.
+                        .onboardingAcknowledge(trigger: vm.hasRace, scale: 1.16, enabled: vm.hasRace)
                 }
-                Text(vm.hasRace ? vm.raceDate.formatted(.dateTime.month(.abbreviated).day().year()) : "No date needed to begin")
-                    .font(.rounded(11)).monospacedDigit().foregroundStyle(Theme.inkSecondary)
-                    .contentTransition(.opacity)
-            }.padding(19).frame(width: 265)
-        }, x: 14, y: 18, tilt: -6)
+            }.padding(.horizontal, 19).frame(width: 265)
+        }
+        .onboardingHover(amplitude: 0, tilt: 1.3, period: 3.6, anchor: .top), x: 14, y: 18, tilt: -6)
         .animation(response, value: vm.raceDistance)
         .animation(response, value: vm.hasRace)
         .animation(response, value: vm.raceDate)
+        .animation(response, value: vm.plannedRaceName)
+    }
+
+    private var pinHole: some View {
+        Circle().strokeBorder(Theme.ink.opacity(0.14), lineWidth: 1).frame(width: 6, height: 6)
     }
 
     private var calendar: some View {
@@ -317,8 +430,11 @@ struct OnboardingScene: View {
         HStack(spacing: 18) {
             layer(ZStack {
                 paper(width: 108, height: 108, radius: 28)
-                symbol(equipmentIcon(vm.equipment), size: 46, selected: true).contentTransition(.opacity)
-            }, x: -12, tilt: -5)
+                symbol(equipmentIcon(vm.equipment), size: 46, selected: true)
+                    .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace.downUp))
+            }
+            .onboardingAcknowledge(trigger: vm.equipment, scale: 1.05)
+            .onboardingHover(amplitude: 2, tilt: 0.6, period: 3.6), x: -12, tilt: -5)
             layer(VStack(alignment: .leading, spacing: 10) {
                 caption("YOUR STRENGTH SETUP")
                 Text(equipmentName).font(.display(20, weight: .semibold)).lineLimit(1)
@@ -334,18 +450,49 @@ struct OnboardingScene: View {
         }.animation(response, value: vm.equipment)
     }
 
+    /// How far the beam leans toward running. Every option is a running plan, so the beam never
+    /// tips toward strength: it settles level at most ("near-even split").
+    private var beamTilt: Double {
+        switch vm.hybridPriority {
+        case .running: -6
+        case .balanced: -3
+        case .lifting: 0
+        }
+    }
+    /// A balance: the two disciplines on a beam over a fulcrum. Picking an emphasis tips the
+    /// beam, and the cards ride it (dropping on the heavy side, rising on the light one) while
+    /// staying upright, so the question's answer is a physical thing the page does.
     private var balance: some View {
-        HStack(spacing: 20) {
-            disciplineCard("figure.run", title: "RUNNING", selected: vm.hybridPriority != .lifting, leading: true)
-            symbol("plus", size: 16)
-            disciplineCard("dumbbell", title: "STRENGTH", selected: vm.hybridPriority != .running, leading: false)
+        // The cards sit ±halfSpan from the fulcrum; the beam's tilt moves their ends by sin(tilt).
+        let halfSpan: CGFloat = 78
+        let drop = CGFloat(sin(beamTilt * .pi / 180)) * halfSpan
+        return VStack(spacing: 0) {
+            HStack(spacing: 40) {
+                disciplineCard("figure.run", title: "RUNNING", selected: vm.hybridPriority != .lifting, leading: true)
+                    .offset(y: -drop)
+                disciplineCard("dumbbell", title: "STRENGTH", selected: vm.hybridPriority != .running, leading: false)
+                    .offset(y: drop)
+            }
+            ZStack {
+                Capsule().fill(Theme.ink.opacity(0.22)).frame(width: halfSpan * 2 + 60, height: 2)
+                    .rotationEffect(.degrees(beamTilt))
+                    .offset(y: -3)
+                Image(systemName: "triangle.fill").font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.ink.opacity(0.35)).offset(y: 5)
+            }
+            .frame(height: 12)
+            .modifier(OnboardingSceneArrival(arrived: arrived, index: 2, x: 0, y: 6, tilt: 0))
         }.animation(response, value: vm.hybridPriority)
     }
     private func disciplineCard(_ icon: String, title: String, selected: Bool, leading: Bool) -> some View {
         layer(ZStack {
-            paper(width: 115, height: 100)
-            VStack(spacing: 12) { symbol(icon, size: 32, selected: selected); caption(title) }
-        }.offset(y: selected ? -4 : 5).scaleEffect(selected ? 1 : 0.92), leading ? 0 : 1, x: leading ? -15 : 15, tilt: leading ? -5 : 5)
+            paper(width: 108, height: 88)
+            VStack(spacing: 10) {
+                symbol(icon, size: 30, selected: selected)
+                    .onboardingAcknowledge(trigger: vm.hybridPriority, scale: 1.14, enabled: selected)
+                caption(title)
+            }
+        }.scaleEffect(selected ? 1 : 0.92), leading ? 0 : 1, x: leading ? -15 : 15, tilt: leading ? -5 : 5)
     }
 
     private var planBrief: some View {
@@ -373,6 +520,74 @@ struct OnboardingScene: View {
                 }.padding(17)
             }, 1, y: 15)
         }.animation(response, value: vm.intensity)
+    }
+}
+
+/// A stadium track: one closed lap starting at the bottom of the home straight (the start/finish
+/// line) and running anticlockwise, the way a track is run. `.trim` draws a partial lap.
+struct StadiumLap: Shape {
+    func path(in rect: CGRect) -> Path {
+        let r = rect.height / 2
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.maxX - r, y: rect.maxY))
+        p.addArc(center: CGPoint(x: rect.maxX - r, y: rect.midY), radius: r,
+                 startAngle: .degrees(90), endAngle: .degrees(-90), clockwise: true)
+        p.addLine(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        p.addArc(center: CGPoint(x: rect.minX + r, y: rect.midY), radius: r,
+                 startAngle: .degrees(-90), endAngle: .degrees(90), clockwise: true)
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// The runner's head on a partial lap: a dot at the END of the trimmed track path (a trimmed
+/// path's `currentPoint` is its end, which is exactly the point being drawn).
+struct LapHead: Shape {
+    var progress: CGFloat
+    var radius: CGFloat = 4
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+    func path(in rect: CGRect) -> Path {
+        let lap = StadiumLap().path(in: rect).trimmedPath(from: 0, to: max(progress, 0.0005))
+        guard let c = lap.currentPoint else { return Path() }
+        return Path(ellipseIn: CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2))
+    }
+}
+
+/// One lap of the outer lane, drawn from the start line the moment the view exists: lavender,
+/// because it is the athlete's pick happening right now; a soft head leading the line, which
+/// settles at the finish. Reduce Motion shows the lap complete.
+struct TrackLapView: View {
+    let size: CGSize
+    static let duration = 1.3
+    @State private var progress: CGFloat = 0
+    /// Once the lap is run it settles to a trace: lavender marks the pick happening, and a
+    /// full lavender ring left behind would be decoration. The marker keeps the colour.
+    @State private var settled = false
+    @ReducedMotionPreference private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            StadiumLap().trim(from: 0, to: progress)
+                .stroke(Theme.purple, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .opacity(settled ? 0.28 : 1)
+            LapHead(progress: progress, radius: 4.5).fill(Theme.purple)
+                .shadow(color: Theme.purple.opacity(0.55), radius: 5)
+                .opacity(progress > 0 && !settled ? 1 : 0)
+        }
+        .frame(width: size.width, height: size.height)
+        .onAppear {
+            guard reduceMotion else {
+                withAnimation(Motion.pen(Self.duration).delay(0.05)) { progress = 1 }
+                withAnimation(.easeOut(duration: 0.7).delay(Self.duration + 0.35)) { settled = true }
+                return
+            }
+            progress = 1
+            settled = true
+        }
     }
 }
 

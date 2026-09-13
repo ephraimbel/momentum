@@ -25,6 +25,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
     }
 
     /// The review Continue opens personalized checkout without a generic feature-tour page.
@@ -80,6 +81,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
 
         advanceToCheckout(app)
 
@@ -123,6 +125,7 @@ final class OnboardingPaywallUITests: XCTestCase {
         XCTAssertTrue(review.waitForExistence(timeout: 10))
         XCTAssertTrue(review.isHittable)
         review.tap()
+        crossPermissionBeats(app)
 
         // The personalized checkout still opens when store pricing is unavailable.
         advanceToCheckout(app)

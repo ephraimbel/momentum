@@ -87,6 +87,7 @@ struct OnboardingFlow: View {
     @State private var resultTimeEntered = false
     @State private var draftResultDate: Date?
     @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
+    @State private var briefSealed = false            // approach step: the seal's one bounce after arrival
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
     @State private var completedOnce = false         // the completion hand-off ran — never twice
@@ -295,6 +296,9 @@ struct OnboardingFlow: View {
         .onChange(of: vm.step) { _, step in
             Haptics.light()   // the screen landing — one light tick per step, so travel has feel
             logOnboardingStep(step)
+            // The reveal→review jump cut has landed by the time this runs; the permission beats
+            // after it travel normally. Cleared on the next turn so this change keeps its cut.
+            if step == .review, jumpCut { DispatchQueue.main.async { jumpCut = false } }
             // Checkpoint on every navigation — the draft now holds every answer made up to and
             // including the step just left, so an eviction resumes here, not at question one.
             saveDraftIfEnabled()
@@ -804,6 +808,9 @@ struct OnboardingFlow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("\(vm.daysPerWeek)").font(.display(42, weight: .semibold)).monospacedDigit()
                         .contentTransition(reduceMotion ? .opacity : .numericText())
+                        // The count rolls AND lifts: the number is the answer, so it is the thing
+                        // that reacts, not the segment that was tapped.
+                        .onboardingAcknowledge(trigger: vm.daysPerWeek, scale: 1.1)
                     Text("training days / week").font(.rounded(14)).foregroundStyle(Theme.inkSecondary)
                     Spacer(minLength: 0)
                 }
@@ -1041,7 +1048,11 @@ struct OnboardingFlow: View {
     private var healthStep: some View {
         OnboardingHeroPage {
             Spacer(minLength: Theme.Space.lg)
+            // The icon rests on its own pulse — the resting heart rate this beat is asking to
+            // read, beating behind Apple's mark rather than deforming it.
             HealthTile()
+                .background { HeartbeatHalo(tint: Color(hex: "FF4563"), diameter: 190) }
+                .onboardingHover(amplitude: 3, tilt: 0, period: 3.6)
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Train around your recovery",
                               subtitle: "Share Apple Health signals to help your plan respond to recovery. Tracking starts when you connect. You choose what to share; workout history is never imported.", alignment: .center)
@@ -1049,6 +1060,7 @@ struct OnboardingFlow: View {
                 .padding(.horizontal, Theme.Space.sm)
                 .onboardingEntrance(0.08)
             Spacer(minLength: Theme.Space.lg)
+            // The sheet plays the tap that follows: Turn On All presses, the signals switch on.
             HealthSheetMock()
                 .frame(maxWidth: .infinity)
                 .frame(height: 330, alignment: .top)
@@ -1100,7 +1112,9 @@ struct OnboardingFlow: View {
                                 subtitle: "Your answers set the starting point. We'll handle the progression and adjust from the runs you log.") {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 10) {
+                    // The seal bounces once after the brief has landed: the coach signing off.
                     Image(systemName: "checkmark.seal.fill").font(.system(size: 20)).foregroundStyle(Theme.purple)
+                        .symbolEffect(.bounce.up, options: .nonRepeating, value: briefSealed)
                     Text(vm.name.split(separator: " ").first.map { "MADE FOR \($0.uppercased())" } ?? "YOUR TRAINING BRIEF")
                         .font(.rounded(10, weight: .semibold)).tracking(1.4)
                         .foregroundStyle(Theme.inkSecondary).lineLimit(1).minimumScaleFactor(0.8)
@@ -1159,6 +1173,11 @@ struct OnboardingFlow: View {
         }
         .onAppear {
             vm.applyRecommendedIntensityIfUntouched()
+        }
+        .task {
+            // After the card's own entrance; a no-op under Reduce Motion (symbol effects honor it).
+            do { try await Task.sleep(for: .seconds(0.7)) } catch { return }
+            briefSealed = true
         }
     }
 
@@ -1989,12 +2008,17 @@ struct OnboardingFlow: View {
 
     /// The location beat — a permission hero (glass pass 2026-08-27): the glowing arrow, why we
     /// ask, and the app's own Today map on a device, dissolving into the CTA. This beat is ONLY
-    /// about location; the paywall and the account beat still follow, so the headline and CTA stay
-    /// neutral and promise no ending.
+    /// about location; checkout follows it (2026-09-12: review → Health → here → paywall), so
+    /// the headline and CTA stay neutral and promise no ending.
     private var primersStep: some View {
         OnboardingHeroPage {
             Spacer(minLength: Theme.Space.md)
+            // A device finding you: rings ping out from the glyph while the needle swings past
+            // north and rocks to rest. Both finish in the first second; then the page is still.
             GlowGlyph(systemName: "location.north.fill", tint: Theme.iridescent[0])
+                .compassSettle()
+                .background { LocatingPing(tint: Theme.purple, diameter: 82) }
+                .onboardingHover(amplitude: 3, tilt: 0, period: 3.6)
                 .onboardingEntrance(0.02, lift: 10)
             OnboardingHeading(title: "Map your runs",
                               subtitle: "Your location traces every route and opens the map right where you are. Only while you're recording.", alignment: .center)
@@ -2008,6 +2032,9 @@ struct OnboardingFlow: View {
                 Image("OnboardingShotPostRun")
                     .resizable().interpolation(.medium).scaledToFill()
             }
+            // One pass of light across the glass, so the device reads as a screen rather than a
+            // picture of one.
+            .onboardingSheen(delay: 0.9)
             .frame(maxWidth: .infinity)
             // Tall enough that the whole traced course sits above the fade (owner note: the
             // marathon was cut off at 330); the heading above is short, so the page still fits.
@@ -2028,7 +2055,8 @@ struct OnboardingFlow: View {
                         kind: "location", status: granted ? "granted" : "denied"))
                     locationRequestInFlight = false
                     leftPrimers = true
-                    goNext()
+                    // The last beat: the athlete's answer (either way) opens checkout.
+                    finishOnboarding()
                 }
             }
                 .padding(.top, Theme.Space.sm)
@@ -2072,7 +2100,16 @@ struct OnboardingFlow: View {
         OnboardingReviewView(ask: {
             guard vm.step == .review, !showPaywall, !completedOnce else { return }
             requestReview()
-        }, raisesAsk: !Self.reviewAskSuppressed) { finishOnboarding() }
+        }, raisesAsk: !Self.reviewAskSuppressed) { continueFromReview() }
+    }
+
+    /// The review page hands on to the two permission beats (Health, then location); checkout
+    /// opens from the location beat. State, not a debounce, consumes the tap once.
+    private func continueFromReview() {
+        guard vm.step == .review, !showPaywall, !completedOnce else { return }
+        services.analytics.log(.onboardingMilestone(action: "review_continue", step: "review", durationMs: nil))
+        goingBack = false
+        vm.advance()
     }
 
     private func continueFromReveal() {
@@ -2087,12 +2124,13 @@ struct OnboardingFlow: View {
         vm.advance()
     }
 
-    /// The review page's Continue opens checkout (or Today for entitled athletes).
-    /// No rating result is available to the app or required for this handoff.
+    /// The location beat's answer opens checkout (or Today for entitled athletes). It is the last
+    /// beat: by now the plan is saved, the review has been asked, Health is answered, and the map
+    /// can open on the athlete.
     private func finishOnboarding() {
         guard !showPaywall, !completedOnce else { return }
-        services.analytics.log(.onboardingMilestone(action: "review_continue", step: "review", durationMs: nil))
-        leftPrimers = true   // defensive for deep links that jump directly to the reveal
+        services.analytics.log(.onboardingMilestone(action: "primers_continue", step: "primers", durationMs: nil))
+        leftPrimers = true   // defensive for deep links that jump past the location beat
         if paywall.isPro { complete(); return }
         // Arm the hard relaunch gate BEFORE presenting so a force-quit mid-wall re-opens checkout
         // from RootView instead of dropping the athlete into the app. `setPro(true)` clears it;
