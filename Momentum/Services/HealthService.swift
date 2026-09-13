@@ -74,7 +74,9 @@ final class HealthService: HealthServing {
     func needsSignalsAuthorization() async -> Bool {
         guard HKHealthStore.isHealthDataAvailable() else { return false }
         let status = try? await store.statusForAuthorizationRequest(toShare: Self.shareTypes, read: Self.readTypes)
-        return status == .shouldRequest
+        // Only a definite "unnecessary" may suppress the request. A transient query error or
+        // unknown result must not silently consume onboarding's opportunity to show consent.
+        return status != .unnecessary
     }
 
     func requestAuthorization() async -> Bool {

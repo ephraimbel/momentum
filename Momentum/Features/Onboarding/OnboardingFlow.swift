@@ -71,8 +71,10 @@ struct OnboardingFlow: View {
     @State private var healthRequestInFlight = false  // one-shot gate: a double-tap advanced two steps
     @State private var remindersAdvanced = false      // same for the reminders primer
     @State private var locationRequestInFlight = false // wait for the real Core Location response
+    @State private var locationResponseReady = false
     @State private var healthAutoAsked = false          // the Health page raises its sheet once on arrival
     @State private var locationAutoAsked = false        // the location page raises its alert once on arrival
+    @State private var healthPreviouslyAnswered = false
     @State private var lastStepChangeAt = Date.distantPast   // double-tap guard for goNext/goBack
     /// True while the paywall's exit advances the step UNDER the still-presented cover — the
     /// travel animation is suppressed so the account beat is fully composed before the cover
@@ -280,6 +282,7 @@ struct OnboardingFlow: View {
             // The review beat. The native sheet is a system surface the sim renders unreliably
             // (StoreKit rate-limits it), so this verifies the PAGE; check the sheet on device.
             if args.contains("--onboarding-review") { vm.name = "Maya"; vm.step = .review }
+            if args.contains("--onboarding-health") { vm.activities = [.run]; vm.step = .health }
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-units") { vm.name = "Maya"; vm.activities = [.run]; vm.step = .units }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
@@ -320,6 +323,18 @@ struct OnboardingFlow: View {
         // iOS is most likely to evict a backgrounded app, and the one a step-change wouldn't cover
         // (answers changed on the current step before tabbing away).
         .onChange(of: scenePhase) { _, phase in if phase != .active { saveDraftIfEnabled() } }
+        .task(id: scenePhase == .active && locationResponseReady) {
+            guard scenePhase == .active, locationResponseReady else { return }
+            // Core Location can deliver a denial before its alert has finished dismissing.
+            // Keep the latch until the foreground scene can dismiss onboarding/open checkout.
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            guard !Task.isCancelled, scenePhase == .active,
+                  locationResponseReady, vm.step == .primers else { return }
+            locationResponseReady = false
+            locationRequestInFlight = false
+            leftPrimers = true
+            finishOnboarding()
+        }
         // Purchase/Restore enters Today. A genuine store outage may defer the persisted gate
         // for this launch; an ordinary dismissal can never complete an unpaid onboarding.
         .fullScreenCover(isPresented: $showPaywall, onDismiss: {
@@ -442,6 +457,7 @@ struct OnboardingFlow: View {
         vm.advance()
     }
     private func goBack() {
+        guard !healthRequestInFlight, !locationRequestInFlight else { return }
         guard Date().timeIntervalSince(lastStepChangeAt) > 0.45 else { return }
         lastStepChangeAt = Date()
         goingBack = true
@@ -1220,6 +1236,12 @@ struct OnboardingFlow: View {
                 .onboardingEntrance(0.16, lift: 26)
             Spacer(minLength: 0)
         } actions: {
+            if healthPreviouslyAnswered {
+                Text("You've already made your Health sharing choices on this device. You can change them in the Health app.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+            }
             // `inFlight` is the same latch that blocks the double tap: after the system sheet is
             // answered there are still two HealthKit reads before the step advances, and on a
             // device with real Health data that wait is not instant. Without the spinner the
@@ -1235,12 +1257,19 @@ struct OnboardingFlow: View {
         // athlete arrives, every time): once the hero has landed, raise the Health sheet if iOS
         // still has something to ask. When it does not (already answered on this device), the
         // page waits for Continue rather than bouncing the athlete past a page they never saw.
-        .task {
-            guard !healthAutoAsked else { return }
-            healthAutoAsked = true
+        .task(id: scenePhase) {
+            guard scenePhase == .active, !healthAutoAsked else { return }
             do { try await Task.sleep(for: .seconds(0.9)) } catch { return }
-            guard vm.step == .health, !healthRequestInFlight,
-                  await services.health.needsSignalsAuthorization() else { return }
+            guard !Task.isCancelled, scenePhase == .active,
+                  vm.step == .health, !healthRequestInFlight else { return }
+            let needsAuthorization = await services.health.needsSignalsAuthorization()
+            // The status query can suspend across a page change or a system-sheet interruption.
+            // Only consume the automatic attempt when this page can actually present it.
+            guard !Task.isCancelled, scenePhase == .active,
+                  vm.step == .health, !healthRequestInFlight else { return }
+            healthPreviouslyAnswered = !needsAuthorization
+            guard needsAuthorization else { return }
+            healthAutoAsked = true
             requestHealthAndAdvance()
         }
     }
@@ -1249,10 +1278,11 @@ struct OnboardingFlow: View {
     /// the latch makes a second call a no-op: when permission is already determined the awaits
     /// return instantly with no system sheet to swallow taps, and a double-tap advanced two steps.
     private func requestHealthAndAdvance() {
-                guard !healthRequestInFlight else { return }
+                guard vm.step == .health, scenePhase == .active, !healthRequestInFlight else { return }
                 healthRequestInFlight = true
                 Task {
                     let connection = await services.health.connectForSignals()
+                    guard vm.step == .health else { healthRequestInFlight = false; return }
                     // Grab resting HR (and body mass, if the athlete skipped it) while we have
                     // consent — it upgrades HR zones to Karvonen from the very first plan.
                     if let rhr = connection.restingHR { vm.healthRestingHR = rhr }
@@ -2154,6 +2184,18 @@ struct OnboardingFlow: View {
             .onboardingEntrance(0.16, lift: 26)
             Spacer(minLength: 0)
         } actions: {
+            if !services.location.awaitsAuthorization, !services.location.isAuthorized {
+                Text("Location access is off on this device. You can enable it in Settings or continue without it.")
+                    .font(.rounded(Theme.FontSize.caption, weight: .medium))
+                    .foregroundStyle(Theme.inkSecondary)
+                    .multilineTextAlignment(.center)
+                Button("Open Settings") {
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+                .font(.rounded(Theme.FontSize.body, weight: .semibold))
+                .accessibilityIdentifier("onboarding.location.settings")
+            }
             // Permissions settle before generation. The personal reveal leads into checkout.
             OnboardingCTA(title: "Continue", inFlight: locationRequestInFlight) { requestLocationAndFinish() }
                 .padding(.top, Theme.Space.sm)
@@ -2164,12 +2206,13 @@ struct OnboardingFlow: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The page asks for itself (owner call 2026-09-13): once the hero has landed, raise the
         // location alert if iOS has not asked yet. Already answered: wait for Continue.
-        .task {
-            guard !locationAutoAsked else { return }
-            locationAutoAsked = true
+        .task(id: scenePhase) {
+            guard scenePhase == .active, !locationAutoAsked else { return }
             do { try await Task.sleep(for: .seconds(0.9)) } catch { return }
-            guard vm.step == .primers, !locationRequestInFlight,
+            guard !Task.isCancelled, scenePhase == .active,
+                  vm.step == .primers, !locationRequestInFlight,
                   services.location.awaitsAuthorization else { return }
+            locationAutoAsked = true
             requestLocationAndFinish()
         }
     }
@@ -2179,15 +2222,14 @@ struct OnboardingFlow: View {
     /// athlete's real choice; the shared service retains the grant for Today's map and every
     /// later GPS session.
     private func requestLocationAndFinish() {
-        guard !locationRequestInFlight else { return }
+        guard vm.step == .primers, scenePhase == .active, !locationRequestInFlight else { return }
         locationRequestInFlight = true
         services.location.requestAuthorization { granted in
+            guard vm.step == .primers else { locationRequestInFlight = false; return }
             services.analytics.log(.onboardingPermission(
                 kind: "location", status: granted ? "granted" : "denied"))
-            locationRequestInFlight = false
-            leftPrimers = true
-            // The last beat: the athlete's answer (either way) opens checkout.
-            finishOnboarding()
+            // Both answers finish, but presentation must wait for the system alert to leave.
+            locationResponseReady = true
         }
     }
 
