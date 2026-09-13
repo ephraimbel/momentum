@@ -11,8 +11,8 @@ settings:
     SWIFT_VERSION: "5.0"          # use the toolchain's default Swift mode (Xcode 26.2)
     DEVELOPMENT_TEAM: "LRDHWBMA87"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "1.8.5"      # Adaptive weekly coaching and Sentry reliability release.
-    CURRENT_PROJECT_VERSION: "46"   # Next build after the uploaded 1.8.0 (45).
+    MARKETING_VERSION: "1.9.0"      # Personalized onboarding and Sentry reliability improvements.
+    CURRENT_PROJECT_VERSION: "47"   # Next build after 1.8.5 (46).
     # build 34 (v1.5.0). ⚠️ The build number is LOAD-BEARING for analytics: `supabase/migrations/20260822000002_onboarding_funnel_by_build.sql` keys the onboarding-funnel step map on it, and 34 SHIFTS 33's step order: a `units` beat was inserted after `disciplines`, so index 4 is UNITS and everything from there on moves up one (33: 24 = account; 34: 25 = account). The funnel view groups by build precisely so the two never average together, which is why this number had to move before upload. Carries: the raised-glass design pass app-wide, the light onboarding + Marquee paywall, the Health gauges and their tap-throughs, and weekly-anchored pricing.
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     SWIFT_STRICT_CONCURRENCY: complete   # engines are actors; enforce data-race safety early
