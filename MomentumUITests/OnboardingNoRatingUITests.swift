@@ -41,9 +41,10 @@ final class OnboardingNoRatingUITests: XCTestCase {
             XCTAssertTrue(element.isHittable, "Plan detail must be reachable without opening another page")
             XCTAssertTrue(cta.isHittable, "Continue must remain available while reading the plan")
         }
+        // The road is the first screen's hero (redesign 2026-09-12); the briefing reads below it.
+        reach(app.staticTexts["YOUR PATH"])
         reach(app.staticTexts["YOUR TRAINING BRIEFING"])
         XCTAssertTrue(app.staticTexts["onboarding.reveal.firstSession"].exists)
-        reach(app.staticTexts["YOUR PATH"])
         let path = XCTAttachment(screenshot: app.screenshot())
         path.name = reduceMotion ? "plan-chart-first-reduced-motion" : "plan-chart-first"
         path.lifetime = .keepAlways

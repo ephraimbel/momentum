@@ -110,6 +110,11 @@ final class GuestEntryUITests: XCTestCase {
         let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'New to running'")).firstMatch
         XCTAssertTrue(background.waitForExistence(timeout: 8)); background.tap()
         app.buttons["Continue"].tap()
+        // The pace page (2026-09-12): a newcomer answers by feel.
+        XCTAssertTrue(app.staticTexts["How fast do you run today?"].waitForExistence(timeout: 8))
+        let feel = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Walk and jog'")).firstMatch
+        XCTAssertTrue(feel.waitForExistence(timeout: 5)); feel.tap()
+        app.buttons["Continue"].tap()
         XCTAssertTrue(app.staticTexts["Anything to train around?"].waitForExistence(timeout: 8))
         app.buttons["Continue"].tap()
         XCTAssertTrue(app.staticTexts["A few personal details."].waitForExistence(timeout: 8))

@@ -27,11 +27,12 @@ final class OnboardingPerfUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--debug-free", "--onboarding-goal", "--review-no-ask"]
         app.launch()
-        let headings = ["What are we training for?", "Where are you with running?", "Anything to train around?", "A few personal details.", "Let's shape your training week.", "Here's the approach we recommend."]
+        let headings = ["What are we training for?", "Where are you with running?", "How fast do you run today?", "Anything to train around?", "A few personal details.", "Let's shape your training week.", "Here's the approach we recommend."]
         for (index, heading) in headings.enumerated() {
             XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 8), "Missing screen \(heading)")
             if index == 0 { app.buttons.matching(NSPredicate(format: "label CONTAINS 'Stay consistent'")).firstMatch.tap() }
             if index == 1 { app.buttons.matching(NSPredicate(format: "label CONTAINS 'New to running'")).firstMatch.tap() }
+            if index == 2 { app.buttons.matching(NSPredicate(format: "label CONTAINS 'Walk and jog'")).firstMatch.tap() }   // by feel
             if heading == "A few personal details." {
                 app.buttons["Female"].tap()
                 app.buttons["Increase Age"].tap()
@@ -115,7 +116,8 @@ final class OnboardingPerfUITests: XCTestCase {
         let pages: [(String, String)] = [
             ("--onboarding-goal", "Become a stronger runner"),
             ("--onboarding-race", "Target finish time"),
-            ("--onboarding-experience", "Recent race or timed effort"),
+            ("--onboarding-experience", "Returning after a break"),
+            ("--onboarding-pace", "Increase Easy run pace"),
             ("--onboarding-volume", "I'm not sure"),
             ("--onboarding-musclefocus", "Core"),
             ("--onboarding-injuries", "No injuries, I'm all clear"),

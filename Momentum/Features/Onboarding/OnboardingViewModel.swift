@@ -207,7 +207,10 @@ final class OnboardingViewModel {
              health, intensity, building, reveal, notifications, primers, account,
              // Appended, never inserted: every raw value above is a shipped analytics ID
              // and an old draft's saved step. `computeSteps` owns where this actually sits.
-             review
+             review,
+             /// Your pace (2026-09-12): the one number the whole plan hangs on, asked of every
+             /// runner rather than inferred from their experience level.
+             pace
     }
 
     var lifting: Bool { disciplines.contains(.strength) }
@@ -237,10 +240,79 @@ final class OnboardingViewModel {
         returningRunner = false
         experience = level
         runningBackgroundChosen = true
-        if calibrationMode != .time {
-            paceFeel = level == .new ? .newRunner : level == .some ? .easyJogger : .regular
-            calibrationMode = .feel
+    }
+
+    // MARK: Pace (2026-09-12)
+
+    /// The three honest ways to tell us how fast you run today. Which one opens first follows the
+    /// running background: someone new to running is asked how it feels, someone running regularly
+    /// knows their easy pace, someone training consistently usually has a recent result.
+    enum PaceEntry: String, CaseIterable, Identifiable {
+        case easy, result, feel
+        var id: String { rawValue }
+    }
+    var paceEntry: PaceEntry?
+    /// The easy pace the athlete SET (s/km); nil until they touch it. Never prefilled — a number
+    /// that was already there is a number nobody chose, which is the failure this page exists to end.
+    var easyPaceSPerKm: Double?
+
+    /// The way in that fits their background, until they pick one themselves.
+    var suggestedPaceEntry: PaceEntry {
+        if let paceEntry { return paceEntry }
+        if calibrationMode == .time { return .result }
+        if !runningBackgroundChosen || experience == .new { return .feel }
+        return experience == .experienced ? .result : .easy
+    }
+
+    /// The by-feel card that matches their background, for the row to open on.
+    var suggestedPaceFeel: PaceFeel {
+        returningRunner ? .easyJogger : (experience == .new ? .newRunner : experience == .some ? .easyJogger : .regular)
+    }
+
+    /// Whether the plan has an anchor the athlete actually gave it.
+    var paceAnchored: Bool {
+        switch calibrationMode {
+        case .time: return true
+        case .feel: return paceFeel != nil
+        case .easy: return easyPaceSPerKm != nil
+        case .none: return false
         }
+    }
+
+    /// The easy pace the steppers open on when the athlete first touches them: the by-feel preset
+    /// for their background, so the first tap lands near their world, not at a global default.
+    var easyPaceStartSPerKm: Double {
+        DanielsPaces.trainingPace(.easy, p5kSPerKm: suggestedPaceFeel.p5kSPerKm)
+    }
+
+    func chooseEasyPace(_ sPerKm: Double) {
+        easyPaceSPerKm = min(960, max(150, sPerKm))
+        calibrationMode = .easy
+        paceEntry = .easy
+    }
+    func choosePaceFeel(_ feel: PaceFeel) {
+        paceFeel = feel
+        calibrationMode = .feel
+        paceEntry = .feel
+    }
+    func chooseResult(_ benchmark: RunBenchmark, seconds: Double, performedAt: Date?) {
+        self.benchmark = benchmark
+        recentRunSeconds = seconds
+        benchmarkPerformedAt = performedAt
+        calibrationMode = .time
+        paceEntry = .result
+    }
+
+    /// The training paces the current anchor implies, for the page to echo back. Nil without one.
+    var impliedPaces: (easy: Double, steady: Double, repeats: Double, p5k: Double)? {
+        guard paceAnchored else { return nil }
+        let seed = calibration
+        let p5k = seed.recentRun.map { PlanEngine.riegelP5k(distanceM: $0.distanceM, timeS: $0.timeS) }
+            ?? seed.estimatedP5kSPerKm
+        guard let p5k, p5k.isFinite, p5k > 0 else { return nil }
+        return (DanielsPaces.trainingPace(.easy, p5kSPerKm: p5k),
+                DanielsPaces.trainingPace(.tempo, p5kSPerKm: p5k),
+                DanielsPaces.trainingPace(.intervals, p5kSPerKm: p5k), p5k)
     }
 
     /// A returning athlete still supplies their actual recent mileage. Previous experience
@@ -317,11 +389,15 @@ final class OnboardingViewModel {
         // day one, then location so Today's map opens on the athlete the first time they see it.
         // Checkout follows the location beat.
         let ordered: [Step] = [
-            .name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .muscleFocus, .days,
+            .name, .goal, .experience, .pace, .race, .runVolume, .injuries, .metrics, .muscleFocus, .days,
             .equipment, .hybridFocus, .intensity, .building, .reveal, .review, .health, .primers,
         ]
         return ordered.filter { step in
             switch step {
+            // Every runner sets the pace their plan starts at. Inferring it from "running
+            // regularly" put a 7:20/mi athlete on easy runs built for someone two minutes a mile
+            // slower (owner, 2026-09-12: "we should meet them at their current pace").
+            case .pace:        return running
             case .race:        return goal == .raceDistance && running
             case .raceGoalTime: return goal == .raceDistance && running
             case .muscleFocus: return goal == .buildMuscle && lifting
@@ -360,7 +436,7 @@ final class OnboardingViewModel {
         switch step {
         case .goal, .disciplines, .units, .race, .raceGoalTime: "YOUR GOAL"
         case .name, .identity: "YOUR PROFILE"
-        case .experience, .runVolume, .injuries, .metrics, .muscleFocus: "YOUR STARTING POINT"
+        case .experience, .pace, .runVolume, .injuries, .metrics, .muscleFocus: "YOUR STARTING POINT"
         case .days, .preferredDays, .session, .equipment, .strengthSplit, .hybridFocus: "YOUR TRAINING WEEK"
         default: "YOUR APPROACH"
         }
@@ -398,7 +474,9 @@ final class OnboardingViewModel {
         // the athlete never saw, let alone chose (found in the 2026-08-28 bug sweep — the screen
         // showed no selection with Continue enabled).
         case .goal: return goal != .generalFitness
-        case .experience: return runningBackgroundChosen || paceFeel != nil
+        case .experience: return runningBackgroundChosen
+        // An anchor, set by the athlete: a result, an easy pace they touched, or a by-feel pick.
+        case .pace: return paceAnchored
         default: return true
         }
     }
@@ -433,6 +511,9 @@ final class OnboardingViewModel {
         switch calibrationMode {
         case .time: seed.recentRun = (benchmark.meters, recentRunSeconds)
         case .feel: if let f = paceFeel { seed.estimatedP5kSPerKm = f.p5kSPerKm }
+        // An easy pace is the inverse of the zone the plan will prescribe from it, so the plan's
+        // easy runs land exactly on the pace the athlete said they run.
+        case .easy: if let e = easyPaceSPerKm { seed.estimatedP5kSPerKm = DanielsPaces.p5kSPerKm(fromPace: e, type: .easy) }
         case .none: break
         }
         return seed
@@ -681,24 +762,26 @@ enum ActivityChoice: String, CaseIterable, Identifiable {
 /// `.feel` = the by-feel self-assessment; `.time` = a manually entered recent race/benchmark time.
 /// (Health-derived estimation was removed 2026-07-24 — too unreliable to seed paces from.)
 /// String-raw so it serializes into the interruption-recovery draft like every other answer.
-enum CalibrationMode: String { case none, feel, time }
+enum CalibrationMode: String { case none, feel, time, easy }
 
 /// A beginner-friendly "by feel" running self-assessment → an estimated 5k pace (s/km). Lets someone
 /// who has never timed a run still give the plan a sensible starting pace.
 enum PaceFeel: String, CaseIterable, Identifiable {
     case newRunner, easyJogger, regular, fast
     var id: String { rawValue }
+    /// How a run FEELS, not who the athlete is: the background page already asked that, and the
+    /// same words twice in a row read as a glitch (pace page, 2026-09-12).
     var title: String {
         switch self {
-        case .newRunner: "New to running"; case .easyJogger: "Easy jogger"
-        case .regular: "Regular runner"; case .fast: "Fast / competitive"
+        case .newRunner: "Walk and jog"; case .easyJogger: "Easy conversation"
+        case .regular: "Steady miles"; case .fast: "Fast and hard"
         }
     }
     var subtitle: String {
         switch self {
-        case .newRunner: "Walk/jog, just building up"
-        case .easyJogger: "I can hold a conversation"
-        case .regular: "Comfortable steady miles"
+        case .newRunner: "Walk breaks are part of it, and that is fine"
+        case .easyJogger: "I can chat the whole way"
+        case .regular: "Comfortable, breathing under control"
         case .fast: "I train and race hard"
         }
     }

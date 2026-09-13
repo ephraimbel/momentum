@@ -86,7 +86,6 @@ struct OnboardingFlow: View {
     @State private var draftRunSeconds: Double = 1800
     @State private var resultTimeEntered = false
     @State private var draftResultDate: Date?
-    @State private var showTimeEntry = false         // calibration: reveal the "recent time" entry
     @State private var briefSealed = false            // approach step: the seal's one bounce after arrival
     @State private var buildCompleted = 0            // building beat: lines checked (parent-paced)
     @State private var buildRing = 0.0               // building beat: ring fill 0…1 (parent-paced)
@@ -276,6 +275,12 @@ struct OnboardingFlow: View {
             if args.contains("--onboarding-goal") { vm.name = "Maya"; vm.step = .goal }
             if args.contains("--onboarding-units") { vm.name = "Maya"; vm.activities = [.run]; vm.step = .units }
             if args.contains("--onboarding-experience") { vm.activities = [.run]; vm.step = .experience }
+            // --onboarding-pace[-new|-experienced]: the pace page as a beginner / regular / consistent runner.
+            if args.contains("--onboarding-pace") {
+                vm.activities = [.run]; vm.chooseRunningBackground(.some); vm.step = .pace
+            }
+            if args.contains("--onboarding-pace-new") { vm.activities = [.run]; vm.chooseRunningBackground(.new); vm.step = .pace }
+            if args.contains("--onboarding-pace-experienced") { vm.activities = [.run]; vm.chooseRunningBackground(.experienced); vm.step = .pace }
             if args.contains("--onboarding-experience-hybrid") { vm.activities = [.run, .strength]; vm.step = .experience }
             if args.contains("--onboarding-metrics") { vm.activities = [.run]; vm.step = .metrics }
             if args.contains("--onboarding-race") { vm.activities = [.run]; vm.goal = .raceDistance; vm.step = .race }
@@ -395,12 +400,16 @@ struct OnboardingFlow: View {
             .padding(.top, Theme.Space.sm)
             .padding(.bottom, Theme.Space.sm)
             // A soft rise into the canvas so scrolled options dissolve under the button, no edge.
+            // The rise is paint, never a target: bled upward it sat over the last row of every
+            // question (the goal page's "Supporting activities", the race page's target time)
+            // and a tap on that row's lower half went nowhere (2026-09-12 branch audit).
             .background(
                 LinearGradient(colors: [OnboardingStyle.canvas(colorScheme).opacity(0),
                                         OnboardingStyle.canvas(colorScheme), OnboardingStyle.canvas(colorScheme)],
                                startPoint: .top, endPoint: .bottom)
                     .padding(.top, -Theme.Space.lg)
-                    .ignoresSafeArea())
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false))
     }
 
     /// One advance per gesture: a fast double-tap on any Continue used to skip a whole step —
@@ -474,6 +483,7 @@ struct OnboardingFlow: View {
         case .raceGoalTime: raceGoalTimeStep
         case .muscleFocus: muscleFocusStep
         case .experience: experienceStep
+        case .pace: paceStep
         case .injuries: injuriesStep
         case .runVolume: runVolumeStep
         case .days: daysStep
@@ -709,10 +719,146 @@ struct OnboardingFlow: View {
                 .animation(reduceMotion ? nil : Motion.crossfade, value: vm.runningBackgroundChosen)
                 .animation(reduceMotion ? nil : Motion.crossfade, value: vm.returningRunner)
                 .animation(reduceMotion ? nil : Motion.crossfade, value: vm.experience)
-            timeEntryCard.onboardingEntrance(cascade(4))
-            Text("No recent result? We'll use an estimated starting effort and adjust from the runs you log.")
+        }
+    }
+
+    // MARK: Your pace (2026-09-12)
+
+    /// The one number the whole plan hangs on, asked of every runner. Three honest ways in, the
+    /// one that fits their background opening first: how a run FEELS for someone new, the easy
+    /// pace a regular runner already knows, a recent result for someone training consistently.
+    /// The page echoes what the answer implies (easy · steady · repeats) as they set it, so they
+    /// see the plan meeting them where they are before it exists. Nothing is prefilled: a number
+    /// nobody chose is exactly the guessed pace this page replaces.
+    private var paceStep: some View {
+        questionScaffold("How fast do you run today?",
+                         subtitle: "Your plan starts at your pace, not an average. Tell us the way you know best.") {
+            SegmentedCapsule(items: OnboardingViewModel.PaceEntry.allCases,
+                             selection: Binding(get: { vm.suggestedPaceEntry }, set: { vm.paceEntry = $0 }),
+                             scale: .page,
+                             title: { paceEntryTitle($0) }, spokenLabel: { paceEntryTitle($0) })
+                .onboardingEntrance(cascade(0))
+            Group {
+                switch vm.suggestedPaceEntry {
+                case .easy: easyPaceEntry
+                case .result: resultEntry
+                case .feel: feelEntry
+                }
+            }
+            .id(vm.suggestedPaceEntry)
+            .transition(.opacity)
+            .animation(reduceMotion ? nil : Motion.crossfade, value: vm.suggestedPaceEntry)
+            Text(paceFootnote)
                 .font(.rounded(Theme.FontSize.caption, weight: .medium))
                 .foregroundStyle(Theme.inkTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(reduceMotion ? nil : Motion.crossfade, value: vm.paceAnchored)
+        }
+    }
+
+    private func paceEntryTitle(_ e: OnboardingViewModel.PaceEntry) -> String {
+        switch e { case .easy: "Easy pace"; case .result: "Recent result"; case .feel: "By feel" }
+    }
+
+    private var paceFootnote: String {
+        vm.paceAnchored
+            ? "Your paces sharpen from the runs you log. This is only where we start."
+            : "Set one anchor and we build every pace from it. You can change it any time."
+    }
+
+    /// The pace of a relaxed run, set by the athlete: "Set" until touched, then a figure that rolls.
+    /// The first tap of − or + opens on the by-feel preset for their background, so the stepper
+    /// starts near their world and they correct from there.
+    private var easyPaceEntry: some View {
+        VStack(spacing: Theme.Space.sm) {
+            metricRow("Easy run pace", vm.easyPaceSPerKm.map { Formatters.pace(secPerKm: $0, unit: paceUnit) } ?? "Set",
+                      keyboard: .numbersAndPunctuation,
+                      typed: { commitTypedEasyPace($0) },
+                      { nudgeEasyPace(+paceStepS) }, { nudgeEasyPace(-paceStepS) })
+                .accessibilityIdentifier("onboarding.easyPace")
+                .onboardingEntrance(cascade(1))
+            Text("The pace you could hold for a relaxed half hour and still talk. Tap the number to type it.")
+                .font(.rounded(13)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .onboardingEntrance(cascade(2))
+        }
+    }
+
+    /// Five-second steps per unit: minus makes it slower (a bigger figure), plus faster.
+    private var paceStepS: Double { useMetricDistance ? 5 : 5 / 1.609344 }
+    private var paceUnit: DistanceUnit { useMetricDistance ? .metric : .imperial }
+    private func nudgeEasyPace(_ deltaS: Double) {
+        Haptics.light()
+        let current = vm.easyPaceSPerKm ?? vm.easyPaceStartSPerKm
+        // Minus = slower on the page (a bigger number). `deltaS` arrives positive for "+" (faster).
+        pick { vm.chooseEasyPace(current - deltaS) }
+    }
+    /// "9:30", "9.30" or "930" in the athlete's unit; anything else is left alone.
+    private func commitTypedEasyPace(_ raw: String) {
+        let cleaned = raw.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ".", with: ":")
+        let parts = cleaned.split(separator: ":").compactMap { Double($0) }
+        var seconds: Double?
+        if parts.count == 2 { seconds = parts[0] * 60 + parts[1] }
+        else if parts.count == 1, let v = parts.first {
+            seconds = v >= 100 ? (v / 100).rounded(.down) * 60 + v.truncatingRemainder(dividingBy: 100) : v * 60
+        }
+        guard let perUnit = seconds, perUnit >= 150, perUnit <= 1200 else { return }
+        pick { vm.chooseEasyPace(useMetricDistance ? perUnit : perUnit / 1.609344) }
+    }
+
+    /// A recent race or hard timed effort, entered inline: distance chips, a typable time, the
+    /// optional date. Applies the moment a real time is entered; no save button to find.
+    private var resultEntry: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            Text("A recent race or strong timed effort, not an easy run or the time you hope for.")
+                .font(.rounded(13)).foregroundStyle(Theme.inkSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            timeEntryControls
+            Toggle("I know when I ran this", isOn: Binding(
+                get: { draftResultDate != nil },
+                set: { draftResultDate = $0 ? Date() : nil; syncResult() }))
+                .font(.rounded(Theme.FontSize.body, weight: .medium))
+            if draftResultDate != nil {
+                DatePicker("Result date", selection: Binding(
+                    get: { draftResultDate ?? Date() }, set: { draftResultDate = $0; syncResult() }),
+                    in: ...Date(), displayedComponents: .date)
+                    .font(.rounded(Theme.FontSize.body, weight: .medium))
+            }
+        }
+        .padding(Theme.Space.md)
+        .onboardingCard()
+        .onboardingEntrance(cascade(1))
+        .onAppear {
+            draftBenchmark = vm.benchmark
+            draftRunSeconds = vm.calibrationMode == .time ? vm.recentRunSeconds : vm.benchmark.defaultSeconds
+            draftResultDate = vm.benchmarkPerformedAt
+            resultTimeEntered = vm.calibrationMode == .time
+        }
+        .onChange(of: draftRunSeconds) { _, _ in syncResult() }
+        .onChange(of: draftBenchmark) { _, _ in syncResult() }
+        .onChange(of: resultTimeEntered) { _, _ in syncResult() }
+    }
+
+    /// The inline result is the answer the moment it is real; clearing it withdraws the anchor.
+    private func syncResult() {
+        if resultTimeEntered {
+            pick { vm.chooseResult(draftBenchmark, seconds: draftRunSeconds, performedAt: draftResultDate) }
+        } else if vm.calibrationMode == .time {
+            vm.calibrationMode = .none
+        }
+    }
+
+    /// How running feels, for the athlete who has never timed one.
+    private var feelEntry: some View {
+        VStack(spacing: Theme.Space.sm) {
+            ForEach(Array(PaceFeel.allCases.enumerated()), id: \.element) { i, feel in
+                ChoiceCard(title: feel.title, subtitle: feel.subtitle, systemImage: feel.icon,
+                           isSelected: vm.calibrationMode == .feel && vm.paceFeel == feel) {
+                    pick { vm.choosePaceFeel(feel) }
+                }
+                .onboardingEntrance(cascade(i + 1))
+            }
         }
     }
 
@@ -975,8 +1121,8 @@ struct OnboardingFlow: View {
         }
     }
 
-    // The running pace question now lives in `experienceStep` (2026-07-24) — a runner sets their
-    // level once. The `timeEntryCard` below is still shared by that step.
+    // The running pace question is its own page (`paceStep`, 2026-09-12); `timeEntryControls`
+    // below is the inline result entry it shares with nothing else now.
 
     /// Past injuries — multi-select body areas the plan will train around (ENDURANCE-FOCUS §8.2).
     /// Optional and shame-free; empty = none. Feeds a conservative history modifier and the injury
@@ -1226,70 +1372,6 @@ struct OnboardingFlow: View {
         .onboardingCard()
     }
 
-    /// The optional precise path — expand to enter a recent time over a distance you know.
-    private var timeEntryCard: some View {
-        detailButton("Recent race or timed effort",
-                     value: vm.calibrationMode == .time ? "\(vm.benchmark.label) · \(Formatters.duration(s: vm.recentRunSeconds))" : "Optional",
-                     systemImage: "stopwatch") {
-            draftBenchmark = vm.benchmark
-            draftRunSeconds = vm.recentRunSeconds
-            draftResultDate = vm.benchmarkPerformedAt
-            resultTimeEntered = vm.calibrationMode == .time
-            showTimeEntry = true
-        }
-        .sheet(isPresented: $showTimeEntry) {
-            NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        Text("Use a recent race or strong timed effort, not an easy training run or the time you hope to achieve.")
-                            .font(.rounded(Theme.FontSize.body, weight: .medium))
-                        timeEntryControls
-                        Toggle("I know when I ran this", isOn: Binding(
-                            get: { draftResultDate != nil },
-                            set: { draftResultDate = $0 ? Date() : nil }))
-                        if draftResultDate != nil {
-                            DatePicker("Result date", selection: Binding(
-                                get: { draftResultDate ?? Date() }, set: { draftResultDate = $0 }),
-                                in: ...Date(), displayedComponents: .date)
-                        }
-                        Text("The date helps us explain how recent this evidence is. An older result may no longer reflect today's fitness.")
-                            .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                            .foregroundStyle(Theme.inkSecondary)
-                        if !resultTimeEntered {
-                            Text("Enter your own time above, such as 22:30 or 3:30:00, then save it.")
-                                .font(.rounded(Theme.FontSize.caption, weight: .medium))
-                                .foregroundStyle(Theme.inkSecondary)
-                        }
-                        OversizedButton(title: "Use this result", isEnabled: resultTimeEntered, expandsForText: true) {
-                            guard resultTimeEntered else { return }
-                            vm.benchmark = draftBenchmark
-                            vm.recentRunSeconds = draftRunSeconds
-                            vm.benchmarkPerformedAt = draftResultDate
-                            vm.calibrationMode = .time
-                            showTimeEntry = false
-                        }
-                        .accessibilityIdentifier("onboarding.saveBenchmark")
-                        if vm.calibrationMode == .time {
-                            Button("Remove saved result") {
-                                vm.calibrationMode = vm.paceFeel == nil ? .none : .feel
-                                vm.benchmarkPerformedAt = nil
-                                showTimeEntry = false
-                            }
-                            .font(.rounded(Theme.FontSize.body, weight: .medium))
-                            .frame(maxWidth: .infinity)
-                        }
-                    }.padding(24)
-                }
-                .navigationTitle("Your recent result")
-                .toolbar { ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showTimeEntry = false }
-                } }
-            }
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-    }
-
     private var timeEntryControls: some View {
         VStack(spacing: 20) {
             if typeSize.isAccessibilitySize {
@@ -1353,14 +1435,22 @@ struct OnboardingFlow: View {
                 // and nobody should tap 30 times to reach their real time.
                 Button { Haptics.light(); adjustTime(-draftBenchmark.step) } label: { metricStep("minus") }
                     .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
+                    .accessibilityLabel("Decrease time")
                 // Tap the time to TYPE it — "21:45", "1:38:20", or bare digits ("2145").
                 benchmarkTimeValue
                 Button { Haptics.light(); adjustTime(draftBenchmark.step) } label: { metricStep("plus") }
                     .buttonStyle(.plain).buttonRepeatBehavior(.enabled)
+                    .accessibilityLabel("Increase time")
             }
             }
-            Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+            // The pace a result implies, once there IS a result: a placeholder time is not an
+            // answer, and a hint read off it would say the page already knows something it doesn't.
+            if resultTimeEntered {
+                Text(paceHint).font(.rounded(Theme.FontSize.caption, weight: .medium)).foregroundStyle(Theme.inkTertiary)
+                    .transition(.opacity)
+            }
         }
+        .animation(reduceMotion ? nil : Motion.crossfade, value: resultTimeEntered)
     }
 
     private var benchmarkTimeValue: some View {

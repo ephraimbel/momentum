@@ -141,8 +141,12 @@ final class EmailAuthUITests: XCTestCase {
                !app.buttons["Continue"].isEnabled {
                 app.staticTexts["Stay consistent"].firstMatch.tap()
             }
-            if app.staticTexts["Tell us about your running."].exists, !app.buttons["Continue"].isEnabled {
-                app.staticTexts["Easy jogger"].firstMatch.tap()
+            if app.staticTexts["Where are you with running?"].exists, !app.buttons["Continue"].isEnabled {
+                app.buttons.matching(NSPredicate(format: "label CONTAINS 'Running regularly'")).firstMatch.tap()
+            }
+            if app.staticTexts["How fast do you run today?"].exists, !app.buttons["Continue"].isEnabled {
+                let plus = app.buttons["Increase Easy run pace"]
+                if plus.exists { plus.tap() } else { app.buttons.matching(NSPredicate(format: "label CONTAINS 'Easy conversation'")).firstMatch.tap() }
             }
             let maybeLater = app.buttons["Maybe later"]
             let cont = app.buttons["Continue"]

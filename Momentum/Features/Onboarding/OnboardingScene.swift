@@ -45,6 +45,7 @@ struct OnboardingScene: View {
         case .name, .identity: identity
         case .goal: destination
         case .experience: startingPoint
+        case .pace: paces
         case .runVolume: baseline
         case .injuries: protection
         case .metrics: measurements
@@ -190,6 +191,47 @@ struct OnboardingScene: View {
             }
             Text(backgroundTitle).font(.display(17, weight: .medium)).contentTransition(.opacity)
         }.animation(response, value: backgroundIndex)
+    }
+
+    /// The plan meeting the athlete where they are: the three paces their anchor implies, as a
+    /// card that rolls with every change. Nothing until they set one — the empty card is the
+    /// honest picture of a plan with no anchor.
+    private var paces: some View {
+        let implied = vm.impliedPaces
+        let anchored = implied != nil
+        return layer(ZStack(alignment: .leading) {
+            paper(width: 284, height: 118)
+            VStack(alignment: .leading, spacing: 9) {
+                HStack {
+                    caption("YOUR TRAINING PACES")
+                    Spacer()
+                    Text(anchored ? "FROM YOUR ANCHOR" : "NOT SET")
+                        .font(.rounded(8, weight: .bold)).tracking(1.0)
+                        .foregroundStyle(anchored ? Theme.purple : Theme.inkTertiary)
+                        .contentTransition(.opacity)
+                }
+                paceRow("Easy", implied?.easy, index: 0, lit: anchored)
+                paceRow("Steady", implied?.steady, index: 1, lit: anchored)
+                paceRow("Repeats", implied?.repeats, index: 2, lit: anchored)
+            }
+            .frame(width: 246).padding(.horizontal, 19)
+        }
+        .onboardingHover(amplitude: 2, tilt: 0.5, period: 3.8), y: 16)
+        .animation(response, value: implied?.p5k)
+    }
+
+    private func paceRow(_ title: String, _ sPerKm: Double?, index: Int, lit: Bool) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(lit ? Theme.purple.opacity(0.35 + 0.3 * Double(index)) : Theme.hairline)
+                .frame(width: 6, height: 6)
+            Text(title).font(.rounded(11, weight: .semibold)).foregroundStyle(Theme.inkSecondary)
+                .frame(width: 58, alignment: .leading)
+            Spacer(minLength: 0)
+            Text(sPerKm.map { Formatters.pace(secPerKm: $0, unit: unit) } ?? "Not set")
+                .font(.display(14, weight: .semibold)).monospacedDigit()
+                .foregroundStyle(lit ? Theme.ink : Theme.inkTertiary)
+                .contentTransition(reduceMotion ? .opacity : .numericText())
+        }
     }
 
     private func distance(_ meters: Double?) -> String {

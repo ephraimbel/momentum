@@ -62,6 +62,8 @@ struct OnboardingDraft: Codable {
     var paceFeel: String?
     var benchmark: String?
     var recentRunSeconds: Double?
+    var easyPaceSPerKm: Double?
+    var paceEntry: String?
     /// Legacy JSON key retained for v1 draft compatibility. This is a current Health signal, not an
     /// imported workout or workout-history value.
     var importedRestingHR: Int?
@@ -133,6 +135,8 @@ extension OnboardingViewModel {
             paceFeel: paceFeel?.rawValue,
             benchmark: benchmark.rawValue,
             recentRunSeconds: recentRunSeconds,
+            easyPaceSPerKm: easyPaceSPerKm,
+            paceEntry: paceEntry?.rawValue,
             importedRestingHR: healthRestingHR,
             plannedRaceName: plannedRaceName)
     }
@@ -169,6 +173,8 @@ extension OnboardingViewModel {
         limitRegularRunTime = d.limitRegularRunTime ?? false
         longRunLimitMinutes = d.longRunLimitMinutes
         benchmarkPerformedAt = d.benchmarkPerformedAt
+        easyPaceSPerKm = d.easyPaceSPerKm
+        paceEntry = d.paceEntry.flatMap(PaceEntry.init(rawValue:))
         hasRace = d.hasRace
         raceDate = d.raceDate ?? raceDate
         reason = d.reason

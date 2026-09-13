@@ -169,7 +169,7 @@ struct OnboardingFlowTests {
         vm.intensity = .aggressive
 
         let steps = vm.steps
-        #expect(steps == [.name, .goal, .experience, .race, .runVolume, .injuries, .metrics, .days, .intensity, .building, .reveal, .review, .health, .primers])
+        #expect(steps == [.name, .goal, .experience, .pace, .race, .runVolume, .injuries, .metrics, .days, .intensity, .building, .reveal, .review, .health, .primers])
 
         // Walk the whole flow front to back — advance() must traverse every step without a dead end.
         vm.step = steps.first!
@@ -241,7 +241,7 @@ struct OnboardingFlowTests {
         #expect(profile.birthYear == nil)
         #expect(profile.maxHR == nil)
         #expect(profile.plan?.sessions.isEmpty == false)
-        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 7)
+        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 8)
     }
 
     @Test func raceRevealFramesTheTargetAsAPursuitNotAGuarantee() throws {
@@ -267,13 +267,13 @@ struct OnboardingFlowTests {
         vm.goal = .stayConsistent
         vm.calibrationMode = .feel
         vm.paceFeel = .regular
-        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 8)
+        #expect(vm.steps.filter { vm.step = $0; return vm.isQuestionStep }.count == 9)
         #expect(vm.steps.contains(.name))
         #expect(!vm.steps.contains(.identity))
         #expect(!vm.steps.contains(.units))
         #expect(!vm.steps.contains(.preferredDays))
         #expect(!vm.steps.contains(.why))
-        for step in [OnboardingViewModel.Step.experience, .runVolume, .injuries, .metrics, .days, .intensity] {
+        for step in [OnboardingViewModel.Step.experience, .pace, .runVolume, .injuries, .metrics, .days, .intensity] {
             #expect(vm.steps.contains(step))
         }
         // Walk back from the LAST beat, whatever it is (the location primer since 2026-09-12),
@@ -298,8 +298,12 @@ struct OnboardingFlowTests {
         let vm = OnboardingViewModel()
         vm.step = .experience
         #expect(!vm.canAdvance)
-        vm.calibrationMode = .feel
-        vm.paceFeel = .newRunner
+        vm.chooseRunningBackground(.new)
+        #expect(vm.canAdvance)
+        // The pace page (2026-09-12) needs its own answer; a by-feel pick is one.
+        vm.step = .pace
+        #expect(!vm.canAdvance)
+        vm.choosePaceFeel(.newRunner)
         #expect(vm.canAdvance)
         vm.step = .days
         #expect(vm.progress > 0 && vm.progress < 1)
@@ -331,15 +335,40 @@ struct OnboardingFlowTests {
 }
 
 extension OnboardingFlowTests {
+    /// The pace page (2026-09-12): every runner sets one anchor. A result is one; an easy pace they
+    /// touched is one; a by-feel pick is one. The background alone is not, and never seeds a pace.
+    @Test func everyRunnerSetsAPaceAnchorAndTheBackgroundNoLongerGuessesOne() {
+        let vm = OnboardingViewModel()
+        vm.activities = [.run]
+        vm.chooseRunningBackground(.some)
+        #expect(vm.calibrationMode == .none, "the background must not pick a pace for the athlete")
+        #expect(vm.steps.contains(.pace))
+        #expect(vm.suggestedPaceEntry == .easy)
+        vm.step = .pace
+        #expect(!vm.canAdvance)
+        // An easy pace of 6:00/km implies the 5K pace whose Daniels E zone is 6:00/km, so the
+        // plan's easy runs land on the pace the athlete said they run.
+        vm.chooseEasyPace(360)
+        #expect(vm.canAdvance)
+        let implied = try! #require(vm.impliedPaces)
+        #expect(abs(implied.easy - 360) <= 2)
+        #expect(implied.steady < implied.easy && implied.repeats < implied.steady)
+        // A by-feel pick opens first for someone new; a result for someone training consistently.
+        let newcomer = OnboardingViewModel(); newcomer.activities = [.run]; newcomer.chooseRunningBackground(.new)
+        #expect(newcomer.suggestedPaceEntry == .feel && newcomer.suggestedPaceFeel == .newRunner)
+        let seasoned = OnboardingViewModel(); seasoned.activities = [.run]; seasoned.chooseRunningBackground(.experienced)
+        #expect(seasoned.suggestedPaceEntry == .result)
+    }
+
     @Test func benchmarkDoesNotAnswerTrainingBackground() {
         let vm = OnboardingViewModel()
         vm.step = .experience
-        vm.calibrationMode = .time
-        vm.benchmark = .fiveK
-        vm.recentRunSeconds = 1200
-        #expect(!vm.canAdvance)
+        vm.chooseResult(.fiveK, seconds: 1200, performedAt: nil)
+        #expect(!vm.canAdvance, "a result is a pace, not a training background")
         vm.chooseRunningBackground(.some)
         #expect(vm.canAdvance)
+        vm.step = .pace
+        #expect(vm.canAdvance, "and the result already anchors the pace page")
         #expect(vm.calibration.recentRun?.timeS == 1200)
         #expect(vm.experience == .some)
         #expect(vm.weeklyRunVolumeM == nil)

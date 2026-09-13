@@ -72,8 +72,13 @@ final class OnboardingMotionUITests: XCTestCase {
         returning.tap()
         XCTAssertTrue(returning.isSelected)
         capture(app, name: "returning-runner-background")
-        for _ in 0..<4 {
+        for _ in 0..<5 {
             if app.staticTexts["Your recent running."].exists { break }
+            // The pace page sits between the background and recent running (2026-09-12); a
+            // returning runner opens on the easy-pace row.
+            if app.staticTexts["How fast do you run today?"].exists, !app.buttons["Continue"].isEnabled {
+                app.buttons["Increase Easy run pace"].tap()
+            }
             let next = app.buttons["Continue"]
             XCTAssertTrue(next.waitForExistence(timeout: 5) && next.isEnabled)
             next.tap()
@@ -372,47 +377,37 @@ final class OnboardingMotionUITests: XCTestCase {
 
 
 extension OnboardingMotionUITests {
+    /// The pace page (2026-09-12). Training background and the pace anchor are separate answers:
+    /// the background page never enables Continue by guessing a pace, and on the pace page a
+    /// distance chip alone is not a result — a real time is, entered inline, with no save button.
     @MainActor
-    func testTrainingBackgroundAndBenchmarkAreIndependent() {
+    func testTrainingBackgroundAndPaceAnchorAreIndependent() {
         let app = XCUIApplication()
         app.launchArguments = ["--reset-store", "--onboarding", "--onboarding-guest", "--onboarding-experience", "--ui-test-reduce-motion"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Where are you with running?"].waitForExistence(timeout: 20))
         XCTAssertFalse(app.buttons["Continue"].isEnabled)
         capture(app, name: "running-background")
-        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Recent race or timed effort'")).firstMatch
-        revealOnboardingControl(result, in: app)
-        result.tap()
-        XCTAssertTrue(app.buttons["Marathon"].waitForExistence(timeout: 5))
-        app.buttons["Marathon"].tap()
-        XCTAssertFalse(app.buttons["onboarding.saveBenchmark"].isEnabled,
-                       "Choosing a distance must never save its placeholder time")
-        app.buttons["Cancel"].tap()
-        XCTAssertFalse(app.buttons["Continue"].isEnabled)
-        let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Running regularly'")).firstMatch
-        // Dismissing the optional sheet retains the question's scroll position.
-        for _ in 0..<5 where !background.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Training consistently'")).firstMatch
         revealOnboardingControl(background, in: app)
         background.tap()
         XCTAssertTrue(app.buttons["Continue"].isEnabled)
-        revealOnboardingControl(result, in: app)
-        result.tap()
+        app.buttons["Continue"].tap()
+        XCTAssertTrue(app.staticTexts["How fast do you run today?"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Continue"].isEnabled, "the background must not have picked a pace")
+        // Someone training consistently opens on a recent result.
+        let marathon = app.buttons["Marathon"]
+        XCTAssertTrue(marathon.waitForExistence(timeout: 5))
+        marathon.tap()
+        XCTAssertFalse(app.buttons["Continue"].isEnabled, "Choosing a distance must never count its placeholder time")
         app.buttons["5K"].tap()
         app.buttons["onboarding.benchmarkTime"].tap()
         let time = app.textFields["onboarding.benchmarkTime"]
         XCTAssertTrue(time.waitForExistence(timeout: 5))
         time.typeText("22:30")
-        XCTAssertTrue(app.buttons["onboarding.saveBenchmark"].isEnabled)
-        time.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 5))
-        capture(app, name: "benchmark-after-clearing")
-        XCTAssertFalse(app.buttons["onboarding.saveBenchmark"].isEnabled)
-        time.typeText("22:30")
         app.toolbars.buttons["Done"].tap()
-        capture(app, name: "benchmark-confirmation")
-        XCTAssertTrue(app.buttons["onboarding.saveBenchmark"].isEnabled)
-        app.buttons["onboarding.saveBenchmark"].tap()
+        capture(app, name: "pace-result-entered")
         XCTAssertTrue(app.buttons["Continue"].isEnabled)
-        capture(app, name: "running-background-with-result")
     }
 }
 
@@ -564,12 +559,8 @@ final class NativePhoneOnboardingUITests: XCTestCase {
 
     @MainActor
     func testBenchmarkKeyboardCommitsWithLargeText() {
-        let app = launch(["--onboarding", "--onboarding-guest", "--onboarding-experience"])
-        let background = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Running regularly'")).firstMatch
-        reveal(background, in: app); background.tap()
-        XCTAssertTrue(background.isSelected)
-        let result = app.buttons.matching(NSPredicate(format: "label CONTAINS 'Recent race or timed effort'")).firstMatch
-        reveal(result, in: app); result.tap()
+        let app = launch(["--onboarding", "--onboarding-guest", "--onboarding-pace-experienced"])
+        XCTAssertTrue(app.staticTexts["How fast do you run today?"].waitForExistence(timeout: 20))
         let distance = app.buttons["onboarding.benchmarkDistance"]
         reveal(distance, in: app); distance.tap()
         app.buttons["Marathon"].tap()
@@ -586,11 +577,6 @@ final class NativePhoneOnboardingUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 5) && done.isHittable)
         capture(app, "large-text-benchmark-keyboard")
         done.tap()
-        let save = app.buttons["onboarding.saveBenchmark"]
-        reveal(save, in: app)
-        XCTAssertTrue(save.isEnabled)
-        capture(app, "large-text-benchmark-save")
-        save.tap()
         XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Continue"].isEnabled && app.buttons["Continue"].isHittable)
         capture(app, "large-text-saved-benchmark")

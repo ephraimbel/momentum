@@ -8,8 +8,12 @@ permission/account sequence. The owner restored the optional review ask after th
 
 1. **Welcome.** Keep the photographic welcome, returning-account door, ink action, and existing
    gallery/handoff animation. Start with name and username so the experience can address the athlete personally.
-2. **Goal and starting point.** Goal → running background → recent volume for established/returning
-   runners → injury constraints. Race distance/date/time appears only for a race goal. Pace calibration
+2. **Goal and starting point.** Goal → running background → **your pace** → recent volume for
+   established/returning runners → injury constraints. The pace page (September 12) is the one number
+   the plan hangs on and every runner answers it: an easy pace they set themselves (never prefilled),
+   a recent result entered inline, or how a run feels. The page opens on the way that fits their
+   background and echoes the easy / steady / repeats paces the anchor implies as they set it. The
+   background alone never seeds a pace. Race distance/date/time appears only for a race goal. Pace calibration
    never answers training background. Unknown recent volume remains unknown, producing the existing
    conservative starting prescription. The main page asks only about recent running, never how much
    the athlete is willing to build. Future progression belongs to the coach. Required personal details collect sex, age, height, and weight
@@ -26,8 +30,9 @@ permission/account sequence. The owner restored the optional review ask after th
    tiers; selecting Podium still enforces its minimum days. No tier selection is required to proceed. The running-only path has seven core questions for beginners, eight for
    established runners; race and strength add only their relevant questions.
 5. **Build and reveal.** Save the real plan immediately. No simulated analysis or timed checklist
-   delays generation. The saved first week appears with its opening schedule/session and an honest
-   starting-effort explanation before the progress chart. Keep the chart, complete first week,
+   delays generation. The reveal (redesigned September 12) opens on the athlete, the road (the
+   block's terrain, run by a runner glyph, hold-to-scrub afterwards) and the numbers; the opening
+   schedule, honest starting-effort line, first week and the weeks ahead read below the fold. Keep the chart, complete first week,
    adaptive future-week explanation, premium materials, and local earned animation. The CTA is
    visible immediately and stays available while scrolling. No full-page overture blocks reading.
 6. **Review → checkout → Today.** The reveal's Continue opens a dedicated review page. After its
