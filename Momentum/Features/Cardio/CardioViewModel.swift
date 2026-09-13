@@ -21,6 +21,8 @@ final class CardioViewModel {
     let targetPaceSPerKm: Double?
     /// When recording actually began (set in `start()`, i.e. right after the countdown).
     private(set) var startedAt = Date()
+    /// Where the finish-time GPS accuracy aggregate goes; nil in previews and tests.
+    private let analytics: (any AnalyticsServing)?
 
     private let engine: GPSTrackingEngine
     private let store: GPSWorkoutStore
@@ -217,8 +219,10 @@ final class CardioViewModel {
          goalMeters: Double? = nil, structured: StructuredWorkout? = nil,
          targetPaceSPerKm: Double? = nil,
          voice: (any VoiceCoachServing)? = nil, motion: (any MotionServing)? = nil,
-         heartRate: (any HeartRateServing)? = nil, maxHR: Int? = nil) {
+         heartRate: (any HeartRateServing)? = nil, maxHR: Int? = nil,
+         analytics: (any AnalyticsServing)? = nil) {
         self.type = type
+        self.analytics = analytics
         self.distanceUnit = distanceUnit
         self.goalMeters = goalMeters
         self.structured = structured
@@ -655,8 +659,16 @@ final class CardioViewModel {
         // sky run is the chord inflation being removed; a ratio near 1.0 means the device supplied no
         // usable speed and the chord fallback carried the run.
         let chordOnlyM = await engine.chordOnlyDistanceM
+        let report = await engine.accuracyReport
+        let speedUsedPct = report.spans > 0 ? 100 * report.spansSpeedUsed / report.spans : 0
+        let dopplerToChordPct = Int((report.dopplerToChordRatio * 100).rounded())
+        let dopplerHeadlinePct = self.distanceM > 0 ? Int((report.dopplerOnlyDistanceM / self.distanceM * 100).rounded()) : 0
         Logger(subsystem: "com.ephraimbel.momentum.app", category: "gps-accuracy")
-            .info("finish distance=\(self.distanceM, format: .fixed(precision: 1))m chordOnly=\(chordOnlyM, format: .fixed(precision: 1))m ratio=\(chordOnlyM > 0 ? self.distanceM / chordOnlyM : 0, format: .fixed(precision: 3)) movingS=\(self.elapsed(), format: .fixed(precision: 0))")
+            .info("finish distance=\(self.distanceM, format: .fixed(precision: 1))m chordOnly=\(chordOnlyM, format: .fixed(precision: 1))m dopplerOnly=\(report.dopplerOnlyDistanceM, format: .fixed(precision: 1))m dopplerToChord=\(dopplerToChordPct)% speedUsed=\(speedUsedPct)% contradictions=\(report.stationaryContradictions) holds=\(report.stationaryHolds) movingS=\(self.elapsed(), format: .fixed(precision: 0))")
+        // The same aggregate, off the device: whether phones' speed readings can be believed is a
+        // field question, and this is the only way the answer reaches anyone.
+        analytics?.log(.gpsAccuracy(dopplerToChordPct: dopplerToChordPct, speedUsedPct: speedUsedPct,
+                                    contradictions: report.stationaryContradictions, dopplerHeadlinePct: dopplerHeadlinePct))
         await engine.finish(durationOverrideS: elapsed(), elapsedOverrideS: totalElapsed())
         // Persist the finish-time extras — average cadence/HR and a guided run's per-rep
         // breakdown — in ONE store hop with one save. Three separate awaited round-trips here

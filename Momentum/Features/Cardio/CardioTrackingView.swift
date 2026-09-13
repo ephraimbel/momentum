@@ -201,7 +201,8 @@ struct CardioTrackingView: View, Equatable {
                 let model = CardioViewModel(type: type, container: container, distanceUnit: distanceUnit,
                                             goalMeters: goalMeters, structured: structured,
                                             targetPaceSPerKm: targetPaceSPerKm, voice: voice,
-                                            motion: services.motion, maxHR: maxHR)
+                                            motion: services.motion, maxHR: maxHR,
+                                            analytics: services.analytics)
                 model.beginAcquiring()
                 vm = model
             }

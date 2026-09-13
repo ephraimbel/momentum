@@ -50,9 +50,9 @@ extension GPSDetail {
     ///
     /// This is a faithful replay of `GPSProcessor`: the stored fixes run back through the identical
     /// causal Kalman filter, distance accrues between *filtered* positions through the very same
-    /// `GPSDistanceRule` the live engine used (Doppler-first behind the 2 m movement gate, chord
-    /// fallback), Doppler-stationary fixes accrue nothing, and paused spans advance neither metres
-    /// nor seconds. Sharing the rule — not re-implementing it — is what makes the totals agree with
+    /// `GPSDistanceRule` the live engine used (position-first, the device's speed believed only
+    /// while the positions corroborate it), trusted stationary fixes accrue nothing, and paused
+    /// spans advance neither metres nor seconds. Sharing the rule — not re-implementing it — is what makes the totals agree with
     /// `distanceM`/`durationS` on the row exactly, rather than approximately.
     ///
     /// It exists because four sites — the splits list, the pace/elevation charts, the achievement
@@ -82,7 +82,7 @@ extension GPSDetail {
         var points: [RoutePoint] = []
         points.reserveCapacity(usable.count)
         var movingS = 0.0
-        var rule = GPSDistanceRule(config: .init(minMovementGateM: config.minMovementGateM))
+        var rule = GPSDistanceRule(config: GPSProcessor.distanceConfig(config))
         var previousT: Date?
 
         for (sample, position) in zip(usable, filtered) {
@@ -101,14 +101,11 @@ extension GPSDetail {
             if let previousT { movingS += max(0, sample.t.timeIntervalSince(previousT)) }
             previousT = sample.t
 
-            // Doppler says "not covering ground" → rebase and accrue nothing, so standing at a red
-            // light can't wander its way into distance (the engine's on-device fix, 2026-07-23).
-            let stationary = hasSpeedSignal && sample.speedMS >= 0 && sample.speedMS < config.autoPauseSpeedMS
-            if stationary {
-                rule.rebase(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed)
-            } else {
-                _ = rule.step(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed)
-            }
+            // The rule owns the stationary judgement too (a trusted "not covering ground" reading
+            // rebases; an untrusted one cannot discard the span), so replay and live agree on it
+            // by construction rather than by two copies of the same test.
+            _ = rule.advance(lat: position.lat, lon: position.lon, t: sample.t, speedMS: speed,
+                             accuracyM: sample.accuracyM, stationaryBelowMS: config.autoPauseSpeedMS)
             points.append(RoutePoint(t: movingS, cumulativeM: rule.distanceM,
                                      altitudeM: sample.altitudeM, speedMS: sample.speedMS))
         }

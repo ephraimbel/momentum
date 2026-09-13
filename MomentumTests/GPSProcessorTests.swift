@@ -304,10 +304,107 @@ struct GPSProcessorTests {
         }
     }
 
-    /// THE fix. At a reported accuracy of 5 m the chord sum ran ~5% long on a straight and worse on a
-    /// grid — miles long, pace flatteringly fast, every run. Integrating the device's speed holds the
-    /// headline inside 1% on the same fixes, and the retained chord-only figure proves the fixture is
-    /// in the regime that used to break.
+    /// `noisyRun` with the device's speed reading shaped by `speedModel(trueSpeed, gaussian)`: the
+    /// on-device pathologies the position-first rule has to survive.
+    private func shapedRun(seconds: Int, speed: Double, sigma: Double, seed: UInt32 = 20_260_912,
+                           speedModel: (Double, Double) -> Double) -> [GPSProcessor.Fix] {
+        var rng = Wobble(state: seed)
+        let a = exp(-1.0 / 15.0), inn = sigma * (1 - a * a).squareRoot()
+        var ex = sigma * rng.gauss(), ey = sigma * rng.gauss()
+        return (0..<seconds).map { i in
+            ex = a * ex + inn * rng.gauss(); ey = a * ey + inn * rng.gauss()
+            let along = Double(i) * speed
+            return GPSProcessor.Fix(t: Date(timeIntervalSinceReferenceDate: Double(i)),
+                                    lat: lat0 + (along + ey) / mLat, lon: lon0 + ex / mLon,
+                                    accuracyM: sigma, speedMS: speedModel(speed, rng.gauss()), altitudeM: 0)
+        }
+    }
+
+    // MARK: Position is the ground truth; the speed reading is a corroborated helper (2026-09-12)
+
+    /// THE 2026-09-12 run: the phone's speed reading sat at about half the athlete's true speed for
+    /// the whole session, and with speed as the primary signal every number read 2× slow at once —
+    /// 7:20/mi shown as ~14:00, miles halved, the coach nudging against a phantom. The trust window
+    /// now sees the reading disagree with the positions and lets the chords carry the run.
+    @Test(arguments: [0.5, 0.75, 1.3])
+    func aBiasedSpeedReadingCannotBendTheRun(bias: Double) {
+        var p = GPSProcessor(config: runConfig)
+        let speed = 3.65   // 7:20/mi
+        for f in shapedRun(seconds: 1200, speed: speed, sigma: 5,
+                           speedModel: { s, g in max(0, bias * s + 0.25 * g) }) { _ = p.ingest(f) }
+        let truth = 1199 * speed
+        #expect(abs(p.distanceM - truth) / truth < 0.06, "bias ×\(bias): headline \(p.distanceM)m vs \(truth)m")
+        #expect(abs(p.smoothedPaceSPerKm - 1000 / speed) < 40, "bias ×\(bias): pace \(p.smoothedPaceSPerKm) vs \(1000 / speed)")
+        #expect(!p.speedTrusted, "a reading off by ×\(bias) must not be believed")
+        #expect(p.accuracyReport.spansSpeedUsed < p.accuracyReport.spans / 4)
+    }
+
+    /// An accurate reading is still believed — and still removes the chord inflation it exists for.
+    @Test func anAccurateSpeedReadingIsStillTrustedAndStillDeflatesTheChords() {
+        var p = GPSProcessor(config: runConfig)
+        for f in shapedRun(seconds: 1200, speed: 3.65, sigma: 5,
+                           speedModel: { s, g in max(0, s + 0.25 * g) }) { _ = p.ingest(f) }
+        let truth = 1199 * 3.65
+        #expect(abs(p.distanceM - truth) / truth < 0.012, "headline \(p.distanceM)m vs \(truth)m")
+        #expect(p.chordOnlyDistanceM > truth * 1.02, "fixture must still be in the inflating regime")
+        #expect(p.speedTrusted)
+        #expect(p.accuracyReport.spansSpeedUsed > p.accuracyReport.spans * 3 / 4)
+    }
+
+    /// A reading of exactly zero on a third of the fixes (a fused speed dropping out mid-stride)
+    /// used to discard every span it landed on — a third of the run, gone. Zero is a claim the
+    /// positions get to contradict.
+    @Test func zeroSpeedReadingsWhileMovingCannotDiscardTheGround() {
+        var p = GPSProcessor(config: runConfig)
+        for f in shapedRun(seconds: 1200, speed: 3.65, sigma: 5,
+                           speedModel: { s, g in g > 0.52 ? 0 : max(0, s + 0.25 * g) }) { _ = p.ingest(f) }
+        let truth = 1199 * 3.65
+        #expect(abs(p.distanceM - truth) / truth < 0.05, "headline \(p.distanceM)m vs \(truth)m")
+        #expect(p.accuracyReport.stationaryContradictions > 50)
+    }
+
+    /// A walker whose device reads half their speed spends a third of the run under the stationary
+    /// threshold. Neither the under-gate re-seat nor a stationary hold may erase those strides
+    /// while the sensor is unproven; the chords carry the walk (their inflation is the honest floor).
+    @Test func aWalkerWithAHalvedReadingKeepsTheirStrides() {
+        var p = GPSProcessor(config: .forType(.walk))
+        for f in shapedRun(seconds: 1200, speed: 1.2, sigma: 5,
+                           speedModel: { s, g in max(0, 0.5 * s + 0.25 * g) }) { _ = p.ingest(f) }
+        let truth = 1199 * 1.2
+        #expect(p.distanceM > truth * 0.95, "walker lost ground: \(p.distanceM)m vs \(truth)m")
+        #expect(p.distanceM < truth * 1.2)
+    }
+
+    /// The 2026-07-23 pin survives: an athlete who has been running (trust earned) stops at a light
+    /// for a minute with σ3 jitter and a zero reading — nothing accrues while standing, however
+    /// long the stop, because earned trust ages by movement, not by the clock.
+    @Test func standingAtALightAccruesNothingOnceTrustIsEarned() {
+        var p = GPSProcessor(config: runConfig)
+        var rng = Wobble(state: 11)
+        let a = exp(-1.0 / 15.0), sigma = 3.0, inn = sigma * (1 - a * a).squareRoot()
+        var ex = sigma * rng.gauss(), ey = sigma * rng.gauss(), along = 0.0, t = 0.0
+        func go(_ v: Double, _ seconds: Int) {
+            for _ in 0..<seconds {
+                ex = a * ex + inn * rng.gauss(); ey = a * ey + inn * rng.gauss(); along += v; t += 1
+                _ = p.ingest(GPSProcessor.Fix(t: Date(timeIntervalSinceReferenceDate: t),
+                                              lat: lat0 + (along + ey) / mLat, lon: lon0 + ex / mLon,
+                                              accuracyM: sigma, speedMS: v > 0 ? max(0, v + 0.25 * rng.gauss()) : 0,
+                                              altitudeM: 0))
+            }
+        }
+        go(3.65, 300)
+        let before = p.distanceM
+        go(0, 90)
+        #expect(p.distanceM - before < 3, "standing 90 s accrued \(p.distanceM - before)m")
+        go(3.65, 300)
+        let truth = 600 * 3.65
+        #expect(abs(p.distanceM - truth) / truth < 0.02)
+    }
+
+    /// The old fix, kept honest. At a reported accuracy of 5 m the chord sum ran ~5% long on a
+    /// straight and worse on a grid — miles long, pace flatteringly fast, every run. Integrating
+    /// the device's speed holds the headline inside 1% on the same fixes, and the retained
+    /// chord-only figure proves the fixture is in the regime that used to break.
     @Test(arguments: [3.0, 5.0, 8.0])
     func dopplerIntegrationHoldsTheHeadlineUnderCorrelatedNoise(sigma: Double) {
         var p = GPSProcessor(config: runConfig)
@@ -368,11 +465,13 @@ struct GPSProcessorTests {
 
     /// Past 30 s between counted fixes the endpoint speeds say nothing about the gap — the chord is
     /// the honest floor (`accumulatesDistance` above is the 60 s case; this is the boundary).
+    /// Inside the gap the reading is used, but only when it agrees with the chord: a device
+    /// claiming 87 m over a 60 m span (45% apart) is outside the trust band and the chord wins.
     @Test func aLongGapFallsBackToTheChord() {
         var p = GPSProcessor(config: runConfig)
-        _ = p.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))
-        // 29 s, 60 m apart (~2.07 m/s implied; device says 3): integrated → 87 m, but capped at 2·60+2.
-        guard case let .accepted(inside) = p.ingest(fix(0.00054, 0, acc: 5, speed: 3, t: 29)) else { Issue.record("accepted"); return }
+        _ = p.ingest(fix(0, 0, acc: 5, speed: 2.2, t: 0))
+        // 29 s, 60 m apart (~2.07 m/s implied; device says 2.2): integrated → 63.8 m, inside the band.
+        guard case let .accepted(inside) = p.ingest(fix(0.00054, 0, acc: 5, speed: 2.2, t: 29)) else { Issue.record("accepted"); return }
         #expect(inside > 60.5 && inside <= 122.1)
         var q = GPSProcessor(config: runConfig)
         _ = q.ingest(fix(0, 0, acc: 5, speed: 3, t: 0))

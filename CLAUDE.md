@@ -39,6 +39,7 @@ One-liner: **keep moving.**
 - e1RM (Epley): `weightKg · (1 + reps/30)`.
 - Streak: 2-day grace (one slipped day forgiven); rest days count; never surface "streak lost."
 - GPS accept gate: `horizontalAccuracy ∈ (0,25m]`, newer timestamp; speed check is **Doppler-first** — accept any position jump consistent with the device-reported speed (real movement at *any* pace, so the trace never freezes on a fast descent), reject jumps far exceeding it (spikes); a discipline hard cap is the backstop only when there's no valid Doppler speed.
+- **Distance and pace are position-first** (2026-09-12): `GPSDistanceRule` integrates the device's speed reading only while a 90 s trust window shows it agreeing with the Kalman-filtered chords (band 0.90…1.15 running, lower edge relaxing with reported accuracy); otherwise the chords carry the run and pace follows positional speed. A real run had the phone's speed at half the true value and the old speed-first rule made every number 2× slow at once. Never let the reading discard ground on its own: a "stopped" reading rebases only when trusted AND net displacement agrees.
 - Volume = Σ weightKg·reps over **working** sets only. Weekly sets/muscle: primary 1.0, secondary 0.5, trailing 7 days.
 - Quality bars: GPS distance ±2%; log-a-set < 3s; cold-start-to-start < 2s; crash-free > 99.5%.
 

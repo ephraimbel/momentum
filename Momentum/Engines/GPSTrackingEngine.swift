@@ -93,6 +93,8 @@ actor GPSTrackingEngine {
     var distanceM: Double { processor.distanceM }
     /// The pre-Doppler chord sum, for logging beside the headline on a real run (never displayed).
     var chordOnlyDistanceM: Double { processor.chordOnlyDistanceM }
+    /// How much the device's speed reading was believed this run (see `GPSDistanceRule.Report`).
+    var accuracyReport: GPSDistanceRule.Report { processor.accuracyReport }
     var smoothedPaceSPerKm: Double { processor.smoothedPaceSPerKm }
     var elevationGainM: Double { processor.elevationGainM }
 

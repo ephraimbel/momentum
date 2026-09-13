@@ -28,6 +28,12 @@ enum AnalyticsEvent: Equatable {
     case onboardingShowcase(action: String)
     case onboardingPermission(kind: String, status: String)
     case planGenerated(disciplines: Int)
+    /// How a finished GPS run's distance was measured (2026-09-12): the device's speed integral
+    /// against the filtered chord sum (percent), how many spans the reading was believed on
+    /// (percent), and how often a "stopped" reading was contradicted by the position. Aggregates
+    /// only — no route, no distance, nothing that identifies the athlete. This is the telemetry
+    /// that says whether phones' speed sensors are trustworthy in the field, which a bench cannot.
+    case gpsAccuracy(dopplerToChordPct: Int, speedUsedPct: Int, contradictions: Int, dopplerHeadlinePct: Int)
     case paywallView(placement: String, pricingLive: Bool)
     case paywallAction(action: String, placement: String, product: String)
     case paywallConvert(product: String, placement: String)
@@ -89,6 +95,7 @@ enum AnalyticsEvent: Equatable {
         case .onboardingShowcase:"onboarding_showcase"
         case .onboardingPermission:"onboarding_permission"
         case .planGenerated:     "plan_generated"
+        case .gpsAccuracy:       "gps_accuracy"
         case .paywallView:       "paywall_view"
         case .paywallAction:     "paywall_action"
         case .paywallConvert:    "paywall_convert"
@@ -129,6 +136,9 @@ enum AnalyticsEvent: Equatable {
         case .onboardingShowcase(let a):       ["action": a]
         case .onboardingPermission(let k, let s): ["kind": k, "status": s]
         case .planGenerated(let d):            ["disciplines": String(d)]
+        case .gpsAccuracy(let ratio, let used, let contradictions, let headline):
+            ["doppler_to_chord_pct": String(ratio), "speed_used_pct": String(used),
+             "contradictions": String(contradictions), "doppler_headline_pct": String(headline)]
         case .paywallView(let p, let live):    ["placement": p, "pricing_live": String(live)]
         case .paywallAction(let a, let p, let product):
             ["action": a, "placement": p, "product": product]

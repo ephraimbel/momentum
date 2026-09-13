@@ -46,18 +46,28 @@ struct GPSProcessor {
         /// (each ≥ this) still count in full.
         var elevationGainThresholdM = 3.0
 
+        /// How far the device's speed reading may be believed against the filtered chords (see
+        /// `GPSDistanceRule`). The chord sum inflates by an amount that depends on how far a stride
+        /// carries between fixes: a little at running and riding speeds, a lot for a walker. The
+        /// band brackets the inverse of that inflation; a reading outside it is not believed, and
+        /// position carries the run.
+        var speedTrustBand: ClosedRange<Double> = 0.90...1.15
+
         /// Discipline-specific accept-gate + auto-pause thresholds (§8.3).
         static func forType(_ type: WorkoutType) -> Config {
             switch type.discipline {
             case .cycling:   // all bike variants — allow fast descents (~80 km/h) but reject teleports
                 return Config(maxImpliedSpeedMS: 22.0, outlierSpeedMarginMS: 8.0,
-                              autoPauseSpeedMS: 1.0, autoPauseSecs: 5.0, accelNoiseMS2: 1.2)
+                              autoPauseSpeedMS: 1.0, autoPauseSecs: 5.0, accelNoiseMS2: 1.2,
+                              speedTrustBand: 0.90...1.15)
             case .walking:   // walk / hike — slow, so a tight cap sharply cleans the trace
                 return Config(maxImpliedSpeedMS: 4.5, outlierSpeedMarginMS: 4.0,
-                              autoPauseSpeedMS: 0.5, autoPauseSecs: 4.0, accelNoiseMS2: 0.3)
+                              autoPauseSpeedMS: 0.5, autoPauseSecs: 4.0, accelNoiseMS2: 0.3,
+                              speedTrustBand: 0.62...1.15)
             default:         // run / trail run (and any other foot sport routed to a GPS capture)
                 return Config(maxImpliedSpeedMS: 8.0, outlierSpeedMarginMS: 5.0,
-                              autoPauseSpeedMS: 0.5, autoPauseSecs: 4.0, accelNoiseMS2: 0.6)
+                              autoPauseSpeedMS: 0.5, autoPauseSecs: 4.0, accelNoiseMS2: 0.6,
+                              speedTrustBand: 0.90...1.15)
             }
         }
     }
@@ -104,11 +114,22 @@ struct GPSProcessor {
 
     /// What the pre-Doppler chord sum would have read for this run — for on-device comparison only.
     var chordOnlyDistanceM: Double { distance.chordOnlyDistanceM }
+    /// How much the device's speed reading was believed this run, and where it was contradicted.
+    var accuracyReport: GPSDistanceRule.Report { distance.report }
+    /// Whether the device's speed reading is currently believed (see `GPSDistanceRule`).
+    var speedTrusted: Bool { distance.speedTrusted }
 
     init(config: Config) {
         self.config = config
         self.kalman = GPSKalmanFilter(config: GPSKalmanFilter.Config(accelNoiseMS2: config.accelNoiseMS2))
-        self.distance = GPSDistanceRule(config: .init(minMovementGateM: config.minMovementGateM))
+        self.distance = GPSDistanceRule(config: Self.distanceConfig(config))
+    }
+
+    /// The distance rule's configuration for a discipline — one place, so the replay builds the same.
+    static func distanceConfig(_ config: Config) -> GPSDistanceRule.Config {
+        var c = GPSDistanceRule.Config(minMovementGateM: config.minMovementGateM)
+        c.trustBand = config.speedTrustBand
+        return c
     }
 
     /// Accept iff accuracy ∈ (0, minAccuracy], strictly newer than the anchor, and the implied speed
@@ -158,49 +179,57 @@ struct GPSProcessor {
         filteredLat = f.lat
         filteredLon = f.lon
 
-        // Doppler stationary guard (caught on-device 2026-07-23): standing at a light, position
-        // wander routinely clears the 2 m movement gate — meters accrue while the athlete covers
-        // none. Doppler speed is independent of position error and reads ~0 when genuinely
-        // stopped, so a valid below-auto-pause reading means "not covering ground": rebase the
-        // anchors and accrue nothing. Runs at real paces never read this low mid-stride.
-        let dopplerStationary = fix.speedMS >= 0 && fix.speedMS < config.autoPauseSpeedMS
-
-        if paused || dopplerStationary {
+        if paused {
             lastFixWasMoving = false
             anchor = fix
             distance.rebase(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)
-            if paused {   // manual pause: the detour's altitude is not ours
-                climbAnchorAltM = nil
-                smoothedAltM = nil
-            }
+            // manual pause: the detour's altitude is not ours
+            climbAnchorAltM = nil
+            smoothedAltM = nil
             return .accepted(distanceAddedM: 0)
         }
-        lastFixWasMoving = true
 
-        guard let prev = anchor else {
+        // Distance: the shared position-first rule (see `GPSDistanceRule` for why). It also owns
+        // the stationary judgement: standing at a light (caught on-device 2026-07-23) position
+        // wander routinely clears the 2 m gate, and a TRUSTED below-auto-pause reading is what
+        // says "not covering ground". A reading the positions have been contradicting cannot
+        // discard the span (the 2026-09-12 hole: a phone reading half the true speed).
+        let outcome = distance.advance(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS,
+                                       accuracyM: fix.accuracyM, stationaryBelowMS: config.autoPauseSpeedMS)
+        switch outcome {
+        case .seeded:
+            lastFixWasMoving = true
             anchor = fix
-            _ = distance.step(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)   // seeds the anchor
             accrueClimb(fix.altitudeM)   // seeds the smoother + climb anchor, accrues nothing
             return .accepted(distanceAddedM: 0)
+        case .stationaryHold:
+            lastFixWasMoving = false
+            anchor = fix
+            return .accepted(distanceAddedM: 0)
+        case .heldUnderGate:
+            lastFixWasMoving = true
+        case .moved:
+            lastFixWasMoving = true
         }
 
-        // Distance: the shared Doppler-first rule (see `GPSDistanceRule` for why). Zero while the
-        // anchor holds behind the movement gate — a micro-move keeps the anchor stable.
-        let added = distance.step(lat: f.lat, lon: f.lon, t: fix.t, speedMS: fix.speedMS)
-
-        // Current pace follows the device's speed reading when it has one, smoothed over
-        // `paceTimeConstantS`; without one it falls back to the distance the rule just accrued over
-        // the span it covered. Updated on every moving fix (not only when the anchor advances), so
-        // the number keeps breathing at 1 Hz while a slow walker's anchor holds.
-        let spanS = fix.t.timeIntervalSince(prev.t)   // the span `added` was measured over
-        let sample: Double? = fix.speedMS >= 0 ? fix.speedMS : (added > 0 && spanS > 0 ? added / spanS : nil)
+        // Current pace follows the device's speed reading once the rule has EARNED trust in it
+        // (provisional trust is enough to integrate under the cap, not enough to put a number on
+        // the screen), smoothed over `paceTimeConstantS`; otherwise it follows the positional
+        // speed over the trailing pace window. Updated on every moving fix (not only when the
+        // anchor advances), so the number keeps breathing at 1 Hz while a slow walker's anchor holds.
+        // Until three seconds of positions exist there is nothing positional to show, and a
+        // provisional reading for three seconds is harmless where a blank cell is not.
+        let positional = distance.positionalSpeedMS
+        let believeReading = fix.speedMS >= config.autoPauseSpeedMS
+            && distance.speedTrusted && (distance.speedEstablished || positional == nil)
+        let sample: Double? = believeReading ? fix.speedMS : positional
         if let sample, sample > 0, sinceLastFixS > 0 {
             let alpha = 1 - exp(-sinceLastFixS / config.paceTimeConstantS)
             smoothedSpeedMS = smoothedSpeedMS == 0 ? sample : smoothedSpeedMS + alpha * (sample - smoothedSpeedMS)
             smoothedPaceSPerKm = smoothedSpeedMS > 0 ? 1000 / smoothedSpeedMS : 0
         }
 
-        guard added > 0 else { return .accepted(distanceAddedM: 0) }
+        guard case let .moved(added) = outcome, added > 0 else { return .accepted(distanceAddedM: 0) }
         accrueClimb(fix.altitudeM)
         anchor = fix
         return .accepted(distanceAddedM: added)
