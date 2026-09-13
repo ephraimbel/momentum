@@ -24,6 +24,32 @@ struct GPSTrackingEngineTests {
         #expect(LocationService.usableSpeed(loc(speed: 0, accuracy: 0.2)) == 0)         // a confident stop is a reading
     }
 
+    /// A phone reporting zero speed while its position covers ground at a running pace must not
+    /// freeze the clock (2026-09-13): the position is the second witness, and here it says
+    /// "moving". Distance kept accruing on such fixes while the old clock stopped, so the pace
+    /// read fast. Standing genuinely still (same position, zero speed) still auto-pauses.
+    @Test func zeroSpeedWhileThePositionMovesDoesNotAutoPause() async {
+        let engine = GPSTrackingEngine(type: .run)
+        let t0 = Date(timeIntervalSince1970: 5_000_000)
+        await engine.begin(now: t0)
+        // 3.65 m/s northward, one fix a second, the reading stuck at zero from the third second.
+        for i in 0..<40 {
+            let f = GPSProcessor.Fix(t: t0.addingTimeInterval(Double(i)), lat: 37.0 + Double(i) * 3.65 / 111_320.0, lon: 0,
+                                     accuracyM: 5, speedMS: i < 3 ? 3.65 : 0, altitudeM: 0)
+            await engine.ingest(f, now: t0.addingTimeInterval(Double(i)))
+        }
+        let moving = await engine.snapshot()
+        #expect(moving.state == .tracking, "zero readings on a moving position must not stop the clock")
+        #expect(moving.distanceM > 120, "and the ground covered is counted: \(moving.distanceM)m")
+        // Now a real stop: the same position, zero speed, past the auto-pause window.
+        for i in 40..<48 {
+            let f = GPSProcessor.Fix(t: t0.addingTimeInterval(Double(i)), lat: 37.0 + 39 * 3.65 / 111_320.0, lon: 0,
+                                     accuracyM: 5, speedMS: 0, altitudeM: 0)
+            await engine.ingest(f, now: t0.addingTimeInterval(Double(i)))
+        }
+        #expect(await engine.snapshot().state == .autoPaused)
+    }
+
     private func fix(_ t0: Date, _ dt: Double, speed: Double, lat: Double) -> GPSProcessor.Fix {
         GPSProcessor.Fix(t: t0.addingTimeInterval(dt), lat: lat, lon: 0, accuracyM: 5, speedMS: speed, altitudeM: 0)
     }

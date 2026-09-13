@@ -179,7 +179,17 @@ actor GPSTrackingEngine {
         // so the run comes back short on time and its pace reads fast. Skip the decision instead:
         // hold whatever state we were in until the device tells us something it actually measured.
         if state != .paused, fix.speedMS >= 0 {
-            let pausedBySpeed = processor.shouldAutoPause(speedMS: fix.speedMS, now: now,
+            // Both witnesses have to agree the athlete stopped (2026-09-13). A reading of zero
+            // while this very fix just covered ground past the movement gate is the reading
+            // being wrong, not the athlete stopping — and freezing the clock while distance
+            // keeps accruing is exactly how a pace ends up reading fast. Ground counted on the
+            // fix is the check: at a real stop it drops to zero at once (jitter holds behind the
+            // gate), so a genuine pause still arms on the first stationary second.
+            var groundCoveredNow = false
+            if case .accepted(let added) = result, added > 0 { groundCoveredNow = true }
+            let threshold = GPSProcessor.Config.forType(type).autoPauseSpeedMS
+            let speedForDecision = groundCoveredNow ? max(fix.speedMS, threshold * 2) : fix.speedMS
+            let pausedBySpeed = processor.shouldAutoPause(speedMS: speedForDecision, now: now,
                                                           currentlyPaused: state == .autoPaused)
             if !pausedBySpeed {
                 // Real movement → a manual-resume override is done its job; normal auto-pause resumes.
