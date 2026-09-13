@@ -182,7 +182,8 @@ struct WelcomeGalleryView: View {
             Spacer(minLength: 70)
             // The same heading object every question uses, so the welcome and the interview
             // speak in one voice (owner call 2026-09-05).
-            OnboardingHeading(title: "Keep moving.", subtitle: "A running plan that\nmoves with you.")
+            OnboardingHeading(title: "Keep moving.", subtitle: "A running plan that\nmoves with you.",
+                              subtitleColor: Theme.purple)
                 .padding(.vertical, 16)
             .onboardingEntrance(0.05, lift: 10)
             .opacity(departing ? 0 : 1)

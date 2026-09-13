@@ -351,6 +351,9 @@ struct OnboardingHeading: View {
     /// Questions read left-aligned, the welcome's voice (palette pass 2026-09-05); the permission
     /// heroes and the account screen keep their centered glyph and stay centered.
     var alignment: HorizontalAlignment = .leading
+    /// The welcome's one line wears the brand lavender (owner call 2026-09-13); every question
+    /// keeps the quiet secondary ink.
+    var subtitleColor: Color = Theme.inkSecondary
 
     var body: some View {
         VStack(alignment: alignment, spacing: 8) {
@@ -361,7 +364,7 @@ struct OnboardingHeading: View {
             if let subtitle {
                 Text(subtitle)
                     .font(.rounded(15, weight: .regular))
-                    .foregroundStyle(Theme.inkSecondary)
+                    .foregroundStyle(subtitleColor)
                     .lineSpacing(2)
             }
         }
